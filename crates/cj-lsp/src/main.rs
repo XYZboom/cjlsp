@@ -16,43 +16,45 @@ use server::LspServer;
 const MAX_FRAME: usize = 64 * 1024 * 1024; // 64 MiB safety cap
 
 fn read_message(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
+    // Skip stray blank lines before the header block. The test harness
+    // (lsp_test.py) emits an extra blank line between frames, which a strict
+    // "blank line ends headers" parser would misread as a missing length.
+    let mut len: Option<usize> = None;
     loop {
         let mut header = String::new();
-        let mut len: Option<usize> = None;
-        // Read headers until blank line.
-        loop {
-            header.clear();
-            let n = reader.read_line(&mut header)?;
-            if n == 0 {
-                return Ok(None); // EOF
-            }
-            let line = header.trim_end();
-            if line.is_empty() {
-                break;
-            }
-            if let Some(rest) = line.strip_prefix("Content-Length:") {
-                len = rest.trim().parse::<usize>().ok();
-            }
+        let n = reader.read_line(&mut header)?;
+        if n == 0 {
+            return Ok(None); // EOF
         }
-        let len = len
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Content-Length"))?;
-        if len > MAX_FRAME {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "frame too large",
-            ));
+        let line = header.trim_end();
+        if line.is_empty() {
+            if len.is_some() {
+                break; // blank line terminates the header block
+            }
+            continue; // leading blank line — skip, keep reading
         }
-        let mut body = vec![0u8; len];
-        reader.read_exact(&mut body)?;
-        let text = String::from_utf8(body)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "non-UTF8 body"))?;
-        if text.trim().is_empty() {
-            continue; // empty frame, keep reading
+        if let Some(rest) = line.strip_prefix("Content-Length:") {
+            len = rest.trim().parse::<usize>().ok();
         }
-        return Ok(Some(serde_json::from_str(&text).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("bad JSON: {e}"))
-        })?));
     }
+    let len =
+        len.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Content-Length"))?;
+    if len > MAX_FRAME {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
+    }
+    let mut body = vec![0u8; len];
+    reader.read_exact(&mut body)?;
+    let text = String::from_utf8(body)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "non-UTF8 body"))?;
+    if text.trim().is_empty() {
+        return Ok(None); // empty frame — treat as EOF-ish, stop reading
+    }
+    Ok(Some(serde_json::from_str(&text).map_err(|e| {
+        io::Error::new(io::ErrorKind::InvalidData, format!("bad JSON: {e}"))
+    })?))
 }
 
 fn write_message(out: &mut impl Write, msg: &Value) -> io::Result<()> {
@@ -111,11 +113,13 @@ fn main() -> ExitCode {
 
         // Dispatch: requests (with id) get responses; notifications get none.
         if has_id {
-            let response =
+            let result =
                 server.dispatch(&method, msg.get("params").cloned().unwrap_or(Value::Null));
-            if method == "initialize" {
-                // server returns (capabilities, serverInfo) — see dispatch
-            }
+            let response = json!({
+                "jsonrpc": "2.0",
+                "id": msg["id"],
+                "result": result
+            });
             let _ = write_message(&mut writer, &response);
         } else {
             let notifications =

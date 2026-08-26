@@ -52,23 +52,33 @@ impl<'a> Resolver<'a> {
     /// Resolve one top-level declaration's body.
     fn resolve_decl(&self, d: &Decl) -> Vec<Diag> {
         let mut diags = Vec::new();
-        if let Decl::Func {
-            params, body, pos, ..
-        } = d
-        {
-            let mut locals = LocalScope::new();
-            for p in params {
-                locals.insert(p.name.clone(), p.pos);
-            }
-            if let Body::Block(stmts) = body {
-                // Each top-level statement shares the function scope, but a
-                // variable is visible only after its own declaration.
-                let mut seen: Vec<String> = Vec::new();
-                for s in stmts {
-                    self.resolve_stmt(s, &mut locals, &mut seen, &mut diags);
+        match d {
+            Decl::Func {
+                params, body, pos, ..
+            } => {
+                let mut locals = LocalScope::new();
+                for p in params {
+                    locals.insert(p.name.clone(), p.pos);
                 }
+                if let Body::Block(stmts) = body {
+                    // Each top-level statement shares the function scope, but a
+                    // variable is visible only after its own declaration.
+                    let mut seen: Vec<String> = Vec::new();
+                    for s in stmts {
+                        self.resolve_stmt(s, &mut locals, &mut seen, &mut diags);
+                    }
+                }
+                let _ = pos;
             }
-            let _ = pos;
+            // Top-level variable initializers (`var x = 1 + testvar`) are
+            // resolved against package scope — refs to local names don't apply.
+            Decl::Var { init: Some(init), pos, .. } => {
+                let locals = LocalScope::new();
+                let seen: Vec<String> = Vec::new();
+                self.resolve_expr(init, &locals, &seen, &mut diags);
+                let _ = pos;
+            }
+            _ => {}
         }
         diags
     }
@@ -110,7 +120,7 @@ impl<'a> Resolver<'a> {
                         diags.push(Diag::error(
                             pos.line,
                             pos.col,
-                            format!("unresolved identifier '{name}'"),
+                            format!("undeclared identifier '{name}'"),
                         ));
                     }
                 }
@@ -206,7 +216,7 @@ mod tests {
         file_resolver.resolve_file(&file);
         let diags = file_resolver.take_diags();
         assert!(!diags.is_empty(), "expected unresolved: {:?}", diags);
-        assert!(diags[0].message.contains("unresolved identifier 'z'"));
+        assert!(diags[0].message.contains("undeclared identifier 'z'"));
     }
 
     #[test]

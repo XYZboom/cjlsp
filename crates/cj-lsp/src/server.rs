@@ -8,8 +8,8 @@ use std::path::PathBuf;
 /// LSP server: tracks open documents and computes diagnostics via the
 /// cj-frontend pipeline (lexer -> parser -> sema collector/resolver/dep).
 pub struct LspServer {
-    /// uri -> path on disk
-    open_docs: HashMap<String, PathBuf>,
+    /// uri -> (path on disk, latest text from didOpen/didChange)
+    open_docs: HashMap<String, (PathBuf, String)>,
     shutdown_received: bool,
 }
 
@@ -41,31 +41,25 @@ impl LspServer {
                 // ignores `category/code/jsonrpc`, but capabilities shape
                 // matters for feature tests later.
                 json!({
-                    "result": {
-                        "capabilities": {
-                            "textDocumentSync": {
-                                "openClose": true,
-                                "change": 1,
-                                "save": {"includeText": true}
+                    "capabilities": {
+                        "textDocumentSync": {"openClose": true, "change": 1, "save": {"includeText": true}},
+                        "completionProvider": {"triggerCharacters": [".", ":", "!", "(", "[", "{", "@", "$"]},
+                        "definitionProvider": true,
+                        "referencesProvider": true,
+                        "documentSymbolProvider": true,
+                        "hoverProvider": true,
+                        "renameProvider": {"prepareProvider": true},
+                        "documentHighlightProvider": true,
+                        "semanticTokensProvider": {
+                            "legend": {
+                                "tokenTypes": ["namespace","type","class","enum","interface","struct","typeParameter","parameter","variable","property","enumMember","event","function","method","macro","keyword","modifier","comment","string","number","regexp","operator","member","label"],
+                                "tokenModifiers": ["declaration","definition","readonly","static","deprecated","abstract","async","modification","documentation","defaultLibrary"]
                             },
-                            "completionProvider": {"triggerCharacters": [".", ":", "!", "(", "[", "{", "@", "$"]},
-                            "definitionProvider": true,
-                            "referencesProvider": true,
-                            "documentSymbolProvider": true,
-                            "hoverProvider": true,
-                            "renameProvider": {"prepareProvider": true},
-                            "documentHighlightProvider": true,
-                            "semanticTokensProvider": {
-                                "legend": {
-                                    "tokenTypes": ["namespace","type","class","enum","interface","struct","typeParameter","parameter","variable","property","enumMember","event","function","method","macro","keyword","modifier","comment","string","number","regexp","operator","member","label"],
-                                    "tokenModifiers": ["declaration","definition","readonly","static","deprecated","abstract","async","modification","documentation","defaultLibrary"]
-                                },
-                                "range": true,
-                                "full": true
-                            }
-                        },
-                        "serverInfo": {"name": "LSPServer", "version": "0.1.0"}
-                    }
+                            "range": true,
+                            "full": true
+                        }
+                    },
+                    "serverInfo": {"name": "LSPServer", "version": "0.1.0"}
                 })
             }
             _ => json!({"result": Value::Null}),
@@ -96,7 +90,8 @@ impl LspServer {
             return Vec::new();
         }
         let path = Self::uri_to_path(&uri).unwrap_or_default();
-        self.open_docs.insert(uri.clone(), path);
+        let text = doc["text"].as_str().unwrap_or("").to_string();
+        self.open_docs.insert(uri.clone(), (path, text));
         self.publish_diagnostics(&uri)
     }
 
@@ -107,6 +102,15 @@ impl LspServer {
             .to_string();
         if uri.is_empty() {
             return Vec::new();
+        }
+        // Apply content changes (full text in contentChanges[0].text for
+        // full-sync mode; incremental is refined later).
+        if let Some((_, text)) = self.open_docs.get_mut(&uri) {
+            if let Some(chg) = params["contentChanges"].get(0) {
+                if let Some(t) = chg["text"].as_str() {
+                    *text = t.to_string();
+                }
+            }
         }
         self.publish_diagnostics(&uri)
     }
@@ -121,12 +125,16 @@ impl LspServer {
     }
 
     /// Compute diagnostics for a document and emit publishDiagnostics.
-    /// Reads the file from disk (test harness sends empty text).
+    /// Prefers the in-memory text from didOpen/didChange; falls back to disk.
     fn publish_diagnostics(&mut self, uri: &str) -> Vec<Value> {
-        let Some(path) = self.open_docs.get(uri) else {
+        let Some((path, text)) = self.open_docs.get(uri) else {
             return Vec::new();
         };
-        let diagnostics = analyze_file(path);
+        let diagnostics = if text.is_empty() {
+            analyze_file(path)
+        } else {
+            analyze_source(text)
+        };
         let msg = json!({
             "jsonrpc": "2.0",
             "method": "textDocument/publishDiagnostics",
@@ -141,12 +149,16 @@ impl LspServer {
 
 /// Run the full frontend pipeline on a file and return LSP-format diagnostics.
 fn analyze_file(path: &PathBuf) -> Vec<Value> {
-    let src = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
+    match fs::read_to_string(path) {
+        Ok(s) => analyze_source(&s),
+        Err(_) => Vec::new(),
+    }
+}
 
-    let mut parser = cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
+/// Run the full frontend pipeline on source text and return LSP-format
+/// diagnostics (1-based diag positions -> 0-based LSP ranges).
+fn analyze_source(src: &str) -> Vec<Value> {
+    let mut parser = cj_parser::Parser::new(src, cj_lexer::Lexer::new(src).tokenize());
     let file = parser.run();
 
     // Sema: collect + resolve + dep graph.
@@ -168,14 +180,19 @@ fn analyze_file(path: &PathBuf) -> Vec<Value> {
             cj_diag::Severity::Warning => 2,
             _ => 3,
         };
+        let end_col = if d.end_col > d.col { d.end_col } else { d.col + 1 };
         out.push(json!({
+            "category": null,
+            "code": null,
+            "codeActions": null,
             "range": {
                 "start": {"line": d.line.saturating_sub(1), "character": d.col.saturating_sub(1)},
-                "end": {"line": d.end_line.saturating_sub(1), "character": d.end_col.saturating_sub(1)}
+                "end": {"line": d.end_line.saturating_sub(1), "character": end_col.saturating_sub(1)}
             },
             "severity": severity,
             "message": d.message,
-            "source": "Cangjie"
+            "source": "Cangjie",
+            "data": {"codeActions": null}
         }));
     };
     for d in parser
