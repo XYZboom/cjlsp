@@ -18,6 +18,7 @@ use std::collections::HashMap;
 
 pub mod dep_graph;
 pub mod parallel;
+pub mod resolver;
 
 /// Kind of a collected symbol (for resolution / LSP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

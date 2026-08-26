@@ -103,6 +103,11 @@ fn parse_and_report(src: &str, path: &str) -> ExitCode {
     // semantic analysis: symbol collection (redefinition) + dependency graph
     let collector = cj_sema::Collector::new();
     let sema_result = collector.collect_file(&file);
+    let mut pkg = cj_sema::PackageTable::default();
+    pkg.merge(&sema_result);
+    let mut resolver = cj_sema::resolver::Resolver::new(&pkg);
+    resolver.resolve_file(&file);
+    let resolve_diags = resolver.take_diags();
     let dep_graph = cj_sema::dep_graph::DepGraph::build(&[&file]);
     let dep_diags = dep_graph.detect_cycles();
     let source_lines: Vec<String> = src.lines().map(String::from).collect();
@@ -116,6 +121,7 @@ fn parse_and_report(src: &str, path: &str) -> ExitCode {
         .diags
         .iter()
         .chain(sema_result.diags.iter())
+        .chain(resolve_diags.iter())
         .chain(dep_diags.iter())
     {
         match d.severity {
