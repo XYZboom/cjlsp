@@ -904,6 +904,16 @@ impl TokenKind {
         )
     }
 
+    /// True for keyword tokens (official `IsKeyWord`):
+    /// `INT8 <= kind < IDENTIFIER` excluding DOLLAR/UPPERBOUND, plus AS/IS.
+    pub fn is_keyword(self) -> bool {
+        let idx = self as usize;
+        let in_range = idx >= TokenKind::INT8 as usize && idx < TokenKind::IDENTIFIER as usize;
+        (in_range && self != TokenKind::DOLLAR && self != TokenKind::UPPERBOUND)
+            || self == TokenKind::AS
+            || self == TokenKind::IS
+    }
+
     /// True for punctuation/operator tokens (rendered as `'...'` in diagnostics).
     /// Keywords are NOT symbols.
     pub fn symbol_like(self) -> bool {

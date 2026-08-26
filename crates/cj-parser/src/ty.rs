@@ -121,7 +121,7 @@ pub fn parse_type(p: &mut Parser) -> Type {
             }
         }
         _ => {
-            let found = crate::token_display_text(tok.kind);
+            let found = crate::token_display_text(&tok);
             p.error_id(
                 &tok,
                 cj_diag::DiagId::PARSE_EXPECTED_TYPE,

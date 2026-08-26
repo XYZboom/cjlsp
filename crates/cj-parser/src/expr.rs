@@ -168,7 +168,7 @@ fn parse_postfix(p: &mut Parser) -> Expr {
                         pos,
                     };
                 } else {
-                    let found = crate::token_display_text(name_tok.kind);
+                    let found = crate::token_display_text(&name_tok);
                     p.error_id(
                         &name_tok,
                         cj_diag::DiagId::PARSE_EXPECTED_NAME,
@@ -389,7 +389,7 @@ fn parse_atom(p: &mut Parser) -> Expr {
         }
         _ => {
             // unknown atom — emit error, recover
-            let found = crate::token_display_text(tok.kind);
+            let found = crate::token_display_text(&tok);
             p.error_id(&tok, cj_diag::DiagId::PARSE_EXPECTED_EXPRESSION, &[&found]);
             p.advance();
             let pos = pos_of(&tok);
@@ -591,7 +591,7 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
             if let Some(pat) = parse_literal_pattern(p) {
                 pat
             } else {
-                let found = crate::token_display_text(tok.kind);
+                let found = crate::token_display_text(&tok);
                 p.error_id(&tok, cj_diag::DiagId::PARSE_EXPECTED_PATTERN, &[&found]);
                 p.advance();
                 Pattern::Invalid(pos_of(&tok))

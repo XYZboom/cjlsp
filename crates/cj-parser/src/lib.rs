@@ -5,7 +5,7 @@ pub mod expr;
 pub mod parser;
 pub mod ty;
 
-pub use parser::{parse_source, token_display_text, Diag, Parser};
+pub use parser::{modifier_display, parse_source, token_display_text, Diag, Parser};
 
 #[cfg(test)]
 mod tests {

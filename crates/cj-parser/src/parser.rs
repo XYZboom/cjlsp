@@ -279,32 +279,44 @@ pub fn fill_placeholders(template: &str, args: &[&str]) -> String {
     out
 }
 
-/// Render a token's display form for diagnostics, matching cjc:
-/// - keywords/identifiers: the raw text (e.g. `func`, `main`)
-/// - multi-char punctuation/operators: `'...'` (e.g. `'@!'`, `'('`)
-/// - literals: `'<integer literal>'` style
-pub fn token_display_text(k: TokenKind) -> String {
-    match k {
-        TokenKind::IDENTIFIER => "identifier".to_string(),
-        TokenKind::INTEGER_LITERAL => "integer literal".to_string(),
-        TokenKind::FLOAT_LITERAL => "float literal".to_string(),
-        TokenKind::STRING_LITERAL => "string literal".to_string(),
-        TokenKind::RUNE_LITERAL => "rune literal".to_string(),
-        TokenKind::BOOL_LITERAL => "boolean literal".to_string(),
+/// Render a MODIFIER name for diagnostics: bare keyword text without the
+/// `keyword '...'` wrapper (official modifier diagnostics use bare names, e.g.
+/// `unexpected modifier 'sealed' on ...`, `redundant modifier: 'public'`).
+pub fn modifier_display(t: &Token) -> String {
+    let lit = t.kind.literal();
+    if lit.is_empty() {
+        t.kind.value_str().to_string()
+    } else {
+        lit.to_string()
+    }
+}
+
+/// Render a token's display form for diagnostics, matching official
+/// `ConvertToken` (ParserDiag.cpp):
+///   END => `'<EOF>'`; NL => `'<NL>'`
+///   keyword => `keyword 'func'`
+///   integer/float literal => `literal '42'`
+///   bool/identifier/package identifier => `'x'`
+///   everything else => `'('`  (token's literal text)
+pub fn token_display_text(t: &Token) -> String {
+    match t.kind {
+        TokenKind::END => "'<EOF>'".to_string(),
         TokenKind::NL => "'<NL>'".to_string(),
-        TokenKind::END => "end of file".to_string(),
-        TokenKind::COMMENT => "comment".to_string(),
-        // symbols/operators: rendered as quoted literal text, e.g. '@!', '('
-        _ if k.symbol_like() => {
-            let lit = k.literal();
+        TokenKind::INTEGER_LITERAL | TokenKind::FLOAT_LITERAL => {
+            format!("literal '{}'", t.text)
+        }
+        TokenKind::BOOL_LITERAL | TokenKind::IDENTIFIER | TokenKind::PACKAGE_IDENTIFIER => {
+            format!("'{}'", t.text)
+        }
+        k if k.is_keyword() => format!("keyword '{}'", k.literal()),
+        _ => {
+            let lit = t.kind.literal();
             if lit.is_empty() {
-                format!("'{}'", k.value_str())
+                format!("'{}'", t.kind.value_str())
             } else {
                 format!("'{lit}'")
             }
         }
-        // keywords fall through to their text form (e.g. `func`)
-        _ => k.value_str().to_string(),
     }
 }
 
@@ -344,7 +356,7 @@ impl<'a> Parser<'a> {
                     // recovery: official DiagExpectedDeclaration(TOPLEVEL) —
                     // parse_expected_decl + top-level note + resync boundary
                     let t = self.peek_token().clone();
-                    let found = token_display_text(t.kind);
+                    let found = token_display_text(&t);
                     self.error_id_with_note(
                         &t,
                         cj_diag::DiagId::PARSE_EXPECTED_DECL,

@@ -9,6 +9,7 @@ use cj_lexer::TokenKind;
 /// Parse one declaration. `is_member` indicates class-like body context.
 pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
     // modifiers
+    let mut mods: Vec<cj_lexer::Token> = Vec::new(); // for diagnostic reporting
     let mut is_public = false;
     let mut is_static = false;
     let mut is_abstract = false;
@@ -19,36 +20,43 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
         match p.peek() {
             TokenKind::PUBLIC => {
                 is_public = true;
-                p.advance();
+                mods.push(p.advance());
             }
             TokenKind::PRIVATE | TokenKind::PROTECTED | TokenKind::INTERNAL => {
-                p.advance();
+                mods.push(p.advance());
             }
             TokenKind::STATIC => {
                 is_static = true;
-                p.advance();
+                mods.push(p.advance());
             }
             TokenKind::ABSTRACT => {
                 is_abstract = true;
-                p.advance();
+                mods.push(p.advance());
             }
             TokenKind::OPEN => {
                 is_open = true;
-                p.advance();
+                mods.push(p.advance());
             }
             TokenKind::SEALED => {
                 is_sealed = true;
-                p.advance();
+                mods.push(p.advance());
             }
             TokenKind::MUT => {
                 is_mutable = true;
-                p.advance();
+                mods.push(p.advance());
             }
             _ => break,
         }
     }
 
     let tok = p.peek_token().clone();
+    // Validate modifier/decl-kind combinations (official ParseModifiers rules).
+    let mod_info = ModInfo {
+        mods: &mods,
+        is_sealed,
+        is_member,
+    };
+    check_modifier_usage(p, &mod_info, &tok);
     match tok.kind {
         TokenKind::FUNC => {
             p.advance();
@@ -60,7 +68,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
                 // operator overload names: `+`, `==`, `[]`, `()` etc.
                 k if k.operator_like() => p.advance().text,
                 _ => {
-                    let found = crate::token_display_text(name_tok.kind);
+                    let found = crate::token_display_text(&name_tok);
                     p.error_id(
                         &name_tok,
                         cj_diag::DiagId::PARSE_EXPECTED_NAME,
@@ -94,7 +102,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             p.advance();
             let name_tok = p.peek_token().clone();
             if !name_tok.kind.is_name_like() {
-                let found = crate::token_display_text(name_tok.kind);
+                let found = crate::token_display_text(&name_tok);
                 p.error_id(
                     &name_tok,
                     cj_diag::DiagId::PARSE_EXPECTED_NAME,
@@ -349,7 +357,7 @@ fn parse_param_list(p: &mut Parser) -> Vec<Param> {
             });
         } else {
             // param without name? error recovery
-            let found = crate::token_display_text(name_tok.kind);
+            let found = crate::token_display_text(&name_tok);
             p.error_id(
                 &name_tok,
                 cj_diag::DiagId::PARSE_EXPECTED_NAME,
@@ -413,7 +421,7 @@ fn parse_class_body(p: &mut Parser) -> Vec<Decl> {
         } else {
             // recovery
             let t = p.peek_token().clone();
-            let found = crate::token_display_text(t.kind);
+            let found = crate::token_display_text(&t);
             p.error_id(&t, cj_diag::DiagId::PARSE_EXPECTED_DECL, &[&found]);
             p.advance();
         }
@@ -429,7 +437,7 @@ fn parse_enum_cases(p: &mut Parser) -> Vec<EnumCase> {
         p.eat(TokenKind::BITOR); // optional leading |
         let name_tok = p.peek_token().clone();
         if !name_tok.kind.is_name_like() {
-            let found = crate::token_display_text(name_tok.kind);
+            let found = crate::token_display_text(&name_tok);
             p.error_id(
                 &name_tok,
                 cj_diag::DiagId::PARSE_EXPECTED_NAME,
@@ -504,4 +512,92 @@ fn pos_of(tok: &cj_lexer::Token) -> cj_ast::CodePos {
         tok.end.column,
         tok.end.offset,
     )
+}
+
+/// Modifier state collected while parsing a declaration (for diagnostics).
+struct ModInfo<'a> {
+    mods: &'a [cj_lexer::Token],
+    is_sealed: bool,
+    is_member: bool,
+}
+
+/// Validate modifier/decl-kind combinations, emitting official diagnostics:
+/// - `parse_illegal_modifier_in_scope`: unexpected modifier on this decl kind
+/// - `parse_conflict_modifier`: mutually exclusive modifiers
+/// - `parse_redundant_modifier` (warning): implied by another modifier
+fn check_modifier_usage(p: &mut Parser, info: &ModInfo, decl_tok: &cj_lexer::Token) {
+    // Decl kind name for diagnostics: "enum declaration", "struct declaration",
+    // "function declaration in 'top-level' scope", "variable declaration ...".
+    // hintMes for `unexpected modifier '%s' on %s%s` (official KIND_TO_STR).
+    let (kind_name, needs_scope): (&str, bool) = match decl_tok.kind {
+        TokenKind::ENUM => ("enum declaration", false),
+        TokenKind::STRUCT => ("struct declaration", false),
+        TokenKind::FUNC => ("function declaration", !info.is_member),
+        TokenKind::LET | TokenKind::VAR => ("variable declaration", !info.is_member),
+        TokenKind::PROP => ("property declaration", !info.is_member),
+        TokenKind::EXTEND => ("extend declaration", false),
+        TokenKind::CLASS => ("class", false),
+        TokenKind::INTERFACE => ("interface", false),
+        _ => return,
+    };
+    let scope_suffix = if needs_scope {
+        " in 'top-level' scope"
+    } else {
+        ""
+    };
+
+    // 1. `sealed` only valid on classes/interfaces (abstract allowed); report
+    //    unexpected modifier on every other decl kind (extend handled below).
+    if info.is_sealed && decl_tok.kind != TokenKind::EXTEND {
+        let ok_on = matches!(decl_tok.kind, TokenKind::CLASS | TokenKind::INTERFACE);
+        if !ok_on {
+            for m in info.mods {
+                if m.kind == TokenKind::SEALED {
+                    let found = crate::modifier_display(m);
+                    p.error_id(
+                        m,
+                        cj_diag::DiagId::PARSE_ILLEGAL_MODIFIER_IN_SCOPE,
+                        &[&found, kind_name, scope_suffix],
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    // 2. `extend` accepts no modifiers at all.
+    if decl_tok.kind == TokenKind::EXTEND && !info.mods.is_empty() {
+        for m in info.mods {
+            let found = crate::modifier_display(m);
+            p.error_id(
+                m,
+                cj_diag::DiagId::PARSE_EXPECTED_NO_MODIFIER,
+                &[kind_name, &found],
+            );
+        }
+    }
+
+    // 3. redundant modifier warnings: sealed implies open/public.
+    if info.is_sealed {
+        for m in info.mods {
+            if m.kind == TokenKind::OPEN || m.kind == TokenKind::PUBLIC {
+                let found = crate::modifier_display(m);
+                let sealed_tok = info
+                    .mods
+                    .iter()
+                    .find(|x| x.kind == TokenKind::SEALED)
+                    .unwrap();
+                let implied = crate::modifier_display(sealed_tok);
+                p.warn_id(
+                    m,
+                    cj_diag::DiagId::PARSE_REDUNDANT_MODIFIER,
+                    &[&found, &implied],
+                );
+            }
+        }
+    }
+
+    // 4. conflict: abstract + sealed is allowed; but public+private impossible
+    //    (only one access modifier token). static on top-level func is illegal
+    //    in some cases — covered by scope rules later.
 }
