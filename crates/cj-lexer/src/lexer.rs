@@ -151,6 +151,14 @@ impl<'a> Lexer<'a> {
         Some(c)
     }
 
+    /// Position of the byte just before the current position (assumes a single
+    /// ASCII byte, e.g. a backslash, was consumed). Used to anchor diagnostics
+    /// at the backslash of a `\\u{...}` escape, matching the official `old` pos.
+    fn pos_before_backslash(&self) -> Position {
+        let col = self.col.saturating_sub(1).max(1);
+        Position::new(self.line, col, self.pos.saturating_sub(1))
+    }
+
     // ---- main token loop ----
 
     pub fn next_token(&mut self) -> Token {
@@ -171,10 +179,15 @@ impl<'a> Lexer<'a> {
                 Token::new(TokenKind::NL, "\n".into(), begin, end)
             }
             b'0'..=b'9' => self.scan_number(begin),
+            // Context-sensitive: `r'...'` / `b'...'` / `r"..."` are rune/byte/string
+            // literals, but a bare `r`/`b` (not followed by a quote) is an identifier.
+            b'r' | b'b' if self.peek2() == Some(b'\'') || self.peek2() == Some(b'"') => {
+                self.scan_rune_or_string(begin, c)
+            }
             b'a'..=b'z' | b'A'..=b'Z' | b'_' | 0x80.. => self.scan_identifier(begin),
             b'`' => self.scan_backquoted(begin),
-            b'\'' => self.scan_rune(begin),
-            b'"' => self.scan_string(begin, false),
+            b'\'' | b'"' => self.scan_rune_or_string(begin, c),
+            b'#' => self.scan_hash(begin),
             _ => self.scan_symbol(begin),
         }
     }
@@ -192,10 +205,13 @@ impl<'a> Lexer<'a> {
             _ => false,
         };
         if !first_ok {
-            // Not an identifier start; let the caller handle it (symbol path).
-            let text = &self.src[start..self.pos];
+            // Not an identifier start (e.g. U+FFFD from invalid UTF-8 replacement,
+            // or a Unicode char outside XID_Start). Consume one char so the main
+            // loop always advances — never return without bumping (avoids hang).
+            self.bump_char();
+            let text = self.src[start..self.pos].to_string();
             let end = self.cur_pos();
-            return Token::new(TokenKind::ILLEGAL, text.to_string(), begin, end);
+            return Token::new(TokenKind::ILLEGAL, text, begin, end);
         }
         self.bump_char();
         // Continuation: XID_Continue (includes XID_Start, digits, '_', ZWNJ/ZWJ).
@@ -403,96 +419,237 @@ impl<'a> Lexer<'a> {
         Token::new(kind, text.to_string(), begin, end)
     }
 
-    // ---- rune / byte literals ----
+    // ---- rune / byte / string literals ----
 
-    fn scan_rune(&mut self, begin: Position) -> Token {
-        // r'a' / b'a' — single quoted character literal.
-        // Note: `'` may also appear as a leading quote for single-quoted strings in
-        // Cangjie (isSingleQuote); rune detection is context-sensitive. We lex a
-        // single-quoted literal generically here and let the parser/sema interpret.
-        let is_byte = begin.offset > 0 && self.src.as_bytes()[begin.offset - 1] == b'b';
-        self.bump(); // opening '
+    /// Unified entry for rune/byte/string literals.
+    /// `c` is the first byte seen at `begin`: `'` = rune, `"` = string,
+    /// `r` = rune or string prefix, `b` = byte literal prefix.
+    /// Multiline: three identical quotes (''' / \"\"\").
+    fn scan_rune_or_string(&mut self, begin: Position, c: u8) -> Token {
+        let mut is_byte = false;
+        let mut is_rune = c == b'\'';
+        // Consume optional prefix char (r / b / J).
+        match c {
+            b'r' | b'b' => {
+                is_byte = c == b'b';
+                self.bump(); // consume r/b
+            }
+            b'J' => {
+                self.bump(); // consume J
+            }
+            _ => {}
+        }
+        // Now at a quote char (`'` or `"`).
+        let quote = self.peek().unwrap_or(b'"');
+        let is_double = quote == b'"';
+        is_rune = is_rune || !is_double;
+        // Multiline: three consecutive identical quotes.
+        let multiline = self.peek() == Some(quote) && self.peek2() == Some(quote);
+        if multiline {
+            self.bump(); // 1st
+            self.bump(); // 2nd
+            self.bump(); // 3rd
+        } else {
+            self.bump(); // opening quote
+        }
+
         let mut content = String::new();
         let mut closed = false;
-        loop {
-            match self.peek() {
-                None => break,
-                Some(b'\n') => break,
-                Some(b'\'') => {
-                    self.bump();
-                    closed = true;
-                    break;
-                }
-                Some(b'\\') => {
-                    self.bump();
-                    if let Some(c) = self.peek() {
-                        content.push(c as char);
+        'scan: while let Some((ch, _)) = self.peek_char() {
+            if !multiline && ch == '\n' {
+                break; // unterminated (single-line)
+            }
+            if ch == quote as char {
+                if multiline {
+                    // closing requires three consecutive quotes
+                    if self.peek2() == Some(quote) && self.peek3() == Some(quote) {
                         self.bump();
+                        self.bump();
+                        self.bump();
+                        closed = true;
+                        break 'scan;
                     }
+                    content.push(ch);
+                    self.bump_char();
+                } else {
+                    self.bump_char();
+                    closed = true;
+                    break 'scan;
                 }
-                Some(c) => {
-                    content.push(c as char);
-                    self.bump();
-                }
+            } else if ch == '\\' {
+                self.process_escape(&mut content, is_byte);
+            } else {
+                content.push(ch);
+                self.bump_char();
             }
         }
         if !closed {
+            let msg = if multiline {
+                "unterminated multiline string literal"
+            } else if is_rune {
+                "unterminated character literal"
+            } else {
+                "unterminated string literal"
+            };
             self.errors.push(LexError {
-                message: "unterminated character literal".into(),
+                message: msg.into(),
                 pos: begin,
                 is_warning: false,
             });
         }
         let end = self.cur_pos();
-        let kind = if is_byte {
-            TokenKind::RUNE_BYTE_LITERAL
+        let kind = if is_rune {
+            if is_byte {
+                TokenKind::RUNE_BYTE_LITERAL
+            } else {
+                TokenKind::RUNE_LITERAL
+            }
+        } else if multiline {
+            TokenKind::MULTILINE_STRING
         } else {
-            TokenKind::RUNE_LITERAL
+            TokenKind::STRING_LITERAL
         };
         Token::new(kind, content, begin, end)
     }
 
-    // ---- string literals ----
+    /// Process an escape sequence starting at `\\` (already positioned on `\\`).
+    /// Legal escapes: t b r n f v 0 ' \" \\ (IsLegalEscape). `\\u{...}` is
+    /// handled specially with scalar-value range checking.
+    fn process_escape(&mut self, content: &mut String, is_byte: bool) {
+        self.bump(); // consume backslash
+        let Some((ch, _)) = self.peek_char() else {
+            content.push('\\');
+            return;
+        };
+        const LEGAL: &[char] = &['t', 'b', 'r', 'n', 'f', 'v', '0', '\'', '\"', '\\'];
+        if LEGAL.contains(&ch) || (!is_byte && ch == '$') {
+            content.push('\\');
+            content.push(ch);
+            self.bump_char();
+            return;
+        }
+        if ch == 'u' {
+            self.process_unicode_escape(content);
+            return;
+        }
+        self.errors.push(LexError {
+            message: format!("unrecognized escape '\\{ch}'"),
+            pos: self.cur_pos(),
+            is_warning: false,
+        });
+        content.push('\\');
+        content.push(ch);
+        self.bump_char();
+    }
 
-    fn scan_string(&mut self, begin: Position, _is_jstring: bool) -> Token {
-        // "..." — may be single-quoted too; multiline raw strings `"""..."""` and
-        // raw strings `#"..."#` handled later. For M1, basic double-quoted string.
-        self.bump(); // opening "
-        let mut content = String::new();
+    /// Process `\\u{...}` unicode escape. Legal scalar range: 0x0..=0xD7FF or
+    /// 0xE000..=0x10FFFF (IsLegalUnicode). Off-range values get a diagnostic
+    /// whose position points at the `\\` start of the escape (matching official).
+    fn process_unicode_escape(&mut self, content: &mut String) {
+        // process_escape already consumed the backslash; step back one column so
+        // diagnostics point at the `\\` (official: MakeRange(old, ...), old=\\ pos).
+        let esc_begin = self.pos_before_backslash();
+        self.bump(); // consume 'u'
+        let Some((ch, _)) = self.peek_char() else {
+            return;
+        };
+        if ch != '{' {
+            self.errors.push(LexError {
+                message: format!("expected '{{' in unicode escape, found '{ch}'"),
+                pos: esc_begin,
+                is_warning: false,
+            });
+            return;
+        }
+        self.bump_char(); // consume '{'
+        let mut val: u32 = 0;
+        let mut digits = 0u32;
+        while let Some((h, _)) = self.peek_char() {
+            if let Some(d) = h.to_digit(16) {
+                val = (val << 4) | d;
+                digits += 1;
+                if digits > 8 {
+                    break;
+                }
+                self.bump_char();
+            } else {
+                break;
+            }
+        }
+        if digits == 0 {
+            self.errors.push(LexError {
+                message: "expected hexadecimal digit in unicode escape".into(),
+                pos: esc_begin,
+                is_warning: false,
+            });
+            return;
+        }
+        let Some((close, _)) = self.peek_char() else {
+            return;
+        };
+        if close != '}' {
+            self.errors.push(LexError {
+                message: format!(
+                    "expected '}}' or hexadecimal digit in unicode escape, found '{close}'"
+                ),
+                pos: esc_begin,
+                is_warning: false,
+            });
+            return;
+        }
+        self.bump_char(); // consume '}'
+        let legal = val <= 0xD7FF || (0xE000..=0x10FFFF).contains(&val);
+        if !legal {
+            self.errors.push(LexError {
+                message: format!("illegal unicode scalar value '\\u{{{val:x}}}'"),
+                pos: esc_begin,
+                is_warning: false,
+            });
+        }
+        content.push_str(&format!("\\u{{{val:x}}}"));
+    }
+
+    /// `#` — multiline raw string (e.g. `#\"...\"#`). M1 simplified: scan
+    /// until a `#` after a quote.
+    fn scan_hash(&mut self, begin: Position) -> Token {
+        // Count leading '#' (delimiter count).
+        let mut hashes = 0usize;
+        while self.peek() == Some(b'#') {
+            self.bump();
+            hashes += 1;
+        }
+        let content_start = self.pos;
+        // Scan until `#` at top level (raw: no escapes, quotes are literal).
         let mut closed = false;
-        loop {
-            match self.peek() {
-                None => break,
-                Some(b'\n') => break,
-                Some(b'"') => {
-                    self.bump();
+        let mut quote = None;
+        while let Some((ch, _)) = self.peek_char() {
+            if ch == '"' || ch == '\'' {
+                quote = Some(ch);
+            }
+            if ch == '#' {
+                // Raw string closes on '#' when we've seen a quote (delimiter).
+                if quote.is_some() {
+                    self.bump_char();
                     closed = true;
                     break;
                 }
-                Some(b'\\') => {
-                    self.bump();
-                    if let Some(c) = self.peek() {
-                        content.push(c as char);
-                        self.bump();
-                    }
-                }
-                Some(c) => {
-                    content.push(c as char);
-                    self.bump();
-                }
+                self.bump_char();
+            } else {
+                self.bump_char();
             }
         }
+        let text = self.src[content_start..self.pos].to_string();
         if !closed {
             self.errors.push(LexError {
-                message: "unterminated string literal".into(),
+                message: "unterminated raw string".into(),
                 pos: begin,
                 is_warning: false,
             });
         }
         let end = self.cur_pos();
-        Token::new(TokenKind::STRING_LITERAL, content, begin, end)
+        let _ = hashes;
+        Token::new(TokenKind::MULTILINE_RAW_STRING, text, begin, end)
     }
-
     // ---- symbols / operators ----
 
     fn scan_symbol(&mut self, begin: Position) -> Token {
@@ -888,5 +1045,70 @@ mod tests {
         let t2 = lex_all("var `a·` = 4");
         assert_eq!(t2[1].kind, TokenKind::IDENTIFIER);
         assert_eq!(t2[1].text, "a·");
+    }
+
+    #[test]
+    fn rune_and_byte_prefixes() {
+        // r'a' is a rune literal (char_literal); the `r` prefix is consumed.
+        let t = lex_all("let x = r'a'");
+        assert_eq!(t[3].kind, TokenKind::RUNE_LITERAL);
+        assert_eq!(t[3].text, "a");
+        // b'a' is a byte literal.
+        let t2 = lex_all("let y = b'a'");
+        assert_eq!(t2[3].kind, TokenKind::RUNE_BYTE_LITERAL);
+        // Bare `r`/`b` not followed by a quote stays an identifier.
+        assert_eq!(
+            kinds("let r = 1"),
+            vec![
+                TokenKind::LET,
+                TokenKind::IDENTIFIER,
+                TokenKind::ASSIGN,
+                TokenKind::INTEGER_LITERAL,
+            ]
+        );
+        assert_eq!(
+            kinds("var range = 1"),
+            vec![
+                TokenKind::VAR,
+                TokenKind::IDENTIFIER,
+                TokenKind::ASSIGN,
+                TokenKind::INTEGER_LITERAL,
+            ]
+        );
+    }
+
+    #[test]
+    fn string_literals_basic() {
+        let t = lex_all(r#"let s = "hello""#);
+        assert_eq!(t[3].kind, TokenKind::STRING_LITERAL);
+        assert_eq!(t[3].text, "hello");
+        // r"..." string form.
+        let t2 = lex_all(r#"let s = r"raw""#);
+        assert_eq!(t2[3].kind, TokenKind::STRING_LITERAL);
+        assert_eq!(t2[3].text, "raw");
+    }
+
+    #[test]
+    fn unicode_escape_illegal_scalar() {
+        // \\u{D800} is a surrogate (illegal scalar); error recorded, position
+        // points at the backslash (col 15 in the full source).
+        let mut lx = Lexer::new("let s = r'\\u{D800}'");
+        lx.tokenize();
+        assert_eq!(lx.errors.len(), 1);
+        assert!(lx.errors[0]
+            .message
+            .contains("illegal unicode scalar value"));
+        assert_eq!(lx.errors[0].pos.column, 11);
+        // \\u{10ffff} is legal — no error.
+        let mut lx2 = Lexer::new("let s = r'\\u{10ffff}'");
+        lx2.tokenize();
+        assert_eq!(lx2.errors.len(), 0);
+    }
+
+    #[test]
+    fn multiline_string() {
+        let src = "\"\"\"line1\nline2\"\"\"";
+        let t = lex_all(src);
+        assert_eq!(t[0].kind, TokenKind::MULTILINE_STRING);
     }
 }
