@@ -73,8 +73,9 @@ name = "cj-sema"
 version = "0.1.0"
 dependencies = [
  "cj-ast",
- "cj-cfg",
  "cj-diag",
+ "cj-lexer",
+ "cj-parser",
 ]
 
 [[package]]

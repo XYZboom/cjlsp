@@ -96,10 +96,13 @@ fn dump_ast(src: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Default: parse and report diagnostics (SCAN-format text).
+/// Default: parse + sema and report diagnostics (SCAN-format text).
 fn parse_and_report(src: &str, path: &str) -> ExitCode {
     let mut parser = Parser::new(src, Lexer::new(src).tokenize());
-    let _file = parser.run();
+    let file = parser.run();
+    // semantic analysis (symbol collection / redefinition detection)
+    let mut collector = cj_sema::Collector::new();
+    collector.collect_file(&file);
     let source_lines: Vec<String> = src.lines().map(String::from).collect();
     let fmt = cj_diag::TextFormatter {
         file_name: path,
@@ -107,7 +110,7 @@ fn parse_and_report(src: &str, path: &str) -> ExitCode {
     };
     let mut errors = 0;
     let mut warnings = 0;
-    for d in &parser.diags {
+    for d in parser.diags.iter().chain(collector.diags.iter()) {
         match d.severity {
             cj_diag::Severity::Warning => warnings += 1,
             _ => errors += 1,
@@ -116,7 +119,7 @@ fn parse_and_report(src: &str, path: &str) -> ExitCode {
     }
     if errors > 0 {
         eprint!("{}", cj_diag::render_summary(errors, warnings));
-    } else if parser.diags.is_empty() {
+    } else if parser.diags.is_empty() && collector.diags.is_empty() {
         eprintln!("// parse OK");
     } else {
         eprintln!("// warnings only");
