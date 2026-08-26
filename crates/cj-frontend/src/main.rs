@@ -1,23 +1,51 @@
 // cj-frontend: Cangjie frontend CLI (cjc-frontend compatible)
 //
-// M1: supports `cj-frontend <file.cj>` to lex a file and print the token stream.
-// Pipeline (parse/sema/dump-ast) lands in M2+.
+// Supports:
+//   cj-frontend <file.cj>              — lex + parse, print diagnostics (default)
+//   cj-frontend --dump-parse <file>    — token dump (official -frontend --dump-parse)
+//   cj-frontend --dump-ast <file>      — AST dump
 use std::env;
 use std::fs;
 use std::process::ExitCode;
 
-use cj_lexer::{lex_all, Lexer};
+use cj_lexer::Lexer;
+use cj_parser::Parser;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("usage: cj-frontend <file.cj>");
-        return ExitCode::from(2);
+    let mut mode = "parse";
+    let mut path: Option<&str> = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--dump-parse" | "--dump-tokens" => {
+                mode = "tokens";
+                i += 1;
+            }
+            "--dump-ast" => {
+                mode = "ast";
+                i += 1;
+            }
+            "-frontend" => {
+                i += 1;
+            }
+            s if s.starts_with('-') && s != "-" => {
+                // ignore unknown flags for now (e.g. -o, --diagnostic-format)
+                i += 1;
+            }
+            s => {
+                path = Some(s);
+                i += 1;
+            }
+        }
     }
 
-    let path = &args[1];
-    // Read as raw bytes: Cangjie sources may contain intentionally invalid UTF-8
-    // (lexer must diagnose them, not crash — see LLT Lexer/Unicode/illegal.cj).
+    let Some(path) = path else {
+        eprintln!("usage: cj-frontend [--dump-parse|--dump-ast] <file.cj>");
+        return ExitCode::from(2);
+    };
+
+    // Read as raw bytes (sources may contain invalid UTF-8 for diagnostics).
     let bytes = match fs::read(path) {
         Ok(b) => b,
         Err(e) => {
@@ -25,46 +53,78 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let (src, had_invalid) = lossy_utf8(&bytes);
-    if had_invalid {
-        eprintln!(
-            "// note: source contains invalid UTF-8 bytes ({} replaced)",
-            src.len()
-        );
-    }
+    let src = String::from_utf8_lossy(&bytes).into_owned();
 
-    // Full token stream including NL/comments/END (what a real pipeline consumes).
-    let mut lexer = Lexer::new(&src);
+    match mode {
+        "tokens" => dump_tokens(&src, path),
+        "ast" => dump_ast(&src),
+        _ => parse_and_report(&src, path),
+    }
+}
+
+/// `--dump-parse`: print every token as `<file:line:col> value kind`
+/// (official DumpTokens format).
+fn dump_tokens(src: &str, path: &str) -> ExitCode {
+    let mut lexer = Lexer::new(src);
     let tokens = lexer.tokenize();
-    for t in tokens.iter().filter(|t| {
-        t.kind != cj_lexer::TokenKind::COMMENT
-            && t.kind != cj_lexer::TokenKind::NL
-            && t.kind != cj_lexer::TokenKind::END
-    }) {
-        if t.text.is_empty() {
-            println!("{}:{}:{}", t.begin.line, t.begin.column, t.kind);
+    for t in tokens {
+        if t.kind == cj_lexer::TokenKind::END {
+            break;
+        }
+        let position = format!("<{path}:{}:{}>", t.begin.line, t.begin.column);
+        if t.kind == cj_lexer::TokenKind::COMMENT {
+            println!("{} {}", t.kind.value_str(), position);
+        } else if t.kind == cj_lexer::TokenKind::NL {
+            println!("{} {}", t.kind.value_str(), position);
         } else {
-            println!(
-                "{}:{}:{} {:?}",
-                t.begin.line, t.begin.column, t.kind, t.text
-            );
+            println!("{} {} {}", t.text, t.kind.value_str(), position);
         }
     }
-
-    for e in &lexer.errors {
-        eprintln!("error: {} at {}:{}", e.message, e.pos.line, e.pos.column);
-    }
-
-    // Sanity: lexing should not fail on any input; count tokens.
-    eprintln!("// {} tokens (excluding trivia)", lex_all(&src).len());
-
     ExitCode::SUCCESS
 }
 
-/// Decode bytes lossily (invalid UTF-8 -> U+FFFD), returning whether any bytes
-/// were replaced. Cangjie sources may intentionally contain invalid UTF-8 for
-/// lexer diagnostics; we must lex them rather than fail.
-fn lossy_utf8(bytes: &[u8]) -> (String, bool) {
-    let was_valid = std::str::from_utf8(bytes).is_ok();
-    (String::from_utf8_lossy(bytes).into_owned(), !was_valid)
+/// `--dump-ast`: parse and print the AST (M2c refines the exact format).
+fn dump_ast(src: &str) -> ExitCode {
+    let mut parser = Parser::new(src, Lexer::new(src).tokenize());
+    let file = parser.run();
+    print_file(&file, 0);
+    for d in &parser.diags {
+        eprintln!("error: {} at {}:{}", d.message, d.line, d.col);
+    }
+    ExitCode::SUCCESS
+}
+
+/// Default: parse and report diagnostics (SCAN-format text).
+fn parse_and_report(src: &str, path: &str) -> ExitCode {
+    let mut parser = Parser::new(src, Lexer::new(src).tokenize());
+    let _file = parser.run();
+    for d in &parser.diags {
+        if d.is_warning {
+            eprintln!("warning: {}", d.message);
+        } else {
+            eprintln!("error: {}", d.message);
+        }
+        eprintln!(" ==> {path}:{}:{}:", d.line, d.col);
+    }
+    if parser.diags.is_empty() {
+        eprintln!("// parse OK");
+    } else {
+        eprintln!(
+            "// {} error(s) generated",
+            parser.diags.iter().filter(|d| !d.is_warning).count()
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn print_file(file: &cj_ast::File, _indent: usize) {
+    if let Some(pkg) = &file.package {
+        println!("package {pkg}");
+    }
+    for imp in &file.imports {
+        println!("import {}", imp.path.join("."));
+    }
+    for d in &file.decls {
+        println!("{d:?}");
+    }
 }

@@ -242,6 +242,21 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
                 pos: pos_of(&tok),
             })
         }
+        TokenKind::MAIN => {
+            // bare `main()` — Cangjie allows top-level main without `func`
+            p.advance();
+            // consume (and discard) params / return type — Main decl carries
+            // only the body in our AST; the tokens still must be read.
+            let _ = parse_param_list(p);
+            if p.eat(TokenKind::COLON) {
+                let _ = parse_type(p);
+            }
+            let body = parse_body(p);
+            Some(Decl::Main {
+                body,
+                pos: pos_of(&tok),
+            })
+        }
         TokenKind::PACKAGE => {
             // nested package (rare); treat as package decl
             p.advance();
