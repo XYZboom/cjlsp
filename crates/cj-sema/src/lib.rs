@@ -1,16 +1,23 @@
-// cj-sema: semantic analysis — symbol table + collector.
+// cj-sema: semantic analysis — symbol table + parallel file collector.
 //
-// Behavioral reference: cangjie_compiler/src/Sema/Collector.cpp (scope-based
-// symbol collection, redefinition detection). Minimal first milestone: collect
-// top-level + class-body declarations into scoped symbol tables and report
-// `sema_redefinition` for duplicate names, matching cjc output.
+// Design follows the Cangjie language spec (Chapter 03 — 名字、作用域、变量):
+//   * keywords/vars/funcs/types/generic params/packages share ONE namespace per
+//     scope; no same-name decls allowed except overloads
+//   * top-level funcs/types are visible across the whole package
+//   * top-level vars are visible from their definition point onward (order
+//     matters — creates a dependency graph for initialization)
+//   * local names shadow outer names; inner scopes have higher level
+//
+// For parallelism, collection is per-file (no cross-file state in the collector):
+// each worker builds its file's local scope; the merged package table resolves
+// cross-file references. Dependency analysis then runs over the merged table.
 
 use cj_ast::{CodePos, Decl, File};
 use cj_diag::Diag;
 use std::collections::HashMap;
 
-/// Kind of a collected symbol (for future resolution / LSP).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Kind of a collected symbol (for resolution / LSP).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SymbolKind {
     Func,
     Class,
@@ -19,6 +26,7 @@ pub enum SymbolKind {
     Enum,
     TypeAlias,
     Var,
+    Const,
     Prop,
     Package,
 }
@@ -35,7 +43,7 @@ impl SymbolKind {
             Decl::Var { .. } => SymbolKind::Var,
             Decl::Prop { .. } => SymbolKind::Prop,
             Decl::Package { .. } => SymbolKind::Package,
-            _ => return None, // decls without a namespace name (extend, ctor, ...)
+            _ => return None,
         })
     }
 }
@@ -86,13 +94,31 @@ impl SymbolTable {
     pub fn lookup(&self, name: &str) -> Option<&Symbol> {
         self.scopes.iter().rev().find_map(|s| s.symbols.get(name))
     }
+
+    /// All symbols declared at the outermost (package) scope.
+    pub fn top_level_symbols(&self) -> Vec<Symbol> {
+        self.scopes
+            .first()
+            .map(|s| s.symbols.values().cloned().collect())
+            .unwrap_or_default()
+    }
 }
 
-/// Collects declarations from a File into scopes, emitting diagnostics.
+/// Result of collecting one file: its local top-level symbols and diagnostics.
+/// This is the unit of parallelism — each file is collected independently.
+#[derive(Debug, Default)]
+pub struct FileResult {
+    /// Top-level symbols declared in this file (package-visible).
+    pub symbols: Vec<Symbol>,
+    pub diags: Vec<Diag>,
+}
+
+/// Collects declarations from one File into a local scope, emitting
+/// diagnostics for same-scope redefinition (spec: shared namespace).
 #[derive(Debug, Default)]
 pub struct Collector {
-    pub table: SymbolTable,
-    pub diags: Vec<Diag>,
+    table: SymbolTable,
+    diags: Vec<Diag>,
 }
 
 impl Collector {
@@ -101,12 +127,16 @@ impl Collector {
     }
 
     /// Collect a whole file: one top-level scope, then class bodies recurse.
-    pub fn collect_file(&mut self, file: &File) {
+    pub fn collect_file(mut self, file: &File) -> FileResult {
         self.table.push_scope();
         for d in &file.decls {
             self.collect_decl(d);
         }
-        self.table.pop_scope();
+        let symbols = self.table.top_level_symbols();
+        FileResult {
+            symbols,
+            diags: std::mem::take(&mut self.diags),
+        }
     }
 
     /// Collect one declaration: declare its name (reporting redefinition),
@@ -123,16 +153,13 @@ impl Collector {
             pos,
         };
         if let Some(prev) = self.table.declare(sym) {
-            let mut diag = Diag::error(
+            let diag = Diag::error(
                 pos.line,
                 pos.col,
-                format!("redefinition of declaration '{}'", name),
+                format!("redefinition of declaration '{name}'"),
             )
             .with_span(pos.end_line, pos.end_col)
             .with_note(format!("'{}' is previously declared here", prev.name));
-            // official attaches the note at the previous declaration's location
-            // (our Diag model attaches notes without positions; keep the text).
-            let _ = &mut diag;
             self.diags.push(diag);
         }
         // recurse into members
@@ -148,6 +175,30 @@ impl Collector {
             }
             _ => {}
         }
+    }
+}
+
+/// Package-level symbol table: merged from all files' top-level symbols.
+/// This is where cross-file name resolution happens (spec: top-level names are
+/// visible across the whole package).
+#[derive(Debug, Default)]
+pub struct PackageTable {
+    /// name -> symbols declared at package level across all files.
+    pub symbols: HashMap<String, Vec<Symbol>>,
+}
+
+impl PackageTable {
+    pub fn merge(&mut self, file_result: &FileResult) {
+        for sym in &file_result.symbols {
+            self.symbols
+                .entry(sym.name.clone())
+                .or_default()
+                .push(sym.clone());
+        }
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<&Symbol> {
+        self.symbols.get(name)?.first()
     }
 }
 
@@ -204,10 +255,10 @@ mod tests {
     #[test]
     fn top_level_redefinition() {
         let (file, _) = parse_source("let x = 1\nlet x = 2\n");
-        let mut c = Collector::new();
-        c.collect_file(&file);
-        assert!(!c.diags.is_empty(), "expected redefinition diag");
-        assert!(c.diags[0]
+        let c = Collector::new();
+        let r = c.collect_file(&file);
+        assert!(!r.diags.is_empty(), "expected redefinition diag");
+        assert!(r.diags[0]
             .message
             .contains("redefinition of declaration 'x'"));
     }
@@ -215,20 +266,34 @@ mod tests {
     #[test]
     fn distinct_names_ok() {
         let (file, _) = parse_source("let x = 1\nlet y = 2\n");
-        let mut c = Collector::new();
-        c.collect_file(&file);
+        let c = Collector::new();
+        let r = c.collect_file(&file);
         assert!(
-            c.diags.is_empty(),
+            r.diags.is_empty(),
             "no redefinition expected: {:?}",
-            c.diags
+            r.diags
         );
     }
 
     #[test]
     fn class_member_redefinition() {
         let (file, _) = parse_source("class A { let x = 1; let x = 2 }");
-        let mut c = Collector::new();
-        c.collect_file(&file);
-        assert!(!c.diags.is_empty(), "expected member redefinition");
+        let c = Collector::new();
+        let r = c.collect_file(&file);
+        assert!(!r.diags.is_empty(), "expected member redefinition");
+    }
+
+    #[test]
+    fn package_merge_cross_file() {
+        // Simulate two files in one package: top-level names merge.
+        let (f1, _) = parse_source("func a() {}");
+        let (f2, _) = parse_source("func b() {}");
+        let r1 = Collector::new().collect_file(&f1);
+        let r2 = Collector::new().collect_file(&f2);
+        let mut pkg = PackageTable::default();
+        pkg.merge(&r1);
+        pkg.merge(&r2);
+        assert!(pkg.lookup("a").is_some());
+        assert!(pkg.lookup("b").is_some());
     }
 }
