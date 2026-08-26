@@ -60,7 +60,12 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
                 // operator overload names: `+`, `==`, `[]`, `()` etc.
                 k if k.operator_like() => p.advance().text,
                 _ => {
-                    p.error(&name_tok, "expected function name");
+                    let found = crate::token_display_text(name_tok.kind);
+                    p.error_id(
+                        &name_tok,
+                        cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                        &["func", "name", &found],
+                    );
                     String::new()
                 }
             };
@@ -89,7 +94,12 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             p.advance();
             let name_tok = p.peek_token().clone();
             if !name_tok.kind.is_name_like() {
-                p.error(&name_tok, "expected variable name");
+                let found = crate::token_display_text(name_tok.kind);
+                p.error_id(
+                    &name_tok,
+                    cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                    &["variable", "name", &found],
+                );
                 return None;
             }
             p.advance();
@@ -339,11 +349,12 @@ fn parse_param_list(p: &mut Parser) -> Vec<Param> {
             });
         } else {
             // param without name? error recovery
-            let msg = format!(
-                "expected parameter name, found '{}'",
-                name_tok.kind.value_str()
+            let found = crate::token_display_text(name_tok.kind);
+            p.error_id(
+                &name_tok,
+                cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                &["parameter", "name", &found],
             );
-            p.error(&name_tok, &msg);
             p.advance();
         }
         if !p.eat(TokenKind::COMMA) {
@@ -402,7 +413,8 @@ fn parse_class_body(p: &mut Parser) -> Vec<Decl> {
         } else {
             // recovery
             let t = p.peek_token().clone();
-            p.error(&t, "unexpected token in class body");
+            let found = crate::token_display_text(t.kind);
+            p.error_id(&t, cj_diag::DiagId::PARSE_EXPECTED_DECL, &[&found]);
             p.advance();
         }
     }
@@ -417,7 +429,12 @@ fn parse_enum_cases(p: &mut Parser) -> Vec<EnumCase> {
         p.eat(TokenKind::BITOR); // optional leading |
         let name_tok = p.peek_token().clone();
         if !name_tok.kind.is_name_like() {
-            p.error(&name_tok, "expected enum case name");
+            let found = crate::token_display_text(name_tok.kind);
+            p.error_id(
+                &name_tok,
+                cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                &["enum", "case name", &found],
+            );
             p.advance();
             continue;
         }

@@ -151,6 +151,38 @@ impl<'a> Parser<'a> {
         self.diags.push(cj_diag::Diag::warning(line, col, msg));
     }
 
+    /// Record an error from an official diagnostic template (DiagId), filling
+    /// its %s placeholders. Attaches the template's `here`/`note` text and the
+    /// token's span so the SCAN output matches cjc byte-for-byte.
+    pub fn error_id(&mut self, tok: &Token, id: cj_diag::DiagId, args: &[&str]) {
+        let t = cj_diag::templates::template(id);
+        let msg = fill_placeholders(t.message, args);
+        let mut d = cj_diag::Diag::error(tok.begin.line, tok.begin.column, msg)
+            .with_span(tok.end.line, tok.end.column);
+        if let Some(here) = t.here {
+            d = d.with_here(fill_placeholders(here, args));
+        }
+        for n in t.notes {
+            d = d.with_note(fill_placeholders(n, args));
+        }
+        self.diags.push(d);
+    }
+
+    /// Same as [`Parser::error_id`] but for warnings.
+    pub fn warn_id(&mut self, tok: &Token, id: cj_diag::DiagId, args: &[&str]) {
+        let t = cj_diag::templates::template(id);
+        let msg = fill_placeholders(t.message, args);
+        let mut d = cj_diag::Diag::warning(tok.begin.line, tok.begin.column, msg)
+            .with_span(tok.end.line, tok.end.column);
+        if let Some(here) = t.here {
+            d = d.with_here(fill_placeholders(here, args));
+        }
+        for n in t.notes {
+            d = d.with_note(fill_placeholders(n, args));
+        }
+        self.diags.push(d);
+    }
+
     pub fn token_display(&self, k: TokenKind) -> String {
         match k.literal() {
             "" => k.value_str().to_string(),
@@ -203,9 +235,59 @@ impl<'a> Parser<'a> {
             ""
         }
     }
+}
 
-    // ---- entry point ----
+pub fn fill_placeholders(template: &str, args: &[&str]) -> String {
+    if args.is_empty() {
+        return template.to_string();
+    }
+    let mut out = String::with_capacity(template.len() + 16);
+    let mut arg_iter = args.iter();
+    let mut rest = template;
+    while let Some(pos) = rest.find("%s") {
+        out.push_str(&rest[..pos]);
+        match arg_iter.next() {
+            Some(a) => out.push_str(a),
+            None => out.push_str("%s"),
+        }
+        rest = &rest[pos + 2..];
+    }
+    out.push_str(rest);
+    out
+}
 
+/// Render a token's display form for diagnostics, matching cjc:
+/// - keywords/identifiers: the raw text (e.g. `func`, `main`)
+/// - multi-char punctuation/operators: `'...'` (e.g. `'@!'`, `'('`)
+/// - literals: `'<integer literal>'` style
+pub fn token_display_text(k: TokenKind) -> String {
+    match k {
+        TokenKind::IDENTIFIER => "identifier".to_string(),
+        TokenKind::INTEGER_LITERAL => "integer literal".to_string(),
+        TokenKind::FLOAT_LITERAL => "float literal".to_string(),
+        TokenKind::STRING_LITERAL => "string literal".to_string(),
+        TokenKind::RUNE_LITERAL => "rune literal".to_string(),
+        TokenKind::BOOL_LITERAL => "boolean literal".to_string(),
+        TokenKind::NL => "'<NL>'".to_string(),
+        TokenKind::END => "end of file".to_string(),
+        TokenKind::COMMENT => "comment".to_string(),
+        // symbols/operators: rendered as quoted literal text, e.g. '@!', '('
+        _ if k.symbol_like() => {
+            let lit = k.literal();
+            if lit.is_empty() {
+                format!("'{}'", k.value_str())
+            } else {
+                format!("'{lit}'")
+            }
+        }
+        // keywords fall through to their text form (e.g. `func`)
+        _ => k.value_str().to_string(),
+    }
+}
+
+// ---- entry point ----
+
+impl<'a> Parser<'a> {
     /// Parse a whole file: optional `package`, imports, then top-level decls.
     pub fn parse_file(&mut self) -> File {
         let mut package = None;
@@ -236,9 +318,11 @@ impl<'a> Parser<'a> {
             match parse_decl(self, false) {
                 Some(d) => decls.push(d),
                 None => {
-                    // recovery: skip one token to avoid infinite loop
+                    // recovery: official parse_expected_decl
+                    // "expected declaration, found %s"
                     let t = self.peek_token().clone();
-                    self.error(&t, "unexpected token in declaration");
+                    let found = token_display_text(t.kind);
+                    self.error_id(&t, cj_diag::DiagId::PARSE_EXPECTED_DECL, &[&found]);
                     self.advance();
                 }
             }

@@ -882,4 +882,24 @@ impl TokenKind {
                 | TokenKind::FEATURES
         )
     }
+
+    /// True for punctuation/operator tokens (rendered as `'...'` in diagnostics).
+    /// Keywords are NOT symbols.
+    pub fn symbol_like(self) -> bool {
+        !self.is_name_like()
+            && !matches!(
+                self,
+                TokenKind::IDENTIFIER
+                    | TokenKind::INTEGER_LITERAL
+                    | TokenKind::FLOAT_LITERAL
+                    | TokenKind::STRING_LITERAL
+                    | TokenKind::RUNE_LITERAL
+                    | TokenKind::RUNE_BYTE_LITERAL
+                    | TokenKind::MULTILINE_STRING
+                    | TokenKind::BOOL_LITERAL
+                    | TokenKind::NL
+                    | TokenKind::END
+                    | TokenKind::COMMENT
+            )
+    }
 }

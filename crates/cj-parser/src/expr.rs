@@ -168,11 +168,12 @@ fn parse_postfix(p: &mut Parser) -> Expr {
                         pos,
                     };
                 } else {
-                    let msg = format!(
-                        "expected identifier after '.', found '{}'",
-                        name_tok.kind.value_str()
+                    let found = crate::token_display_text(name_tok.kind);
+                    p.error_id(
+                        &name_tok,
+                        cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                        &["member", "name", &found],
                     );
-                    p.error(&name_tok, &msg);
                     break;
                 }
             }
@@ -388,8 +389,8 @@ fn parse_atom(p: &mut Parser) -> Expr {
         }
         _ => {
             // unknown atom — emit error, recover
-            let msg = format!("expected expression, found '{}'", tok.kind.value_str());
-            p.error(&tok, &msg);
+            let found = crate::token_display_text(tok.kind);
+            p.error_id(&tok, cj_diag::DiagId::PARSE_EXPECTED_EXPRESSION, &[&found]);
             p.advance();
             let pos = pos_of(&tok);
             Expr::Invalid(pos)
@@ -590,8 +591,8 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
             if let Some(pat) = parse_literal_pattern(p) {
                 pat
             } else {
-                let msg = format!("expected pattern, found '{}'", tok.kind.value_str());
-                p.error(&tok, &msg);
+                let found = crate::token_display_text(tok.kind);
+                p.error_id(&tok, cj_diag::DiagId::PARSE_EXPECTED_PATTERN, &[&found]);
                 p.advance();
                 Pattern::Invalid(pos_of(&tok))
             }
