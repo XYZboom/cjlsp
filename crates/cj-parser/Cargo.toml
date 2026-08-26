@@ -7,4 +7,5 @@ description = "Cangjie parser: Token stream -> AST"
 
 [dependencies]
 cj-ast = { path = "../cj-ast" }
+cj-diag = { path = "../cj-diag" }
 cj-lexer = { path = "../cj-lexer" }

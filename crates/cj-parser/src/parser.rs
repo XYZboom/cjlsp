@@ -7,20 +7,10 @@
 // positions; the parser always recovers and continues (matching cjc behavior).
 
 use cj_ast::{CodePos, File, ImportSpec};
+pub use cj_diag::Diag;
 use cj_lexer::{Token, TokenKind};
 
 use crate::decl::parse_decl;
-
-/// A parser diagnostic (error/warning) in text form, position-anchored.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diag {
-    pub message: String,
-    pub line: u32,
-    pub col: u32,
-    pub end_line: u32,
-    pub end_col: u32,
-    pub is_warning: bool,
-}
 
 /// Parser over a token stream (all tokens including NL/comments/END).
 pub struct Parser<'a> {
@@ -148,14 +138,7 @@ impl<'a> Parser<'a> {
 
     /// Record an error at a position.
     pub fn error_at(&mut self, line: u32, col: u32, msg: &str) {
-        self.diags.push(Diag {
-            message: msg.to_string(),
-            line,
-            col,
-            end_line: line,
-            end_col: col,
-            is_warning: false,
-        });
+        self.diags.push(cj_diag::Diag::error(line, col, msg));
     }
 
     /// Record an error anchored to a token.
@@ -165,14 +148,7 @@ impl<'a> Parser<'a> {
 
     /// Record a warning.
     pub fn warn_at(&mut self, line: u32, col: u32, msg: &str) {
-        self.diags.push(Diag {
-            message: msg.to_string(),
-            line,
-            col,
-            end_line: line,
-            end_col: col,
-            is_warning: true,
-        });
+        self.diags.push(cj_diag::Diag::warning(line, col, msg));
     }
 
     pub fn token_display(&self, k: TokenKind) -> String {

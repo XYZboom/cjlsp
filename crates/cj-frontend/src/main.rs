@@ -75,7 +75,9 @@ fn dump_tokens(src: &str, path: &str) -> ExitCode {
         if t.kind == cj_lexer::TokenKind::COMMENT {
             println!("{} {}", t.kind.value_str(), position);
         } else if t.kind == cj_lexer::TokenKind::NL {
-            println!("{} {}", t.kind.value_str(), position);
+            // official: Println(tok == "\n" ? "\\n" : "\\r\\n", KIND, position)
+            let value = if t.text == "\n" { "\\n" } else { "\\r\\n" };
+            println!("{value} {} {}", t.kind.value_str(), position);
         } else {
             println!("{} {} {}", t.text, t.kind.value_str(), position);
         }
@@ -98,21 +100,26 @@ fn dump_ast(src: &str) -> ExitCode {
 fn parse_and_report(src: &str, path: &str) -> ExitCode {
     let mut parser = Parser::new(src, Lexer::new(src).tokenize());
     let _file = parser.run();
+    let source_lines: Vec<String> = src.lines().map(String::from).collect();
+    let fmt = cj_diag::TextFormatter {
+        file_name: path,
+        source_lines: &source_lines,
+    };
+    let mut errors = 0;
+    let mut warnings = 0;
     for d in &parser.diags {
-        if d.is_warning {
-            eprintln!("warning: {}", d.message);
-        } else {
-            eprintln!("error: {}", d.message);
+        match d.severity {
+            cj_diag::Severity::Warning => warnings += 1,
+            _ => errors += 1,
         }
-        eprintln!(" ==> {path}:{}:{}:", d.line, d.col);
+        eprint!("{}", fmt.render(d));
     }
-    if parser.diags.is_empty() {
+    if errors > 0 {
+        eprint!("{}", cj_diag::render_summary(errors, warnings));
+    } else if parser.diags.is_empty() {
         eprintln!("// parse OK");
     } else {
-        eprintln!(
-            "// {} error(s) generated",
-            parser.diags.iter().filter(|d| !d.is_warning).count()
-        );
+        eprintln!("// warnings only");
     }
     ExitCode::SUCCESS
 }
