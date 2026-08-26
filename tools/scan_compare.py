@@ -14,9 +14,11 @@ Usage:
 """
 from __future__ import annotations
 import argparse
+import os
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 FRONTEND = "/root/Code/cangjie/cj-lang/target/debug/cj-frontend"
@@ -104,6 +106,8 @@ def main():
     ap.add_argument("files", nargs="+")
     ap.add_argument("--dir", action="store_true", help="treat args as directories")
     ap.add_argument("--verbose", "-v", action="store_true")
+    ap.add_argument("--jobs", "-j", type=int, default=0,
+                    help="parallel workers (default: min(8, cpu_count))")
     args = ap.parse_args()
 
     targets: list[str] = []
@@ -114,18 +118,32 @@ def main():
     else:
         targets = args.files
 
+    # Parallel execution (subprocess-bound; GIL irrelevant). Deterministic
+    # output: results are keyed by path and sorted before printing.
+    jobs = args.jobs or min(8, (os.cpu_count() or 1))
+    results_map: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = {pool.submit(compare_one, t, args.verbose): t for t in targets}
+        for fut in as_completed(futures):
+            t = futures[fut]
+            try:
+                results_map[t] = fut.result()
+            except Exception as e:  # noqa: BLE001 - keep going on per-file errors
+                print(f"error on {t}: {e}", file=sys.stderr)
+
     total_match = 0
     total_lines = 0
     scan_files = 0
     results = []
-    for t in targets:
-        r = compare_one(t, args.verbose)
-        if r["scan"]:
-            scan_files += 1
-            total_match += r["matched"]
-            total_lines += r["total"]
-            pct = (r["matched"] / r["total"] * 100) if r["total"] else 100
-            results.append((pct, r["file"], r["matched"], r["total"]))
+    for t in targets:  # deterministic order
+        r = results_map.get(t)
+        if not r or not r["scan"]:
+            continue
+        scan_files += 1
+        total_match += r["matched"]
+        total_lines += r["total"]
+        pct = (r["matched"] / r["total"] * 100) if r["total"] else 100
+        results.append((pct, r["file"], r["matched"], r["total"]))
 
     results.sort()
     print(f"\nSCAN files: {scan_files}, total expected lines: {total_lines}, "

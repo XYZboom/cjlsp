@@ -1,0 +1,10 @@
+# Project-local cargo configuration.
+#
+# - jobs: use all available cores for compilation (12-core machine).
+#   Cargo defaults to parallel builds, but pinning it explicitly keeps CI and
+#   shell environments from silently falling back to single-threaded builds.
+#
+# - Note: rsproxy mirror lives in the user-level ~/.cargo/config.toml.
+
+[build]
+jobs = 12
