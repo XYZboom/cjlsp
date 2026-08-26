@@ -691,6 +691,10 @@ impl TokenKind {
 
 /// Static keyword identifier -> TokenKind lookup (empty literal tokens excluded).
 pub fn lookup_keyword(s: &str) -> Option<TokenKind> {
+    // true/false are lexed as BOOL_LITERAL tokens (official Lexer.cpp LookupKeyword map).
+    if s == "true" || s == "false" {
+        return Some(TokenKind::BOOL_LITERAL);
+    }
     Some(match s {
         "is" => TokenKind::IS,
         "as" => TokenKind::AS,
@@ -782,5 +786,100 @@ use std::fmt;
 impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.value_str())
+    }
+}
+
+impl TokenKind {
+    /// True for identifier-like tokens (IDENTIFIER or backquoted identifier).
+    /// Keywords that can double as identifiers in Cangjie (is/as/main/etc.)
+    /// are intentionally NOT included — the lexer already classifies them.
+    pub fn is_identifier_like(self) -> bool {
+        matches!(self, TokenKind::IDENTIFIER)
+    }
+
+    /// True for operator-overload names usable after `operator func`
+    /// (e.g. `+`, `==`, `[]`, `()`).
+    pub fn operator_like(self) -> bool {
+        matches!(
+            self,
+            TokenKind::ADD
+                | TokenKind::SUB
+                | TokenKind::MUL
+                | TokenKind::DIV
+                | TokenKind::MOD
+                | TokenKind::EXP
+                | TokenKind::EQUAL
+                | TokenKind::NOTEQ
+                | TokenKind::LT
+                | TokenKind::GT
+                | TokenKind::LE
+                | TokenKind::GE
+                | TokenKind::AND
+                | TokenKind::OR
+                | TokenKind::BITAND
+                | TokenKind::BITOR
+                | TokenKind::BITXOR
+                | TokenKind::LSHIFT
+                | TokenKind::RSHIFT
+                | TokenKind::LSQUARE
+                | TokenKind::RSQUARE
+                | TokenKind::LPAREN
+                | TokenKind::RPAREN
+                | TokenKind::ASSIGN
+                | TokenKind::ADD_ASSIGN
+                | TokenKind::SUB_ASSIGN
+                | TokenKind::MUL_ASSIGN
+                | TokenKind::DIV_ASSIGN
+                | TokenKind::MOD_ASSIGN
+                | TokenKind::EXP_ASSIGN
+                | TokenKind::BITAND_ASSIGN
+                | TokenKind::BITOR_ASSIGN
+                | TokenKind::BITXOR_ASSIGN
+                | TokenKind::LSHIFT_ASSIGN
+                | TokenKind::RSHIFT_ASSIGN
+                | TokenKind::INCR
+                | TokenKind::DECR
+        )
+    }
+
+    /// True for tokens that can be used as a NAME anywhere (identifier or
+    /// keyword-as-name, matching official `ParseIdentifierFromToken`).
+    /// Excludes pure punctuation/operators/literals.
+    pub fn is_name_like(self) -> bool {
+        matches!(
+            self,
+            TokenKind::IDENTIFIER
+                | TokenKind::MAIN
+                | TokenKind::IS
+                | TokenKind::AS
+                | TokenKind::IN
+                | TokenKind::NOT_IN
+                | TokenKind::MATCH
+                | TokenKind::WHERE
+                | TokenKind::EXTEND
+                | TokenKind::WITH
+                | TokenKind::PROP
+                | TokenKind::STATIC
+                | TokenKind::PUBLIC
+                | TokenKind::PRIVATE
+                | TokenKind::INTERNAL
+                | TokenKind::PROTECTED
+                | TokenKind::OVERRIDE
+                | TokenKind::REDEF
+                | TokenKind::ABSTRACT
+                | TokenKind::SEALED
+                | TokenKind::OPEN
+                | TokenKind::FOREIGN
+                | TokenKind::INOUT
+                | TokenKind::MUT
+                | TokenKind::UNSAFE
+                | TokenKind::OPERATOR
+                | TokenKind::SPAWN
+                | TokenKind::SYNCHRONIZED
+                | TokenKind::UPPERBOUND
+                | TokenKind::COMMON
+                | TokenKind::SPECIFIC
+                | TokenKind::FEATURES
+        )
     }
 }

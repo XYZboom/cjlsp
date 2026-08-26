@@ -262,8 +262,8 @@ pub enum Pattern {
     },
     /// CONST_PATTERN
     Const {
-        /// const binding name
-        name: String,
+        /// literal constant (ConstPattern.literal)
+        literal: Option<Box<Expr>>,
         pos: CodePos,
     },
     /// TUPLE_PATTERN
@@ -515,8 +515,10 @@ pub enum Expr {
     },
     /// LET_PATTERN_DESTRUCTOR
     LetPatternDestructor {
-        /// destructuring pattern
-        pattern: Pattern,
+        /// patterns to be destructed
+        patterns: Vec<Pattern>,
+        /// initializer expression
+        initializer: Box<Expr>,
         pos: CodePos,
     },
     /// TOKEN_PART
@@ -662,6 +664,10 @@ pub enum Decl {
     Func {
         /// function name
         name: String,
+        /// public modifier
+        is_public: bool,
+        /// abstract modifier
+        is_abstract: bool,
         /// generic parameters
         type_params: Vec<TypeParam>,
         /// parameters
@@ -676,6 +682,8 @@ pub enum Decl {
     Macro {
         /// macro name
         name: String,
+        /// public modifier
+        is_public: bool,
         /// parameters
         params: Vec<Param>,
         /// macro body
@@ -686,6 +694,14 @@ pub enum Decl {
     Class {
         /// class name
         name: String,
+        /// public modifier
+        is_public: bool,
+        /// abstract modifier
+        is_abstract: bool,
+        /// open modifier
+        is_open: bool,
+        /// sealed modifier
+        is_sealed: bool,
         /// generic parameters
         type_params: Vec<TypeParam>,
         /// parent types (<: A, B)
@@ -698,6 +714,8 @@ pub enum Decl {
     Interface {
         /// interface name
         name: String,
+        /// public modifier
+        is_public: bool,
         /// generic parameters
         type_params: Vec<TypeParam>,
         /// parent interfaces
@@ -708,6 +726,8 @@ pub enum Decl {
     },
     /// EXTEND_DECL
     Extend {
+        /// public modifier
+        is_public: bool,
         /// extended type
         target: Type,
         /// extension members
@@ -718,6 +738,8 @@ pub enum Decl {
     Enum {
         /// enum name
         name: String,
+        /// public modifier
+        is_public: bool,
         /// generic parameters
         type_params: Vec<TypeParam>,
         /// enum cases
@@ -728,6 +750,10 @@ pub enum Decl {
     Struct {
         /// struct name
         name: String,
+        /// public modifier
+        is_public: bool,
+        /// open modifier
+        is_open: bool,
         /// generic parameters
         type_params: Vec<TypeParam>,
         /// struct members
@@ -738,12 +764,16 @@ pub enum Decl {
     TypeAlias {
         /// alias name
         name: String,
+        /// public modifier
+        is_public: bool,
         /// aliased type
         target: Type,
         pos: CodePos,
     },
     /// PRIMARY_CTOR_DECL
     PrimaryCtor {
+        /// public modifier
+        is_public: bool,
         /// constructor parameters
         params: Vec<Param>,
         /// constructor body
@@ -762,6 +792,8 @@ pub enum Decl {
         name: String,
         /// var vs let
         is_mutable: bool,
+        /// public modifier
+        is_public: bool,
         /// declared type
         ty: Option<Type>,
         /// initializer
@@ -772,6 +804,8 @@ pub enum Decl {
     Prop {
         /// property name
         name: String,
+        /// public modifier
+        is_public: bool,
         /// static modifier
         is_static: bool,
         /// property type
