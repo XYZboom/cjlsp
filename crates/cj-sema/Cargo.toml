@@ -9,6 +9,5 @@ description = "Cangjie semantic analysis: symbol tables, name resolution, type c
 cj-ast = { path = "../cj-ast" }
 cj-diag = { path = "../cj-diag" }
 cj-lexer = { path = "../cj-lexer" }
-
-[dev-dependencies]
 cj-parser = { path = "../cj-parser" }
+rayon = "1"

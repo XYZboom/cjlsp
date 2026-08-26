@@ -16,6 +16,8 @@ use cj_ast::{CodePos, Decl, File};
 use cj_diag::Diag;
 use std::collections::HashMap;
 
+pub mod parallel;
+
 /// Kind of a collected symbol (for resolution / LSP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SymbolKind {
