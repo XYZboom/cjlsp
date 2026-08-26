@@ -183,6 +183,29 @@ impl<'a> Parser<'a> {
         self.diags.push(d);
     }
 
+    /// Like [`Parser::error_id`] but with an extra dynamic note appended
+    /// (e.g. the top-level-decl note cjc adds in `DiagExpectedDeclaration`).
+    pub fn error_id_with_note(
+        &mut self,
+        tok: &Token,
+        id: cj_diag::DiagId,
+        args: &[&str],
+        note: &str,
+    ) {
+        let t = cj_diag::templates::template(id);
+        let msg = fill_placeholders(t.message, args);
+        let mut d = cj_diag::Diag::error(tok.begin.line, tok.begin.column, msg)
+            .with_span(tok.end.line, tok.end.column);
+        if let Some(here) = t.here {
+            d = d.with_here(fill_placeholders(here, args));
+        }
+        for n in t.notes {
+            d = d.with_note(fill_placeholders(n, args));
+        }
+        d = d.with_note(note);
+        self.diags.push(d);
+    }
+
     pub fn token_display(&self, k: TokenKind) -> String {
         match k.literal() {
             "" => k.value_str().to_string(),
@@ -318,11 +341,16 @@ impl<'a> Parser<'a> {
             match parse_decl(self, false) {
                 Some(d) => decls.push(d),
                 None => {
-                    // recovery: official parse_expected_decl
-                    // "expected declaration, found %s"
+                    // recovery: official DiagExpectedDeclaration(TOPLEVEL) —
+                    // parse_expected_decl + top-level note + resync boundary
                     let t = self.peek_token().clone();
                     let found = token_display_text(t.kind);
-                    self.error_id(&t, cj_diag::DiagId::PARSE_EXPECTED_DECL, &[&found]);
+                    self.error_id_with_note(
+                        &t,
+                        cj_diag::DiagId::PARSE_EXPECTED_DECL,
+                        &[&found],
+                        "only declarations or macro expressions can be used in the top-level",
+                    );
                     self.sync_to_decl_boundary();
                 }
             }
