@@ -323,7 +323,7 @@ impl<'a> Parser<'a> {
                     let t = self.peek_token().clone();
                     let found = token_display_text(t.kind);
                     self.error_id(&t, cj_diag::DiagId::PARSE_EXPECTED_DECL, &[&found]);
-                    self.advance();
+                    self.sync_to_decl_boundary();
                 }
             }
         }
@@ -334,6 +334,24 @@ impl<'a> Parser<'a> {
             imports,
             decls,
             pos,
+        }
+    }
+
+    /// Error recovery: advance until the next declaration boundary (NL, `;`,
+    /// `}`, EOF, or a declaration-start keyword). Matches cjc behavior — after
+    /// a failed decl we resync so the rest of the file parses normally.
+    pub fn sync_to_decl_boundary(&mut self) {
+        while self.peek() != TokenKind::END {
+            match self.peek() {
+                TokenKind::NL | TokenKind::SEMI | TokenKind::RCURL => {
+                    self.advance();
+                    break;
+                }
+                k if k.is_decl_start() => break,
+                _ => {
+                    self.advance();
+                }
+            }
         }
     }
 

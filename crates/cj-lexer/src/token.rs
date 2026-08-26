@@ -883,6 +883,27 @@ impl TokenKind {
         )
     }
 
+    /// True for tokens that start a declaration (declaration-sync boundary for
+    /// error recovery, matching official `LookupDeclHandler` keyword set).
+    pub fn is_decl_start(self) -> bool {
+        matches!(
+            self,
+            TokenKind::STRUCT
+                | TokenKind::ENUM
+                | TokenKind::CLASS
+                | TokenKind::INTERFACE
+                | TokenKind::FUNC
+                | TokenKind::MACRO
+                | TokenKind::LET
+                | TokenKind::VAR
+                | TokenKind::TYPE
+                | TokenKind::INIT
+                | TokenKind::EXTEND
+                | TokenKind::PROP
+                | TokenKind::MAIN
+        )
+    }
+
     /// True for punctuation/operator tokens (rendered as `'...'` in diagnostics).
     /// Keywords are NOT symbols.
     pub fn symbol_like(self) -> bool {
