@@ -1,0 +1,10 @@
+[package]
+name = "cj-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cangjie parser: Token stream -> AST"
+
+[dependencies]
+cj-ast = { path = "../cj-ast" }
+cj-lexer = { path = "../cj-lexer" }

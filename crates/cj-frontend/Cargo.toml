@@ -1,0 +1,18 @@
+[package]
+name = "cj-frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cangjie frontend CLI (cjc-frontend compatible): pipeline orchestration + --dump-ast"
+
+[[bin]]
+name = "cj-frontend"
+path = "src/main.rs"
+
+[dependencies]
+cj-ast = { path = "../cj-ast" }
+cj-lexer = { path = "../cj-lexer" }
+cj-parser = { path = "../cj-parser" }
+cj-cfg = { path = "../cj-cfg" }
+cj-sema = { path = "../cj-sema" }
+cj-diag = { path = "../cj-diag" }

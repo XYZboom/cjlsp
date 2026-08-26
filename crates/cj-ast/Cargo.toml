@@ -1,0 +1,9 @@
+[package]
+name = "cj-ast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cangjie AST node definitions"
+
+[dependencies]
+serde.workspace = true

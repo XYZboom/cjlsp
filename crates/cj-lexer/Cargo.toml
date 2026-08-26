@@ -1,0 +1,10 @@
+[package]
+name = "cj-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cangjie lexer: source -> Token stream"
+
+[dependencies]
+cj-ast = { path = "../cj-ast" }
+unicode-ident = "1.0.24"

@@ -1,0 +1,11 @@
+[package]
+name = "cj-sema"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cangjie semantic analysis: symbol tables, type checking, name/overload resolution"
+
+[dependencies]
+cj-ast = { path = "../cj-ast" }
+cj-cfg = { path = "../cj-cfg" }
+cj-diag = { path = "../cj-diag" }
