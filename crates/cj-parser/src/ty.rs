@@ -77,10 +77,28 @@ pub fn parse_type(p: &mut Parser) -> Type {
             }
         }
         TokenKind::LPAREN => {
-            // paren type / tuple type / func type
+            // paren type / tuple type / func type / named-field tuple type
             p.advance();
             let mut elems = Vec::new();
+            // named fields: `(p1: Int64, p2: Int64)` — track names for dup check
+            let mut name_map: std::collections::HashMap<String, ()> =
+                std::collections::HashMap::new();
             while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+                // detect named field: IDENTIFIER followed by ':'
+                if p.peek() == TokenKind::IDENTIFIER && p.peek_ahead(1) == TokenKind::COLON {
+                    let name_tok = p.advance(); // name
+                    let _ = p.expect(TokenKind::COLON);
+                    if name_map.contains_key(&name_tok.text) {
+                        // duplicated type parameter name (official template)
+                        p.error_id(
+                            &name_tok,
+                            cj_diag::DiagId::PARSE_DUPLICATE_TYPE_PARAMETER_NAME,
+                            &[&name_tok.text],
+                        );
+                    } else {
+                        name_map.insert(name_tok.text.clone(), ());
+                    }
+                }
                 elems.push(parse_type(p));
                 if !p.eat(TokenKind::COMMA) {
                     break;
