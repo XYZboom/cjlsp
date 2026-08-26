@@ -16,6 +16,7 @@ use cj_ast::{CodePos, Decl, File};
 use cj_diag::Diag;
 use std::collections::HashMap;
 
+pub mod dep_graph;
 pub mod parallel;
 
 /// Kind of a collected symbol (for resolution / LSP).
