@@ -11,6 +11,7 @@ use std::process::ExitCode;
 
 mod completion;
 mod hover;
+mod references;
 mod server;
 use server::LspServer;
 

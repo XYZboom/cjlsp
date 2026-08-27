@@ -46,6 +46,7 @@ impl LspServer {
             "textDocument/completion" => self.handle_completion(&params),
             "textDocument/hover" => self.handle_hover(&params),
             "textDocument/definition" => self.handle_definition(&params),
+            "textDocument/references" => self.handle_references(&params),
             "initialize" => {
                 // Remember rootUri so package-name checks can derive the
                 // expected package name for each opened file.
@@ -148,6 +149,28 @@ impl LspServer {
         let file = parser.run();
 
         crate::hover::definition_at(&file, &uri, line, character)
+    }
+
+    /// Handle textDocument/references: all locations referencing the name at
+    /// the cursor (declaration + usages).
+    fn handle_references(&mut self, params: &Value) -> Value {
+        let uri = params["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
+        let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
+        let include_decl = params["context"]["includeDeclaration"]
+            .as_bool()
+            .unwrap_or(true);
+
+        let Some((_, source)) = self.open_docs.get(&uri) else {
+            return json!([]);
+        };
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+
+        crate::references::references_at(&file, &uri, line, character, include_decl)
     }
 
     fn uri_to_path(uri: &str) -> Option<PathBuf> {
