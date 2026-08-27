@@ -62,6 +62,14 @@ pub struct Symbol {
     pub pos: CodePos,
 }
 
+/// A function's signature: name + parameter types (for cross-file call checks).
+#[derive(Debug, Clone, Default)]
+pub struct FuncSig {
+    pub name: String,
+    pub params: Vec<cj_ast::Type>,
+    pub pos: CodePos,
+}
+
 /// A lexical scope (name -> symbol).
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
@@ -116,6 +124,8 @@ impl SymbolTable {
 pub struct FileResult {
     /// Top-level symbols declared in this file (package-visible).
     pub symbols: Vec<Symbol>,
+    /// Top-level function signatures (name -> param types), package-visible.
+    pub func_sigs: HashMap<String, FuncSig>,
     pub diags: Vec<Diag>,
 }
 
@@ -135,12 +145,25 @@ impl Collector {
     /// Collect a whole file: one top-level scope, then class bodies recurse.
     pub fn collect_file(mut self, file: &File) -> FileResult {
         self.table.push_scope();
+        let mut func_sigs = HashMap::new();
         for d in &file.decls {
+            // Record top-level function signatures for cross-file call checks.
+            if let Decl::Func {
+                name, params, pos, ..
+            } = d
+            {
+                func_sigs.entry(name.clone()).or_insert_with(|| FuncSig {
+                    name: name.clone(),
+                    params: params.iter().map(|p| p.ty.clone()).collect(),
+                    pos: *pos,
+                });
+            }
             self.collect_decl(d);
         }
         let symbols = self.table.top_level_symbols();
         FileResult {
             symbols,
+            func_sigs,
             diags: std::mem::take(&mut self.diags),
         }
     }
@@ -191,6 +214,8 @@ impl Collector {
 pub struct PackageTable {
     /// name -> symbols declared at package level across all files.
     pub symbols: HashMap<String, Vec<Symbol>>,
+    /// name -> function signature declared at package level across all files.
+    pub func_sigs: HashMap<String, FuncSig>,
 }
 
 impl PackageTable {
@@ -201,10 +226,20 @@ impl PackageTable {
                 .or_default()
                 .push(sym.clone());
         }
+        for (name, sig) in &file_result.func_sigs {
+            self.func_sigs
+                .entry(name.clone())
+                .or_insert_with(|| sig.clone());
+        }
     }
 
     pub fn lookup(&self, name: &str) -> Option<&Symbol> {
         self.symbols.get(name)?.first()
+    }
+
+    /// Look up a top-level function signature by name (cross-file).
+    pub fn lookup_func(&self, name: &str) -> Option<&FuncSig> {
+        self.func_sigs.get(name)
     }
 }
 

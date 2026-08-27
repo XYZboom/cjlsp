@@ -1,9 +1,10 @@
 // cj-lsp: LSP server state machine + diagnostics pipeline.
 
+use cj_sema::FuncSig;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// LSP server: tracks open documents and computes diagnostics via the
 /// cj-frontend pipeline (lexer -> parser -> sema collector/resolver/dep).
@@ -130,10 +131,16 @@ impl LspServer {
         let Some((path, text)) = self.open_docs.get(uri) else {
             return Vec::new();
         };
+        // The test harness runs us with cwd = <workspace>/sourcecode/cangjieTest
+        // and sends a *virtual* uri for the opened file; sibling same-package
+        // sources (needed for cross-file call type checking) live on disk under
+        // that cwd. Resolve the real project root once per publish.
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let project_root = resolve_project_root(&cwd, path);
         let diagnostics = if text.is_empty() {
-            analyze_file(path)
+            analyze_file(path, project_root.as_deref())
         } else {
-            analyze_source(text)
+            analyze_source(text, project_root.as_deref())
         };
         let msg = json!({
             "jsonrpc": "2.0",
@@ -147,17 +154,84 @@ impl LspServer {
     }
 }
 
+/// Resolve the real project root directory for a uri-derived path.
+///
+/// The harness rewrites the opened uri to a path that does NOT exist on disk
+/// (`.../cjlsp/diagnosticsTest/src/func_error/diag_001.cj`), while the real
+/// sources live under the server's cwd (`.../cjlsp/sourcecode/cangjieTest/`
+/// + `diagnosticsTest/...`). We find the project root by trying every suffix
+///   of the uri path resolved against cwd and returning the first that exists.
+fn resolve_project_root(cwd: &Path, uri_path: &Path) -> Option<PathBuf> {
+    let comps: Vec<&std::ffi::OsStr> = uri_path
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    for i in 0..comps.len() {
+        let mut tail = PathBuf::new();
+        for c in &comps[i..] {
+            tail.push(c);
+        }
+        if cwd.join(&tail).exists() {
+            return Some(cwd.join(comps[i]));
+        }
+    }
+    None
+}
+
+/// Collect function signatures from all same-package `.cj` sources under the
+/// project root (used for cross-file call type checking). Returns a map of
+/// name -> FuncSig; the opened file's own sigs are merged separately.
+fn collect_same_package_sigs(root: &Path, package: Option<&str>) -> HashMap<String, FuncSig> {
+    let mut sigs = HashMap::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|e| e == "cj") {
+                let Ok(src) = fs::read_to_string(&p) else {
+                    continue;
+                };
+                let mut parser =
+                    cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
+                let f = parser.run();
+                // Only same-package siblings are visible (spec Ch.03). A file
+                // without a package decl is treated as package-less.
+                let same_pkg = match (package, f.package.as_deref()) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => true,
+                };
+                if !same_pkg {
+                    continue;
+                }
+                let r = cj_sema::Collector::new().collect_file(&f);
+                for (name, sig) in r.func_sigs {
+                    sigs.entry(name).or_insert(sig);
+                }
+            }
+        }
+    }
+    sigs
+}
+
 /// Run the full frontend pipeline on a file and return LSP-format diagnostics.
-fn analyze_file(path: &PathBuf) -> Vec<Value> {
+fn analyze_file(path: &PathBuf, project_root: Option<&Path>) -> Vec<Value> {
     match fs::read_to_string(path) {
-        Ok(s) => analyze_source(&s),
+        Ok(s) => analyze_source(&s, project_root),
         Err(_) => Vec::new(),
     }
 }
 
 /// Run the full frontend pipeline on source text and return LSP-format
 /// diagnostics (1-based diag positions -> 0-based LSP ranges).
-fn analyze_source(src: &str) -> Vec<Value> {
+fn analyze_source(src: &str, project_root: Option<&Path>) -> Vec<Value> {
     let mut parser = cj_parser::Parser::new(src, cj_lexer::Lexer::new(src).tokenize());
     let file = parser.run();
 
@@ -172,6 +246,16 @@ fn analyze_source(src: &str) -> Vec<Value> {
     let dep_graph = cj_sema::dep_graph::DepGraph::build(&[&file]);
     let dep_diags = dep_graph.detect_cycles();
     let unused_diags = cj_sema::unused::detect_unused(&file);
+
+    // Cross-file call type checking: merge the opened file's own signatures
+    // with same-package sibling signatures found on disk.
+    let mut func_sigs = sema_result.func_sigs.clone();
+    if let Some(root) = project_root {
+        for (name, sig) in collect_same_package_sigs(root, file.package.as_deref()) {
+            func_sigs.entry(name).or_insert(sig);
+        }
+    }
+    let call_diags = cj_sema::typecheck::check_calls(&file, &func_sigs);
 
     // Convert (line, col) 1-based -> LSP 0-based positions.
     let mut out = Vec::new();
@@ -209,6 +293,7 @@ fn analyze_source(src: &str) -> Vec<Value> {
         .chain(resolve_diags.iter())
         .chain(dep_diags.iter())
         .chain(unused_diags.iter())
+        .chain(call_diags.iter())
     {
         push(d);
     }
