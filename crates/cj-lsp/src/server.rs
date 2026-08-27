@@ -369,6 +369,7 @@ fn analyze_source(src: &str, expected: Option<&str>) -> Vec<Value> {
     let dep_diags = dep_graph.detect_cycles();
     let unused_diags = cj_sema::unused::detect_unused(&file);
 <<<<<<< HEAD
+<<<<<<< HEAD
     // Literal type checking for typed var decls (M3c, spec Ch.02): String=1,
     // Int8='x', Int8=999999 etc. — the 011 suite.
     let lit_diags = cj_sema::typecheck::check_decls(&file);
@@ -385,6 +386,9 @@ fn analyze_source(src: &str, expected: Option<&str>) -> Vec<Value> {
 =======
     let package_diags = cj_sema::package::check_package(&file, expected);
 >>>>>>> wt/t2-package
+=======
+    let overload_diags = cj_sema::overload::detect_overload_conflicts(&file);
+>>>>>>> wt/t3-unused-members
 
     // Convert (line, col) 1-based -> LSP 0-based positions.
     let mut out = Vec::new();
@@ -423,11 +427,15 @@ fn analyze_source(src: &str, expected: Option<&str>) -> Vec<Value> {
         .chain(dep_diags.iter())
         .chain(unused_diags.iter())
 <<<<<<< HEAD
+<<<<<<< HEAD
         .chain(call_diags.iter())
         .chain(lit_diags.iter())
 =======
         .chain(package_diags.iter())
 >>>>>>> wt/t2-package
+=======
+        .chain(overload_diags.iter())
+>>>>>>> wt/t3-unused-members
     {
         push(d);
     }

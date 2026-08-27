@@ -245,7 +245,7 @@ fn parse_atom(p: &mut Parser) -> Expr {
                 pos,
             }
         }
-        TokenKind::IDENTIFIER => {
+        TokenKind::IDENTIFIER | TokenKind::THIS | TokenKind::SUPER => {
             p.advance();
             let pos = pos_of(&tok);
             Expr::Name {
@@ -744,6 +744,8 @@ pub fn is_expr_start(k: TokenKind) -> bool {
             | TokenKind::RUNE_BYTE_LITERAL
             | TokenKind::MULTILINE_STRING
             | TokenKind::IDENTIFIER
+            | TokenKind::THIS
+            | TokenKind::SUPER
             | TokenKind::LPAREN
             | TokenKind::LSQUARE
             | TokenKind::LCURL

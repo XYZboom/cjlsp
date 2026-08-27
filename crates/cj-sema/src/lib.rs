@@ -17,8 +17,12 @@ use cj_diag::Diag;
 use std::collections::HashMap;
 
 pub mod dep_graph;
+<<<<<<< HEAD
 pub mod expander;
 pub mod package;
+=======
+pub mod overload;
+>>>>>>> wt/t3-unused-members
 pub mod parallel;
 pub mod resolver;
 pub mod typecheck;
@@ -184,14 +188,19 @@ impl Collector {
             pos,
         };
         if let Some(prev) = self.table.declare(sym) {
-            let diag = Diag::error(
-                pos.line,
-                pos.col,
-                format!("redefinition of declaration '{name}'"),
-            )
-            .with_span(pos.end_line, pos.end_col)
-            .with_note(format!("'{}' is previously declared here", prev.name));
-            self.diags.push(diag);
+            // Functions may share a scope (overloading, spec Ch.10); a
+            // redefinition is only reported for non-function decls. Identical
+            // signatures are flagged separately (overload.rs).
+            if !(kind == SymbolKind::Func && prev.kind == SymbolKind::Func) {
+                let diag = Diag::error(
+                    pos.line,
+                    pos.col,
+                    format!("redefinition of declaration '{name}'"),
+                )
+                .with_span(pos.end_line, pos.end_col)
+                .with_note(format!("'{}' is previously declared here", prev.name));
+                self.diags.push(diag);
+            }
         }
         // recurse into members
         match d {

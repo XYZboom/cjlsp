@@ -34,6 +34,14 @@ def find_repo(start: str) -> str:
 
 REPO = find_repo(CANGJIE_DIR)
 ASTKIND_INC = os.path.join(REPO, "cangjie_compiler", "include", "cangjie", "AST", "ASTKind.inc")
+# Worktree layout: tools/ lives in .worktrees/<name>/, whose parent is NOT the
+# repo root. Fall back to the canonical location of the official sources.
+if not os.path.exists(ASTKIND_INC):
+    ASTKIND_INC = os.path.join(
+        REPO, "cangjie", "cangjie_compiler", "include", "cangjie", "AST", "ASTKind.inc"
+    )
+if not os.path.exists(ASTKIND_INC):
+    ASTKIND_INC = "/root/Code/cangjie/cangjie_compiler/include/cangjie/AST/ASTKind.inc"
 
 # ---------------------------------------------------------------------------
 # 1. Parse ASTKind.inc
@@ -121,6 +129,7 @@ FIELDS: dict[str, list[tuple[str, str, str]]] = {
     ],
     "CLASS_DECL": [
         ("name", "String", "class name"),
+        ("name_pos", "CodePos", "position of the class name token"),
         ("is_public", "bool", "public modifier"),
         ("is_abstract", "bool", "abstract modifier"),
         ("is_open", "bool", "open modifier"),
@@ -131,6 +140,7 @@ FIELDS: dict[str, list[tuple[str, str, str]]] = {
     ],
     "INTERFACE_DECL": [
         ("name", "String", "interface name"),
+        ("name_pos", "CodePos", "position of the interface name token"),
         ("is_public", "bool", "public modifier"),
         ("type_params", "Vec<TypeParam>", "generic parameters"),
         ("parents", "Vec<Type>", "parent interfaces"),
@@ -143,12 +153,14 @@ FIELDS: dict[str, list[tuple[str, str, str]]] = {
     ],
     "ENUM_DECL": [
         ("name", "String", "enum name"),
+        ("name_pos", "CodePos", "position of the enum name token"),
         ("is_public", "bool", "public modifier"),
         ("type_params", "Vec<TypeParam>", "generic parameters"),
         ("cases", "Vec<EnumCase>", "enum cases"),
     ],
     "STRUCT_DECL": [
         ("name", "String", "struct name"),
+        ("name_pos", "CodePos", "position of the struct name token"),
         ("is_public", "bool", "public modifier"),
         ("is_open", "bool", "open modifier"),
         ("type_params", "Vec<TypeParam>", "generic parameters"),
@@ -167,6 +179,7 @@ FIELDS: dict[str, list[tuple[str, str, str]]] = {
     "BUILTIN_DECL": [("name", "String", "builtin decl name")],
     "VAR_DECL": [
         ("name", "String", "variable name"),
+        ("name_pos", "CodePos", "position of the variable name token"),
         ("is_mutable", "bool", "var vs let"),
         ("is_public", "bool", "public modifier"),
         ("ty", "Option<Type>", "declared type"),

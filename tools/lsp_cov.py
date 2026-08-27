@@ -13,10 +13,10 @@ import subprocess
 import sys
 
 BASE = "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp"
-# Resolve the binary relative to this script so the checker runs against the
-# workspace it lives in (main tree or a git worktree with its own target/).
-HS = os.path.dirname(os.path.abspath(__file__))
-LSPSERVER = os.path.join(HS, "..", "target", "debug", "LSPServer")
+# Resolve the server binary relative to this script so the checker tests the
+# checkout it lives in (main repo or a worktree), not a hardcoded path.
+HERE = os.path.dirname(os.path.abspath(__file__))
+LSPSERVER = os.path.join(os.path.dirname(HERE), "target", "debug", "LSPServer")
 CWD = os.path.join(BASE, "sourcecode/cangjieTest")
 
 
