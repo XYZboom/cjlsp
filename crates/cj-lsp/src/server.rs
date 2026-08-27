@@ -172,6 +172,7 @@ fn analyze_source(src: &str) -> Vec<Value> {
     let dep_graph = cj_sema::dep_graph::DepGraph::build(&[&file]);
     let dep_diags = dep_graph.detect_cycles();
     let unused_diags = cj_sema::unused::detect_unused(&file);
+    let overload_diags = cj_sema::overload::detect_overload_conflicts(&file);
 
     // Convert (line, col) 1-based -> LSP 0-based positions.
     let mut out = Vec::new();
@@ -209,6 +210,7 @@ fn analyze_source(src: &str) -> Vec<Value> {
         .chain(resolve_diags.iter())
         .chain(dep_diags.iter())
         .chain(unused_diags.iter())
+        .chain(overload_diags.iter())
     {
         push(d);
     }

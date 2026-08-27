@@ -58,6 +58,42 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
     };
     check_modifier_usage(p, &mod_info, &tok);
     match tok.kind {
+        // Type-named constructor: `[mods] TypeName(params) { body }` inside a
+        // class-like body. Official reports it as an unused *function*.
+        k if k.is_name_like() && is_member && p.peek_ahead(1) == TokenKind::LPAREN => {
+            p.advance();
+            let params = parse_param_list(p);
+            let body = parse_body(p);
+            Some(Decl::Func {
+                name: tok.text.clone(),
+                name_pos: pos_of(&tok),
+                is_public,
+                is_abstract: false,
+                type_params: Vec::new(),
+                params,
+                ret: None,
+                body,
+                pos: pos_of(&tok),
+            })
+        }
+        // Finalizer: `~init(params) { body }` inside a class-like body.
+        TokenKind::BITNOT if is_member && p.peek_ahead(1) == TokenKind::INIT => {
+            p.advance(); // ~
+            p.advance(); // init
+            let params = parse_param_list(p);
+            let body = parse_body(p);
+            Some(Decl::Func {
+                name: "~init".to_string(),
+                name_pos: pos_of(&tok),
+                is_public,
+                is_abstract: false,
+                type_params: Vec::new(),
+                params,
+                ret: None,
+                body,
+                pos: pos_of(&tok),
+            })
+        }
         TokenKind::FUNC => {
             p.advance();
             // operator func? `operator func [](...)`
@@ -125,6 +161,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             };
             Some(Decl::Var {
                 name,
+                name_pos: pos_of(&name_tok),
                 is_mutable: is_mut || is_mutable,
                 is_public,
                 ty,
@@ -146,6 +183,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             };
             Some(Decl::Class {
                 name,
+                name_pos: pos_of(&name_tok),
                 is_public,
                 is_abstract,
                 is_open,
@@ -168,6 +206,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             };
             Some(Decl::Struct {
                 name,
+                name_pos: pos_of(&name_tok),
                 is_public,
                 is_open,
                 type_params,
@@ -183,6 +222,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let cases = parse_enum_cases(p);
             Some(Decl::Enum {
                 name,
+                name_pos: pos_of(&name_tok),
                 is_public,
                 type_params,
                 cases,
@@ -202,6 +242,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             };
             Some(Decl::Interface {
                 name,
+                name_pos: pos_of(&name_tok),
                 is_public,
                 type_params,
                 parents,
@@ -340,6 +381,17 @@ fn parse_param_list(p: &mut Parser) -> Vec<Param> {
             if p.peek() == TokenKind::IDENTIFIER {
                 p.advance();
             }
+        }
+        // constructor params may carry access modifiers + let/var:
+        // `public let domain: CString`
+        while let TokenKind::PUBLIC
+        | TokenKind::PRIVATE
+        | TokenKind::PROTECTED
+        | TokenKind::INTERNAL
+        | TokenKind::LET
+        | TokenKind::VAR = p.peek()
+        {
+            p.advance();
         }
         let name_tok = p.peek_token().clone();
         if name_tok.kind.is_name_like() {

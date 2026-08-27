@@ -696,6 +696,8 @@ pub enum Decl {
     Class {
         /// class name
         name: String,
+        /// position of the class name token
+        name_pos: CodePos,
         /// public modifier
         is_public: bool,
         /// abstract modifier
@@ -716,6 +718,8 @@ pub enum Decl {
     Interface {
         /// interface name
         name: String,
+        /// position of the interface name token
+        name_pos: CodePos,
         /// public modifier
         is_public: bool,
         /// generic parameters
@@ -740,6 +744,8 @@ pub enum Decl {
     Enum {
         /// enum name
         name: String,
+        /// position of the enum name token
+        name_pos: CodePos,
         /// public modifier
         is_public: bool,
         /// generic parameters
@@ -752,6 +758,8 @@ pub enum Decl {
     Struct {
         /// struct name
         name: String,
+        /// position of the struct name token
+        name_pos: CodePos,
         /// public modifier
         is_public: bool,
         /// open modifier
@@ -792,6 +800,8 @@ pub enum Decl {
     Var {
         /// variable name
         name: String,
+        /// position of the variable name token
+        name_pos: CodePos,
         /// var vs let
         is_mutable: bool,
         /// public modifier
