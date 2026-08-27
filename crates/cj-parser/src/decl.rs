@@ -88,6 +88,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let body = parse_body(p);
             Some(Decl::Func {
                 name,
+                name_pos: pos_of(&name_tok),
                 is_public,
                 is_abstract,
                 type_params,

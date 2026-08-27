@@ -664,6 +664,8 @@ pub enum Decl {
     Func {
         /// function name
         name: String,
+        /// position of the function name token (start of the identifier)
+        name_pos: CodePos,
         /// public modifier
         is_public: bool,
         /// abstract modifier

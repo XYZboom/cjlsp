@@ -171,6 +171,7 @@ fn analyze_source(src: &str) -> Vec<Value> {
     let resolve_diags = resolver.take_diags();
     let dep_graph = cj_sema::dep_graph::DepGraph::build(&[&file]);
     let dep_diags = dep_graph.detect_cycles();
+    let unused_diags = cj_sema::unused::detect_unused(&file);
 
     // Convert (line, col) 1-based -> LSP 0-based positions.
     let mut out = Vec::new();
@@ -178,9 +179,15 @@ fn analyze_source(src: &str) -> Vec<Value> {
         let severity = match d.severity {
             cj_diag::Severity::Error => 1,
             cj_diag::Severity::Warning => 2,
-            _ => 3,
+            cj_diag::Severity::Note => 3,
+            cj_diag::Severity::Hint => 4,
+            cj_diag::Severity::Fatal => 1,
         };
-        let end_col = if d.end_col > d.col { d.end_col } else { d.col + 1 };
+        let end_col = if d.end_col > d.col {
+            d.end_col
+        } else {
+            d.col + 1
+        };
         out.push(json!({
             "category": null,
             "code": null,
@@ -201,6 +208,7 @@ fn analyze_source(src: &str) -> Vec<Value> {
         .chain(sema_result.diags.iter())
         .chain(resolve_diags.iter())
         .chain(dep_diags.iter())
+        .chain(unused_diags.iter())
     {
         push(d);
     }

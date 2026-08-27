@@ -21,6 +21,7 @@ use std::fmt::Write;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Note,
+    Hint,
     Warning,
     Error,
     Fatal,
@@ -30,6 +31,7 @@ impl Severity {
     pub fn label(&self) -> &'static str {
         match self {
             Severity::Note => "note",
+            Severity::Hint => "hint",
             Severity::Warning => "warning",
             Severity::Error => "error",
             Severity::Fatal => "fatal error",

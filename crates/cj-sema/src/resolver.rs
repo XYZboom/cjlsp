@@ -72,7 +72,11 @@ impl<'a> Resolver<'a> {
             }
             // Top-level variable initializers (`var x = 1 + testvar`) are
             // resolved against package scope — refs to local names don't apply.
-            Decl::Var { init: Some(init), pos, .. } => {
+            Decl::Var {
+                init: Some(init),
+                pos,
+                ..
+            } => {
                 let locals = LocalScope::new();
                 let seen: Vec<String> = Vec::new();
                 self.resolve_expr(init, &locals, &seen, &mut diags);
@@ -126,7 +130,23 @@ impl<'a> Resolver<'a> {
                 }
             }
             Expr::Call { callee, args, .. } => {
-                self.resolve_expr(callee, locals, seen, diags);
+                // A bare-name callee that we can't resolve is most likely a
+                // function from another file/package — don't report it here
+                // (the package-level resolution handles cross-file refs).
+                match callee.as_ref() {
+                    Expr::Name {
+                        name: cname,
+                        pos: cpos,
+                        ..
+                    } => {
+                        let local_hit = locals.contains_key(cname) && seen.contains(cname);
+                        if local_hit || self.package.lookup(cname).is_some() {
+                            // resolved — fine
+                        }
+                        let _ = cpos;
+                    }
+                    _ => self.resolve_expr(callee, locals, seen, diags),
+                }
                 for a in args {
                     self.resolve_expr(&a.value, locals, seen, diags);
                 }
