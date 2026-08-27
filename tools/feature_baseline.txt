@@ -1,11 +1,11 @@
 ==============================================================================
 cj-lang LSP feature baseline (T16)
-generated: 2026-08-28 02:00:39
-LSPServer: /root/Code/cangjie/cj-lang/.worktrees/t_c847f371/target/debug/LSPServer
-commit:    32379c1
+generated: 2026-08-28 02:27:24
+LSPServer: /root/Code/cangjie/cj-lang/target/debug/LSPServer
+commit:    633e8bf
 ==============================================================================
 
-[completion]  pass=15  fail=146  total=161  rate=9.3%
+[completion]  pass=16  fail=145  total=161  rate=9.9%
   failed:
     textDocument_completion_006.info  (compare mismatch or no pass marker)
     textDocument_completion_007.info  (compare mismatch or no pass marker)
@@ -150,15 +150,14 @@ commit:    32379c1
     textDocument_completion_161.info  (compare mismatch or no pass marker)
     textDocument_completion_162.info  (compare mismatch or no pass marker)
     textDocument_completion_163.info  (compare mismatch or no pass marker)
-    textDocument_completion_164.info  (compare mismatch or no pass marker)
     textDocument_completion_165.info  (compare mismatch or no pass marker)
     textDocument_completion_166.info  (compare mismatch or no pass marker)
   failure clusters (from preserved artifacts):
-    result-nonempty-list: 78  e.g. textDocument_completion_008.info, textDocument_completion_009.info, textDocument_completion_010.info, textDocument_completion_011.info
-    result-null: 65  e.g. textDocument_completion_007.info, textDocument_completion_021.info, textDocument_completion_022.info, textDocument_completion_029.info
-    expected-null-vs-[]-harness-crash: 9  e.g. textDocument_completion_003.info, textDocument_completion_004.info, textDocument_completion_005.info, textDocument_completion_006.info
-    no-response-(expected-id-missing): 5  e.g. textDocument_completion_020.info, textDocument_completion_058.info, textDocument_completion_059.info, textDocument_completion_067.info
+    result-nonempty-list: 77  e.g. textDocument_completion_009.info, textDocument_completion_010.info, textDocument_completion_011.info, textDocument_completion_012.info
+    result-null: 66  e.g. textDocument_completion_007.info, textDocument_completion_008.info, textDocument_completion_021.info, textDocument_completion_022.info
+    expected-null-vs-[]-harness-crash: 13  e.g. textDocument_completion_003.info, textDocument_completion_004.info, textDocument_completion_005.info, textDocument_completion_006.info
     result-empty[]: 2  e.g. textDocument_completion_083.info, textDocument_completion_086.info
+    no-response-(expected-id-missing): 1  e.g. textDocument_completion_164.info
 
 note: judgment = 'testcase pass' marker in compare_result.txt (framework env_info-None crash after writing is ignored).
 note: failed-case artifacts kept under cjlsp/.batch_results/.
