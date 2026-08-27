@@ -1,6 +1,6 @@
 ==============================================================================
 cj-lang LSP feature baseline (T16)
-generated: 2026-08-28 01:08:33
+generated: 2026-08-28 01:16:43
 LSPServer: /root/Code/cangjie/cj-lang/target/debug/LSPServer
 commit:    aa2620b
 ==============================================================================
