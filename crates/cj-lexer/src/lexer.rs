@@ -292,7 +292,7 @@ impl<'a> Lexer<'a> {
         Token::new(TokenKind::IDENTIFIER, text.to_string(), begin, end)
     }
 
-// ---- number literals ----
+    // ---- number literals ----
 
     fn scan_number(&mut self, begin: Position) -> Token {
         let start = self.pos;
@@ -364,10 +364,7 @@ impl<'a> Lexer<'a> {
                                 if self.peek().is_some_and(|c| c == b'+' || c == b'-') {
                                     self.bump();
                                 }
-                                while self
-                                    .peek()
-                                    .is_some_and(|c| c.is_ascii_digit() || c == b'_')
-                                {
+                                while self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'_') {
                                     self.bump();
                                 }
                                 let text = &self.src[start..self.pos];
@@ -516,7 +513,12 @@ impl<'a> Lexer<'a> {
     ///   `1u8`/`1i64` (non-float)   -> valid integer suffix
     ///   `1iagnosticsTest`          -> illegal integer suffix 'iagnosticsTest'
     ///   `1var0052`                 -> unknown suffix 'var0052'
-    fn scan_number_suffix(&mut self, is_float: bool, token_kind: &mut TokenKind, failed: &mut bool) {
+    fn scan_number_suffix(
+        &mut self,
+        is_float: bool,
+        token_kind: &mut TokenKind,
+        failed: &mut bool,
+    ) {
         let sstart = self.cur_pos();
         // f: float type suffix (official ProcessFloatSuffix).
         if self.peek() == Some(b'f') {
@@ -548,7 +550,10 @@ impl<'a> Lexer<'a> {
         }
         // Generic trailing run (alnum / underscore; stop at a '.' that begins a
         // member access or a range).
-        if !self.peek().is_some_and(|c| c.is_ascii_alphanumeric() || c == b'_') {
+        if !self
+            .peek()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == b'_')
+        {
             return;
         }
         let mut run_len = 0usize;
@@ -1310,7 +1315,7 @@ mod t15_probe {
         let mut lx = Lexer::new(src);
         lx.tokenize()
             .into_iter()
-            .filter(|t| t.kind != TokenKind::END && t.kind != TokenKind::NL) 
+            .filter(|t| t.kind != TokenKind::END && t.kind != TokenKind::NL)
             .map(|t| t.kind)
             .collect()
     }
@@ -1319,25 +1324,48 @@ mod t15_probe {
         let mut lx = Lexer::new(src);
         let toks = lx.tokenize();
         let _ = toks;
-        lx.errors.iter().map(|e| (e.message.clone(), e.pos.line, e.pos.column)).collect()
+        lx.errors
+            .iter()
+            .map(|e| (e.message.clone(), e.pos.line, e.pos.column))
+            .collect()
     }
 
     #[test]
     fn probe_012_unknown_suffix() {
         // let 1var0052 = 'x'
         let toks = kinds("let 1var0052 = 'x'");
-        assert_eq!(toks, vec![TokenKind::LET, TokenKind::INTEGER_LITERAL, TokenKind::ASSIGN, TokenKind::RUNE_LITERAL]);
+        assert_eq!(
+            toks,
+            vec![
+                TokenKind::LET,
+                TokenKind::INTEGER_LITERAL,
+                TokenKind::ASSIGN,
+                TokenKind::RUNE_LITERAL
+            ]
+        );
         let errs = lex_errors("let 1var0052 = 'x'");
-        assert_eq!(errs, vec![("unknown suffix 'var0052' for number literal".to_string(), 1, 6)]);
+        assert_eq!(
+            errs,
+            vec![(
+                "unknown suffix 'var0052' for number literal".to_string(),
+                1,
+                6
+            )]
+        );
     }
 
     #[test]
     fn probe_007_illegal_suffix() {
         let errs = lex_errors("package 1diagnosticsTest.pkg_error");
-        assert_eq!(errs[0].0, "unexpected digit 'd' in decimal, decimal may only contain digit within 0~9");
-        assert_eq!(errs[0].1, 1); assert_eq!(errs[0].2, 10);
+        assert_eq!(
+            errs[0].0,
+            "unexpected digit 'd' in decimal, decimal may only contain digit within 0~9"
+        );
+        assert_eq!(errs[0].1, 1);
+        assert_eq!(errs[0].2, 10);
         assert_eq!(errs[1].0, "illegal integer suffix 'iagnosticsTest', integer literal type suffix can only be 'u8', 'u16', 'u32', 'u64', 'i8', 'i16', 'i32', 'i64'");
-        assert_eq!(errs[1].1, 1); assert_eq!(errs[1].2, 11);
+        assert_eq!(errs[1].1, 1);
+        assert_eq!(errs[1].2, 11);
         // token should be a single ILLEGAL
         let toks = kinds("package 1diagnosticsTest.pkg_error");
         assert_eq!(toks[1], TokenKind::ILLEGAL);
@@ -1347,7 +1375,8 @@ mod t15_probe {
     fn probe_008_exponent() {
         let errs = lex_errors("package diagnosticsTest.1pkg_error");
         assert_eq!(errs[0].0, "unexpected exponent part 'p__' in decimal");
-        assert_eq!(errs[0].1, 1); assert_eq!(errs[0].2, 26);
+        assert_eq!(errs[0].1, 1);
+        assert_eq!(errs[0].2, 26);
         let toks = kinds("package diagnosticsTest.1pkg_error");
         assert_eq!(toks[1], TokenKind::IDENTIFIER);
         assert_eq!(toks[2], TokenKind::FLOAT_LITERAL);
@@ -1359,8 +1388,22 @@ mod t15_probe {
         assert_eq!(kinds("0xffu8"), vec![TokenKind::INTEGER_LITERAL]);
         assert_eq!(kinds("1.5f32"), vec![TokenKind::FLOAT_LITERAL]);
         assert_eq!(kinds("1.5e3"), vec![TokenKind::FLOAT_LITERAL]);
-        assert_eq!(kinds("1.foo"), vec![TokenKind::INTEGER_LITERAL, TokenKind::DOT, TokenKind::IDENTIFIER]);
-        assert_eq!(kinds("1..2"), vec![TokenKind::INTEGER_LITERAL, TokenKind::RANGEOP, TokenKind::INTEGER_LITERAL]);
+        assert_eq!(
+            kinds("1.foo"),
+            vec![
+                TokenKind::INTEGER_LITERAL,
+                TokenKind::DOT,
+                TokenKind::IDENTIFIER
+            ]
+        );
+        assert_eq!(
+            kinds("1..2"),
+            vec![
+                TokenKind::INTEGER_LITERAL,
+                TokenKind::RANGEOP,
+                TokenKind::INTEGER_LITERAL
+            ]
+        );
         assert_eq!(kinds(".5"), vec![TokenKind::FLOAT_LITERAL]);
     }
 }
