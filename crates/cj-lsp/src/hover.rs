@@ -772,6 +772,7 @@ impl<'a> Index<'a> {
                         name_pos,
                         is_mutable,
                         pos,
+                        ..
                     } = pat
                     {
                         let kind = if *is_mutable { "var" } else { "let" };
@@ -839,6 +840,7 @@ impl<'a> Index<'a> {
                     name_pos,
                     is_mutable,
                     pos,
+                    ..
                 } = pattern
                 {
                     let kind = if *is_mutable { "var" } else { "let" };
