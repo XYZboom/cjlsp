@@ -346,17 +346,19 @@ fn collect_decls(
             pos,
             ..
         } => {
-            out.push(DeclInfo {
-                name: name.clone(),
-                kind: DeclKind::Var,
-                line: name_pos.line,
-                col: name_pos.col,
-                start_line: pos.line,
-                start_col: pos.col,
-                is_type_ctor: false,
-            });
-            if !is_member {
-                known.insert(name.clone());
+            if !name.is_empty() {
+                out.push(DeclInfo {
+                    name: name.clone(),
+                    kind: DeclKind::Var,
+                    line: name_pos.line,
+                    col: name_pos.col,
+                    start_line: pos.line,
+                    start_col: pos.col,
+                    is_type_ctor: false,
+                });
+                if !is_member {
+                    known.insert(name.clone());
+                }
             }
         }
         Decl::Extend { members, .. } => {

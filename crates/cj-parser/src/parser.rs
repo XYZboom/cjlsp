@@ -398,6 +398,19 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Consume raw tokens up to and including the next NL token (or END).
+    /// Used for official-style recovery that swallows the rest of the line
+    /// without diagnosing it (e.g. `let` with an invalid pattern, 012).
+    pub fn consume_until_nl(&mut self) {
+        while self.pos < self.tokens.len() {
+            let k = self.tokens[self.pos].kind;
+            self.pos += 1;
+            if k == TokenKind::NL || k == TokenKind::END {
+                break;
+            }
+        }
+    }
+
     fn parse_package_name(&mut self) -> (String, CodePos) {
         let mut parts = Vec::new();
         let mut first = None;

@@ -636,14 +636,14 @@ fn check_override_param_names(file: &File) -> Vec<Diag> {
                     let child_params: Vec<&str> = func_param_names(child);
                     let parent_params: Vec<&str> = func_param_names(pm);
                     if child_params != parent_params {
-                        if let Decl::Func { params, .. } = child {
-                            if let Some(first) = params.first() {
-                                diags.push(Diag::error(
-                                    first.pos.line,
-                                    first.pos.col,
-                                    "parameter name mismatched",
-                                ));
-                            }
+                        if let Decl::Func { name_pos, .. } = child {
+                            // Official anchors at the child method's name
+                            // (024 expects L21:22 = C12.test12), not the param.
+                            diags.push(Diag::error(
+                                name_pos.line,
+                                name_pos.col,
+                                "parameter name mismatched",
+                            ));
                         }
                         break;
                     }

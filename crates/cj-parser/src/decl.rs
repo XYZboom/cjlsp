@@ -120,7 +120,21 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             parse_extra_param_lists(p, &mut params);
             // return type after `:`
             let ret = if p.eat(TokenKind::COLON) {
-                Some(parse_type(p))
+                if crate::ty::is_type_start(p.peek()) {
+                    Some(parse_type(p))
+                } else {
+                    // `func f(): {` — official DiagExpectedIdentifierFuncBody
+                    // emits `expected a type name after ':' in function
+                    // declaration, found '{'` anchored at the found token (019).
+                    let t = p.peek_token().clone();
+                    let found = crate::token_display_text(&t);
+                    p.error_id(
+                        &t,
+                        cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                        &["a type name", "after ':' in function declaration", &found],
+                    );
+                    None
+                }
             } else {
                 None
             };
@@ -142,13 +156,27 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             p.advance();
             let name_tok = p.peek_token().clone();
             if !name_tok.kind.is_name_like() {
+                // Official DiagExpectedIdentifierOrPattern (ParseDecl.cpp): the
+                // found token may be a literal/keyword/etc — emit
+                // `expected identifier or pattern after 'let', found X` and
+                // recover by consuming to the end of line (returns InvalidDecl,
+                // no further diagnostics). (012)
                 let found = crate::token_display_text(&name_tok);
                 p.error_id(
                     &name_tok,
-                    cj_diag::DiagId::PARSE_EXPECTED_NAME,
-                    &["variable", "name", &found],
+                    cj_diag::DiagId::PARSE_EXPECTED_ONE_OF_IDENTIFIER_OR_PATTERN,
+                    &[if is_mut { "var" } else { "let" }, &found],
                 );
-                return None;
+                p.consume_until_nl();
+                return Some(Decl::Var {
+                    name: String::new(),
+                    name_pos: pos_of(&tok),
+                    is_mutable: is_mut || is_mutable,
+                    is_public,
+                    ty: None,
+                    init: None,
+                    pos: pos_of(&tok),
+                });
             }
             p.advance();
             let name = name_tok.text.clone();
@@ -385,14 +413,18 @@ fn looks_like_type_param_list(p: &Parser) -> bool {
 fn parse_extra_param_lists(p: &mut Parser, params: &mut Vec<Param>) {
     while p.at(TokenKind::LPAREN) {
         let l = p.peek_token().clone();
-        let found = crate::token_display_text(&l);
-        p.error_id(&l, cj_diag::DiagId::PARSE_EXPECTED_LEFT_BRACE, &[&found]);
+        // Official ParseFuncDecl/ParseMainDecl hardcode `(` (no quotes) as the
+        // found token for the second param list: `expected '{', found (` (022).
+        p.error_id(&l, cj_diag::DiagId::PARSE_EXPECTED_LEFT_BRACE, &["("]);
         params.extend(parse_param_list(p));
     }
 }
 
 fn parse_param_list(p: &mut Parser) -> Vec<Param> {
     let mut out = Vec::new();
+    // First named (`a!`) parameter seen; later non-named params are errors
+    // (official: `unnamed parameters must come before named parameters`, 021).
+    let mut met_named = false;
     let _ = p.expect(TokenKind::LPAREN);
     while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
         // named param: `a!: Int64` or `a: Int64`; varargs `...`
@@ -418,6 +450,14 @@ fn parse_param_list(p: &mut Parser) -> Vec<Param> {
             p.advance();
             // `name!:` or `name:`
             let is_named = p.eat(TokenKind::NOT);
+            if met_named && !is_named {
+                // an unnamed param after a named one (official 021)
+                p.error_id(
+                    &name_tok,
+                    cj_diag::DiagId::PARSE_NAMED_PARAMETER_AFTER_UNNAMED,
+                    &[],
+                );
+            }
             let _ = p.expect(TokenKind::COLON);
             let ty = parse_type(p);
             // Default value: `name: T = expr`. Legal only on named params
@@ -437,6 +477,9 @@ fn parse_param_list(p: &mut Parser) -> Vec<Param> {
                 }
                 p.advance();
                 default = Some(parse_expr_prec(p, 0));
+            }
+            if is_named {
+                met_named = true;
             }
             out.push(Param {
                 name: name_tok.text.clone(),

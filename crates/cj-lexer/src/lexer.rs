@@ -95,6 +95,16 @@ impl<'a> Lexer<'a> {
         out
     }
 
+    /// Tokenize `src` and take the lexer errors out as well (the parser/
+    /// frontend surface these as diagnostics — official parity for number
+    /// suffix errors etc.).
+    pub fn tokenize_and_errors(src: &str) -> (Vec<Token>, Vec<LexError>) {
+        let mut lexer = Lexer::new(src);
+        let tokens = lexer.tokenize();
+        let errors = std::mem::take(&mut lexer.errors);
+        (tokens, errors)
+    }
+
     // ---- low-level char access ----
 
     fn peek(&self) -> Option<u8> {

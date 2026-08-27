@@ -474,7 +474,7 @@ fn analyze_source(
                 "code": 0,
                 "codeActions": ca,
                 "data": data,
-                "message": d.message,
+                "message": lsp_diag_message(d),
                 "range": {
                     "start": {"line": d.line.saturating_sub(1), "character": d.col.saturating_sub(1)},
                     "end": {"line": d.end_line.saturating_sub(1), "character": end_col.saturating_sub(1)}
@@ -493,7 +493,7 @@ fn analyze_source(
                     "end": {"line": d.end_line.saturating_sub(1), "character": end_col.saturating_sub(1)}
                 },
                 "severity": severity,
-                "message": d.message,
+                "message": lsp_diag_message(d),
                 "source": "Cangjie",
                 "data": {"codeActions": null}
             }));
@@ -516,6 +516,23 @@ fn analyze_source(
         push(d);
     }
     out
+}
+
+/// LSP diagnostic message text: the official server renders a parsed diag's
+/// `SubDiagnostic` notes inline in the message (e.g. the top-level note
+/// `only declarations or macro expressions can be used in the top-level`
+/// appended to `expected declaration, found 'test06'` — 008/018). Other notes
+/// (redefinition `'X' is previously declared here`) are relatedInformation, not
+/// message suffixes, so only the known inline note is appended.
+fn lsp_diag_message(d: &cj_diag::Diag) -> String {
+    const TOPLEVEL_NOTE: &str =
+        "only declarations or macro expressions can be used in the top-level";
+    for n in &d.notes {
+        if n == TOPLEVEL_NOTE {
+            return format!("{}, {}", d.message, n);
+        }
+    }
+    d.message.clone()
 }
 
 /// Whether `kind` is a declaration modifier that can precede the decl keyword

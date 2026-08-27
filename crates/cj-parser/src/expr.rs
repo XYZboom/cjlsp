@@ -498,10 +498,21 @@ pub fn parse_block_expr(p: &mut Parser) -> Expr {
         p.eat(TokenKind::SEMI);
     }
     if !p.eat(TokenKind::RCURL) {
-        // Close the block (official DiagForBlock): if we hit a closing paren /
-        // bracket, this `{` was never closed -> unclosed delimiter.
-        if p.at_any(&[TokenKind::RPAREN, TokenKind::RSQUARE, TokenKind::GT]) {
-            let t = p.peek_token().clone();
+        // Close the block (official DiagForBlock / DetectPrematureEnd): if we
+        // hit a closing paren/bracket or EOF, this `{` was never closed ->
+        // unclosed delimiter anchored at the opening `{` (014 expects L10:28).
+        if p.at_any(&[TokenKind::RPAREN, TokenKind::RSQUARE, TokenKind::GT]) || p.at(TokenKind::END)
+        {
+            let t = if p.at(TokenKind::END) {
+                // Official DiagExpectedRightDelimiter anchors at `lastToken.End()`
+                // when the lookahead isn't a newline — the position just past the
+                // opening `{` (014 expects L10:28, one past the `{` at 27).
+                let mut tc = lc.clone();
+                tc.begin = lc.end;
+                tc
+            } else {
+                p.peek_token().clone()
+            };
             p.error_id(
                 &t,
                 cj_diag::DiagId::PARSE_EXPECTED_RIGHT_DELIMITER,

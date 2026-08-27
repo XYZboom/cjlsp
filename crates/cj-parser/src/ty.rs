@@ -4,6 +4,34 @@ use super::Parser;
 use cj_ast::{PrimitiveKind, Type};
 use cj_lexer::TokenKind;
 
+/// True if `kind` can begin a type name (the tokens `parse_type` handles).
+pub fn is_type_start(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::INT8
+            | TokenKind::INT16
+            | TokenKind::INT32
+            | TokenKind::INT64
+            | TokenKind::INTNATIVE
+            | TokenKind::UINT8
+            | TokenKind::UINT16
+            | TokenKind::UINT32
+            | TokenKind::UINT64
+            | TokenKind::UINTNATIVE
+            | TokenKind::FLOAT16
+            | TokenKind::FLOAT32
+            | TokenKind::FLOAT64
+            | TokenKind::RUNE
+            | TokenKind::BOOLEAN
+            | TokenKind::NOTHING
+            | TokenKind::UNIT
+            | TokenKind::VARRAY
+            | TokenKind::IDENTIFIER
+            | TokenKind::THISTYPE
+            | TokenKind::LPAREN
+    )
+}
+
 /// Parse a type (starts at a type name or `(`).
 pub fn parse_type(p: &mut Parser) -> Type {
     let tok = p.peek_token().clone();
