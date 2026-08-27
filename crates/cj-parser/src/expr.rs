@@ -254,6 +254,92 @@ fn parse_atom(p: &mut Parser) -> Expr {
                 pos,
             }
         }
+        // quote expression: `quote( ... )` — quoted code as a token sequence.
+        // Per spec Ch.14: body is tokens, `$(expr)` interpolation, `@Foo(...)`
+        // nested macro calls; `\@`/`\$`/`\(`/`\)` escape as literal tokens.
+        TokenKind::QUOTE => {
+            p.advance();
+            let open = p.expect(TokenKind::LPAREN);
+            let pos = pos_of(&open);
+            let mut parts: Vec<Expr> = Vec::new();
+            while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+                let t = p.peek_token().clone();
+                // `$(expr)` interpolation
+                if t.kind == TokenKind::DOLLAR {
+                    p.advance();
+                    if p.eat(TokenKind::LPAREN) {
+                        let inner = parse_expr(p);
+                        p.expect(TokenKind::RPAREN);
+                        parts.push(inner);
+                        continue;
+                    }
+                    // bare `$` -> literal token
+                    parts.push(Expr::TokenPart {
+                        text: "$".to_string(),
+                        pos: pos_of(&t),
+                    });
+                    continue;
+                }
+                // `@Foo(...)` nested macro call inside quote
+                if t.kind == TokenKind::AT && p.peek_ahead(1).is_name_like() {
+                    // nested macro call: parse `@Foo(...)` inline
+                    p.advance(); // @
+                    let name_tok = p.advance();
+                    let mpos = pos_of(&t);
+                    let mname = name_tok.text.clone();
+                    let mut margs: Vec<cj_ast::Tokenish> = Vec::new();
+                    if p.eat(TokenKind::LPAREN) {
+                        while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+                            let a = p.advance();
+                            margs.push(cj_ast::Tokenish {
+                                text: a.text.clone(),
+                                pos: pos_of(&a),
+                            });
+                        }
+                        p.expect(TokenKind::RPAREN);
+                    }
+                    parts.push(Expr::MacroExpand {
+                        name: mname,
+                        args: margs,
+                        pos: mpos,
+                    });
+                    continue;
+                }
+                // plain token — capture its text as a TokenPart
+                p.advance();
+                parts.push(Expr::TokenPart {
+                    text: t.text.clone(),
+                    pos: pos_of(&t),
+                });
+            }
+            p.expect(TokenKind::RPAREN);
+            Expr::Quote { parts, pos }
+        }
+        // `@` macro invocation: `@Foo(args...)`
+        TokenKind::AT | TokenKind::AT_EXCL => {
+            p.advance();
+            let name_tok = p.peek_token().clone();
+            if !name_tok.kind.is_name_like() {
+                // bare `@`/`@!` not followed by a name — treat as error token
+                return Expr::Invalid(pos_of(&tok));
+            }
+            p.advance();
+            let name = name_tok.text.clone();
+            let pos = pos_of(&tok);
+            let mut args: Vec<cj_ast::Tokenish> = Vec::new();
+            if p.eat(TokenKind::LPAREN) {
+                // macro args are tokens until matching RPAREN
+                while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+                    let a = p.advance();
+                    args.push(cj_ast::Tokenish {
+                        text: a.text.clone(),
+                        pos: pos_of(&a),
+                    });
+                }
+                p.expect(TokenKind::RPAREN);
+            }
+            Expr::MacroExpand { name, args, pos }
+        }
         TokenKind::LPAREN => {
             p.advance();
             // tuple or parenthesized expr
