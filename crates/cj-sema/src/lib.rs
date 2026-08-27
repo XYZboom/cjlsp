@@ -19,6 +19,7 @@ use std::collections::HashMap;
 pub mod dep_graph;
 pub mod parallel;
 pub mod resolver;
+pub mod typecheck;
 pub mod unused;
 
 /// Kind of a collected symbol (for resolution / LSP).
