@@ -530,7 +530,7 @@ mod tests {
         }];
         let (out, diags) = expand_user_macro(def, &args);
         assert!(diags.is_empty(), "diags: {diags:?}");
-        assert_eq!(out, "print ( 42");
+        assert_eq!(out, "print ( 42 )");
     }
 
     #[test]
@@ -554,7 +554,7 @@ mod tests {
         assert!(e.contains(2, 17), "closing paren is inside the span");
         assert!(!e.contains(2, 8), "before the call is outside");
         assert!(!e.contains(2, 19), "after the call is outside");
-        assert_eq!(e.expanded, "print ( 42");
+        assert_eq!(e.expanded, "print ( 42 )");
     }
 
     #[test]
