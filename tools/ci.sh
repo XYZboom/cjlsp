@@ -103,6 +103,23 @@ if [ -n "$SCAN_DIR" ]; then
   SUMMARY+=("scan-compare|$SCAN_RC")
 fi
 
+# 7. LSP feature cases (completion + hover). Default smoke (2 cases each);
+#    FEATURE_FULL=1 runs the whole suite (slow, ~minutes).
+if [ "${FEATURE_FULL:-0}" = "1" ]; then
+  FEAT_OUT="$(timeout 900 python3 tools/run_feature_cases.py --workers 8 2>&1)"
+  FEAT_RC=$?
+  FEAT_SUM=$(echo "$FEAT_OUT" | grep -oE 'pass=[0-9]+ +fail=[0-9]+' | head -2 | tr '\n' ' ')
+  if [ $FEAT_RC -eq 0 ]; then
+    PASS=$((PASS + 1)); echo "PASS  feature cases ($FEAT_SUM)"
+  else
+    FAIL=$((FAIL + 1)); echo "FAIL  feature cases"
+    echo "$FEAT_OUT" | tail -8
+  fi
+  SUMMARY+=("feature-cases|$FEAT_RC")
+else
+  step "feature smoke (completion/hover)" bash -c "python3 tools/run_feature_cases.py --limit 2 --workers 4 2>&1 | tail -4"
+fi
+
 echo
 echo "=== CI result: $PASS passed, $FAIL failed ==="
 for s in "${SUMMARY[@]}"; do
