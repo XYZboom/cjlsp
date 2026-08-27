@@ -62,9 +62,9 @@ struct DeclInfo {
 
 /// Identifier references collected across the whole file.
 #[derive(Debug, Default)]
-struct Refs {
+pub struct Refs {
     /// bare identifier references (including call callees)
-    names: HashSet<String>,
+    pub names: HashSet<String>,
     /// member-access names on `this`/`super` (`this.x`, `super.m1`)
     members: HashSet<String>,
     /// bare-name call callees (`T(...)` uses the type-named constructor)
@@ -490,7 +490,7 @@ fn is_builtin(name: &str) -> bool {
 
 /// Collect all identifier references in a declaration (top-level and members),
 /// including type-name references (parents, annotations, generic args).
-fn collect_decl_refs(d: &Decl, refs: &mut Refs) {
+pub fn collect_decl_refs(d: &Decl, refs: &mut Refs) {
     match d {
         Decl::Func {
             params,

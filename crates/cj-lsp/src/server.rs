@@ -5,7 +5,6 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::path::PathBuf;
 
 /// LSP server: tracks open documents and computes diagnostics via the
 /// cj-frontend pipeline (lexer -> parser -> sema collector/resolver/dep).
@@ -146,7 +145,7 @@ impl LspServer {
     /// Uses the in-memory text from didOpen/didChange (the didOpen uri is a
     /// virtual path that may not exist on disk — content travels in `text`).
     fn publish_diagnostics(&mut self, uri: &str) -> Vec<Value> {
-        let Some((_, text)) = self.open_docs.get(uri) else {
+        let Some((path, text)) = self.open_docs.get(uri) else {
             return Vec::new();
         };
         // The test harness runs us with cwd = <workspace>/sourcecode/cangjieTest
@@ -155,13 +154,12 @@ impl LspServer {
         // that cwd. Resolve the real project root once per publish.
         let cwd = std::env::current_dir().unwrap_or_default();
         let project_root = resolve_project_root(&cwd, path);
-        let diagnostics = if text.is_empty() {
-            analyze_file(path, project_root.as_deref())
-        } else {
-            analyze_source(text, project_root.as_deref())
-        };
         let expected = self.expected_package_name(uri);
-        let diagnostics = analyze_source(text, expected.as_deref());
+        let diagnostics = if text.is_empty() {
+            analyze_file(path, project_root.as_deref(), expected.as_deref())
+        } else {
+            analyze_source(text, project_root.as_deref(), expected.as_deref())
+        };
         let msg = json!({
             "jsonrpc": "2.0",
             "method": "textDocument/publishDiagnostics",
@@ -287,10 +285,13 @@ fn collect_same_package_sigs(root: &Path, package: Option<&str>) -> HashMap<Stri
 }
 
 /// Run the full frontend pipeline on a file and return LSP-format diagnostics.
-fn analyze_file(path: &PathBuf, project_root: Option<&Path>) -> Vec<Value> {
+fn analyze_file(path: &PathBuf, project_root: Option<&Path>, expected: Option<&str>) -> Vec<Value> {
     match fs::read_to_string(path) {
-        Ok(s) => analyze_source(&s, project_root),
+        Ok(s) => analyze_source(&s, project_root, expected),
         Err(_) => Vec::new(),
+    }
+}
+
 /// Convert an LSP 0-based (line, character) position to a byte offset in
 /// `src`. `character` counts Unicode code points (matches the lexer's column
 /// semantics). Out-of-range positions clamp to the nearest valid offset.
@@ -337,11 +338,11 @@ fn apply_incremental_change(text: &mut String, range: &Value, new_text: &str) {
 
 /// Run the full frontend pipeline on source text and return LSP-format
 /// diagnostics (1-based diag positions -> 0-based LSP ranges).
-fn analyze_source(src: &str, project_root: Option<&Path>) -> Vec<Value> {
 ///
-/// `expected` — the package name derived from the file's URI (pass `None`
-/// when it cannot be inferred); drives package-level checks.
-fn analyze_source(src: &str, expected: Option<&str>) -> Vec<Value> {
+/// `project_root` — the resolved project root (for cross-file function
+/// signature collection); `expected` — the package name derived from the
+/// file's URI (pass `None` when it cannot be inferred); drives package checks.
+fn analyze_source(src: &str, project_root: Option<&Path>, expected: Option<&str>) -> Vec<Value> {
     let mut parser = cj_parser::Parser::new(src, cj_lexer::Lexer::new(src).tokenize());
     let file = parser.run();
 

@@ -18,8 +18,8 @@ use std::collections::HashMap;
 
 pub mod dep_graph;
 pub mod expander;
-pub mod package;
 pub mod overload;
+pub mod package;
 pub mod parallel;
 pub mod resolver;
 pub mod typecheck;

@@ -41,10 +41,11 @@ pub fn check_package(file: &File, expected: Option<&str>) -> Vec<Diag> {
     }
 
     // 2. Collect all referenced names in the file (for unused-import checks).
-    let mut used_names: HashSet<String> = HashSet::new();
+    let mut refs = crate::unused::Refs::default();
     for d in &file.decls {
-        crate::unused::collect_decl_refs(d, &mut used_names);
+        crate::unused::collect_decl_refs(d, &mut refs);
     }
+    let used_names: &std::collections::HashSet<String> = &refs.names;
 
     // 3. Import checks (unused + can-not-find).
     for imp in &file.imports {
@@ -53,7 +54,7 @@ pub fn check_package(file: &File, expected: Option<&str>) -> Vec<Diag> {
         let is_self = own.is_some() && pkg.as_deref() == own;
 
         // 3a. Unused import (skip self-imports — they report as circular instead).
-        if !is_self && !import_is_used(imp, &used_names) {
+        if !is_self && !import_is_used(imp, used_names) {
             let pos = imp.pos;
             let msg = format!(
                 "unused import '{}', this warning can be suppressed by setting \
