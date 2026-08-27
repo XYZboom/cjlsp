@@ -18,7 +18,21 @@ import re, sys, os
 HERE = os.path.dirname(os.path.abspath(__file__))
 # tools/ is inside cj-lang/, official sources are one level up under /root/Code/cangjie/
 CANGJIE_DIR = os.path.dirname(HERE)
-REPO = os.path.dirname(CANGJIE_DIR)
+
+
+def find_repo(start: str) -> str:
+    """Walk up from `start` until a dir containing the official compiler repo
+    (cangjie_compiler/include/cangjie) is found. Works from the main tree and
+    from git worktrees (where `..` lands on .worktrees/)."""
+    cur = os.path.abspath(start)
+    for _ in range(8):
+        if os.path.isdir(os.path.join(cur, "cangjie_compiler", "include", "cangjie")):
+            return cur
+        cur = os.path.dirname(cur)
+    return os.path.dirname(CANGJIE_DIR)
+
+
+REPO = find_repo(CANGJIE_DIR)
 ASTKIND_INC = os.path.join(REPO, "cangjie_compiler", "include", "cangjie", "AST", "ASTKind.inc")
 
 # ---------------------------------------------------------------------------
@@ -91,6 +105,7 @@ FIELDS: dict[str, list[tuple[str, str, str]]] = {
     "MAIN_DECL": [("body", "Body", "function body")],
     "FUNC_DECL": [
         ("name", "String", "function name"),
+        ("name_pos", "CodePos", "position of the function name token (start of the identifier)"),
         ("is_public", "bool", "public modifier"),
         ("is_abstract", "bool", "abstract modifier"),
         ("type_params", "Vec<TypeParam>", "generic parameters"),
@@ -397,6 +412,7 @@ FIELDS: dict[str, list[tuple[str, str, str]]] = {
     "FEATURES_DIRECTIVE": [("features", "Vec<String>", "features")],
     "FILE": [
         ("package", "Option<String>", "package name"),
+        ("package_pos", "Option<CodePos>", "package name position"),
         ("imports", "Vec<ImportSpec>", "imports"),
         ("decls", "Vec<Decl>", "declarations"),
     ],
@@ -491,11 +507,16 @@ def build() -> str:
     w("/// Import spec.")
     w("#[derive(Debug, Clone, PartialEq, Eq)]")
     w("pub struct ImportSpec { pub path: Vec<String>, pub glob: bool,")
-    w("    pub selected: Vec<String>, pub pos: CodePos }")
+    w("    pub selected: Vec<String>, pub pos: CodePos,")
+    w("    /// Span of the imported package name (first..last path segment).")
+    w("    pub name_pos: CodePos }")
     w("")
     w("/// File (package + imports + decls).")
     w("#[derive(Debug, Clone, PartialEq, Eq)]")
-    w("pub struct File { pub package: Option<String>, pub imports: Vec<ImportSpec>,")
+    w("pub struct File { pub package: Option<String>,")
+    w("    /// Position of the declared package name (start of first segment).")
+    w("    pub package_pos: Option<CodePos>,")
+    w("    pub imports: Vec<ImportSpec>,")
     w("    pub decls: Vec<Decl>, pub pos: CodePos }")
     w("")
 

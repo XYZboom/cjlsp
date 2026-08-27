@@ -171,12 +171,16 @@ pub struct ImportSpec {
     pub glob: bool,
     pub selected: Vec<String>,
     pub pos: CodePos,
+    /// Span of the imported package name (first..last path segment).
+    pub name_pos: CodePos,
 }
 
 /// File (package + imports + decls).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct File {
     pub package: Option<String>,
+    /// Position of the declared package name (start of first segment).
+    pub package_pos: Option<CodePos>,
     pub imports: Vec<ImportSpec>,
     pub decls: Vec<Decl>,
     pub pos: CodePos,
