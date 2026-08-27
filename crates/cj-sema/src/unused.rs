@@ -183,9 +183,12 @@ pub fn detect_unused(file: &File) -> Vec<Diag> {
                 top_decls.push((name.clone(), DeclKind::Enum, pos.line, pos.col));
             }
             Decl::Var {
-                name, pos, init, ..
+                name,
+                name_pos,
+                init,
+                ..
             } => {
-                top_decls.push((name.clone(), DeclKind::Var, pos.line, pos.col));
+                top_decls.push((name.clone(), DeclKind::Var, name_pos.line, name_pos.col));
                 if let Some(init) = init {
                     let mut init_refs: HashSet<String> = HashSet::new();
                     collect_refs(init, &mut init_refs);

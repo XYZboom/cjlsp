@@ -125,6 +125,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             };
             Some(Decl::Var {
                 name,
+                name_pos: pos_of(&name_tok),
                 is_mutable: is_mut || is_mutable,
                 is_public,
                 ty,

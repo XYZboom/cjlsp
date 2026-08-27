@@ -246,6 +246,9 @@ fn analyze_source(src: &str, project_root: Option<&Path>) -> Vec<Value> {
     let dep_graph = cj_sema::dep_graph::DepGraph::build(&[&file]);
     let dep_diags = dep_graph.detect_cycles();
     let unused_diags = cj_sema::unused::detect_unused(&file);
+    // Literal type checking for typed var decls (M3c, spec Ch.02): String=1,
+    // Int8='x', Int8=999999 etc. — the 011 suite.
+    let lit_diags = cj_sema::typecheck::check_decls(&file);
 
     // Cross-file call type checking: merge the opened file's own signatures
     // with same-package sibling signatures found on disk.
@@ -294,6 +297,7 @@ fn analyze_source(src: &str, project_root: Option<&Path>) -> Vec<Value> {
         .chain(dep_diags.iter())
         .chain(unused_diags.iter())
         .chain(call_diags.iter())
+        .chain(lit_diags.iter())
     {
         push(d);
     }

@@ -256,6 +256,8 @@ pub enum Pattern {
     Var {
         /// binding name
         name: String,
+        /// position of the binding name token
+        name_pos: CodePos,
         /// mut modifier
         is_mutable: bool,
         pos: CodePos,
@@ -792,6 +794,8 @@ pub enum Decl {
     Var {
         /// variable name
         name: String,
+        /// position of the binding name token
+        name_pos: CodePos,
         /// var vs let
         is_mutable: bool,
         /// public modifier

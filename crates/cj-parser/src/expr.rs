@@ -579,6 +579,7 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
             } else {
                 Pattern::Var {
                     name: tok.text.clone(),
+                    name_pos: pos_of(&tok),
                     is_mutable: false,
                     pos: pos_of(&tok),
                 }
