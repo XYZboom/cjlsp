@@ -142,7 +142,7 @@ impl LspServer {
 
         let file_name = uri.rsplit('/').next().unwrap_or("").to_string();
         let pkg = file.package.as_deref();
-        crate::hover::hover_at(&file, pkg, &file_name, line, character)
+        crate::hover::hover_at(&file, source, pkg, &file_name, line, character)
     }
 
     /// Handle textDocument/definition: return the declaration location at the
