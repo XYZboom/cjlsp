@@ -19,6 +19,7 @@ use std::collections::HashMap;
 pub mod checks;
 pub mod dep_graph;
 pub mod expander;
+pub mod macro_cache;
 pub mod overload;
 pub mod package;
 pub mod parallel;
