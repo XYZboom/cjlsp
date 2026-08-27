@@ -31,11 +31,27 @@ pub struct MacroDef {
 /// One expansion trace entry: the call site and the generated code.
 #[derive(Debug, Clone)]
 pub struct Expansion {
-    /// Call-site position of the @Macro(...) invocation.
+    /// Call-site position of the @Macro(...) invocation (1-based).
     pub call_line: u32,
     pub call_col: u32,
+    /// End of the macro call span (1-based; exclusive column = one past the
+    /// closing `)`). Diagnostics at or before this position on the call line
+    /// are treated as inside the expanded-text region — code that came from
+    /// the expansion.
+    pub call_end_line: u32,
+    pub call_end_col: u32,
     /// Expanded program text (or a preview string for builtins).
     pub expanded: String,
+}
+
+impl Expansion {
+    /// Whether a 1-based `(line, col)` position falls inside this expansion's
+    /// source span (the macro call text the expanded code replaces).
+    pub fn contains(&self, line: u32, col: u32) -> bool {
+        let start = (self.call_line, self.call_col);
+        let end = (self.call_end_line, self.call_end_col);
+        (line, col) >= start && (line, col) <= end
+    }
 }
 
 /// Shared expansion context (avoids 8-arg function signatures).
@@ -177,6 +193,8 @@ fn expand_one(
         expansions.push(Expansion {
             call_line: pos.line,
             call_col: pos.col,
+            call_end_line: pos.end_line,
+            call_end_col: pos.end_col,
             expanded,
         });
     }
@@ -376,6 +394,8 @@ fn expand_one_cached(name: &str, args: &[cj_ast::Tokenish], pos: &CodePos, ctx: 
         ctx.expansions.push(Expansion {
             call_line: pos.line,
             call_col: pos.col,
+            call_end_line: pos.end_line,
+            call_end_col: pos.end_col,
             expanded: builtin_out,
         });
         return;
@@ -400,13 +420,31 @@ fn expand_one_cached(name: &str, args: &[cj_ast::Tokenish], pos: &CodePos, ctx: 
             ctx.expansions.push(Expansion {
                 call_line: pos.line,
                 call_col: pos.col,
+                call_end_line: pos.end_line,
+                call_end_col: pos.end_col,
                 expanded,
             });
             return;
         }
     }
 
-    // 3. Fallback: report unresolved (official wording for unknown macro).
+    // 3. In-file quote-template fallback: a macro defined in this file can be
+    //    expanded without the SDK (spec Ch.14 quote substitution). Record the
+    //    expansion so diagnostics within the call span can show the preview.
+    if let Some(def) = ctx.defs.get(name) {
+        let (out, tdiags) = expand_user_macro(def, args);
+        ctx.expansions.push(Expansion {
+            call_line: pos.line,
+            call_col: pos.col,
+            call_end_line: pos.end_line,
+            call_end_col: pos.end_col,
+            expanded: out,
+        });
+        ctx.diags.extend(tdiags);
+        return;
+    }
+
+    // 4. Unknown macro: report unresolved (official wording).
     ctx.diags.push(Diag::error(
         pos.line,
         pos.col,
@@ -493,5 +531,46 @@ mod tests {
         let (out, diags) = expand_user_macro(def, &args);
         assert!(diags.is_empty(), "diags: {diags:?}");
         assert_eq!(out, "print ( 42");
+    }
+
+    #[test]
+    fn local_def_template_fallback_records_span() {
+        // A macro defined in the file expands without the SDK (quote-template
+        // fallback): the expansion trace must carry the full call span so the
+        // LSP can attach the "code after the macro is expanded" note to any
+        // diagnostic inside `@Wrap(42)`.
+        let (file, _) = parse_source(
+            "public macro Wrap(x: Tokens): Tokens { quote(print(x)) }\nlet y = @Wrap(42)\n",
+        );
+        let mut cache = crate::macro_cache::MacroCache::new();
+        let (exps, diags) = expand_file_with_cache(&file, "t.cj", &mut cache, None);
+        assert!(diags.is_empty(), "diags: {diags:?}");
+        assert_eq!(exps.len(), 1, "exps: {exps:?}");
+        let e = &exps[0];
+        // `let y = @Wrap(42)` on line 2: `@` at col 9, `)` at col 17.
+        assert_eq!((e.call_line, e.call_col), (2, 9));
+        assert_eq!((e.call_end_line, e.call_end_col), (2, 18));
+        assert!(e.contains(2, 9), "@ itself is inside the span");
+        assert!(e.contains(2, 17), "closing paren is inside the span");
+        assert!(!e.contains(2, 8), "before the call is outside");
+        assert!(!e.contains(2, 19), "after the call is outside");
+        assert_eq!(e.expanded, "print ( 42");
+    }
+
+    #[test]
+    fn expansion_span_covers_diagnostic_position() {
+        // A diag at/inside the call (e.g. on the closing paren, or on the
+        // token right after it — end_col is the column one past `)`) is
+        // attributed to the expansion; further right is not.
+        let (file, _) = parse_source(
+            "public macro Wrap(x: Tokens): Tokens { quote(print(x)) }\nlet y = @Wrap(42)\n",
+        );
+        let mut cache = crate::macro_cache::MacroCache::new();
+        let (exps, _) = expand_file_with_cache(&file, "t.cj", &mut cache, None);
+        assert!(exps[0].contains(2, 9)); // `@`
+        assert!(exps[0].contains(2, 17)); // `)`
+        assert!(exps[0].contains(2, 18)); // inclusive end (right after `)`)
+        assert!(!exps[0].contains(2, 19)); // one past the call
+        assert!(!exps[0].contains(2, 8)); // before the call
     }
 }
