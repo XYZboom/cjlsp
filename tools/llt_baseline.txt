@@ -1,103 +1,103 @@
 ==============================================================================
 cj-lang LLT frontend regression baseline (T19)
-generated: 2026-08-28 01:00:25
-frontend:  /root/Code/cangjie/cj-lang/.worktrees/t_db07c8d8/target/release/cj-frontend
-commit:    32379c1
+generated: 2026-08-28 02:34:04
+frontend:  /root/Code/cangjie/cj-lang/.worktrees/t_caedaf7f/target/release/cj-frontend
+commit:    4844c74
 llt dir:   /root/Code/cangjie/cangjie_test/testsuites/LLT/compiler
 scope:     LLT/compiler/{Frontend,Lexer,Parser,Sema,Diagnose} (5351 .cj files)
 mode:      cj-frontend --dump-ast
 ==============================================================================
 
-total=5351  success=1022  fail=4329  crash=0  success-rate=19.1%
+total=5351  success=3263  fail=2088  crash=0  success-rate=61.0%
 
 [by directory]
-  Frontend      22  success=   15  fail=    7  crash=  0
-  Lexer         28  success=   10  fail=   18  crash=  0
-  Parser       576  success=  103  fail=  473  crash=  0
-  Sema        3863  success=  621  fail= 3242  crash=  0
-  Diagnose     862  success=  273  fail=  589  crash=  0
+  Frontend      22  success=   20  fail=    2  crash=  0
+  Lexer         28  success=   20  fail=    8  crash=  0
+  Parser       576  success=  240  fail=  336  crash=  0
+  Sema        3863  success= 2556  fail= 1307  crash=  0
+  Diagnose     862  success=  427  fail=  435  crash=  0
 
 [crash clusters]
   none — zero crash files
 
 [failure samples — first 50 (sorted by path)]
-  Diagnose/AfterMacroExpand/BothHintsInSameMacroDef/EmptyCaseBody/call.cj  | error: expected declaration, found '@' at 14:1
   Diagnose/AfterMacroExpand/BothHintsInSameMacroDef/EmptyCaseBody/define.cj  | error: expected macro name at 7:7
-  Diagnose/AfterMacroExpand/BothHintsInSameMacroDef/ExpectedLiteral/call.cj  | error: expected declaration, found '@' at 14:1
   Diagnose/AfterMacroExpand/BothHintsInSameMacroDef/ExpectedLiteral/define.cj  | error: expected macro name at 7:7
   Diagnose/AfterMacroExpand/ExpectedName/define.cj  | error: expected macro name at 7:7
-  Diagnose/AfterMacroExpand/ExpectedName/invoke.cj  | error: expected declaration, found '@' at 14:1
+  Diagnose/AfterMacroExpand/ExpectedName/invoke.cj  | error: expected enum case name, found '@' at 17:5
   Diagnose/AfterMacroExpand/UnclosedDelimiter/define.cj  | error: expected macro name at 7:7
-  Diagnose/AfterMacroExpand/UnclosedDelimiter/main.cj  | error: expected declaration, found '@' at 15:1
   Diagnose/Driver/json/driver_source_file_empty.cj  | error: unclosed delimiter: '{' at 10:10
-  Diagnose/JsonFormat/DiagCategory/conditional_compilation.cj  | error: expected declaration, found '@' at 12:1
-  Diagnose/JsonFormat/DiagCategory/import_package.cj  | error: expected declaration, found keyword 'import' at 14:8
   Diagnose/JsonFormat/DiagCategory/lex.cj  | error: expected expression after 'multiline_raw_string', found %s at 13:5
   Diagnose/JsonFormat/DiagCategory/parse.cj  | error: expected identifier or pattern after 'var', found '<EOF>' at 12:1
-  Diagnose/JsonFormat/DiagCategory/sema.cj  | error: expected expression after ':', found %s at 12:10
-  Diagnose/JsonFormat/DiagKind/oldDiag.cj  | error: expected expression after ':', found %s at 12:10
   Diagnose/JsonFormat/Format/define.cj  | error: expected macro name at 7:7
   Diagnose/JsonFormat/Format/errorWithHelp.cj  | error: expected identifier or pattern after 'var', found keyword 'this' at 10:5
-  Diagnose/JsonFormat/Format/errorWithNotes.cj  | error: expected declaration, found '@' at 14:1
   Diagnose/JsonFormat/Format/messageAndHints.cj  | error: expected expression after '=>', found %s at 11:11
-  Diagnose/JsonFormat/Format/onlyMessage.cj  | error: expected declaration, found '{' at 11:30
-  Diagnose/JsonFormat/Format/parseInMacro.cj  | error: expected declaration, found '@' at 14:1
   Diagnose/JsonFormat/Format/withNotesAndHelps.cj  | error: expected declaration, found literal '0b1_' at 10:1
   Diagnose/JsonFormat/Helps/multHelps.cj  | error: expected declaration, found literal '0b1_' at 10:1
   Diagnose/JsonFormat/Helps/noHelp.cj  | error: expected func name, found '<EOF>' at 15:1
-  Diagnose/JsonFormat/Helps/oneHelp.cj  | error: expected declaration, found keyword 'import' at 10:10
+  Diagnose/JsonFormat/Helps/oneHelp.cj  | error: expected declaration, found keyword 'as' at 10:21
   Diagnose/JsonFormat/Hints/hasMainHint.cj  | error: expected class name at 27:3
   Diagnose/JsonFormat/Location/range.cj  | error: expected identifier or pattern after 'var', found '<EOF>' at 13:1
   Diagnose/JsonFormat/Notes/define.cj  | error: expected macro name at 7:7
-  Diagnose/JsonFormat/Notes/multNotes.cj  | error: expected declaration, found '@' at 14:1
   Diagnose/JsonFormat/Notes/noNotes.cj  | error: expected type name after '::', found literal '1' at 9:9
   Diagnose/JsonFormat/Notes/oneNote.cj  | error: expected declaration, found literal '1' at 10:1
   Diagnose/JsonFormat/Notes/onlyMessage.cj  | error: expected declaration, found 'a' at 12:1
   Diagnose/JsonFormat/Notes/withMainHint.cj  | error: expected declaration, found '<:' at 14:12
-  Diagnose/JsonFormat/WarnGroup/all.cj  | error: expected expression after ':', found %s at 15:16
-  Diagnose/JsonFormat/WarnGroup/all_woff.cj  | error: expected expression after ':', found %s at 15:16
-  Diagnose/JsonFormat/WarnGroup/package-import.cj  | error: expected declaration, found keyword 'import' at 15:8
-  Diagnose/JsonFormat/WarnGroup/package-import_woff.cj  | error: expected declaration, found keyword 'import' at 15:8
-  Diagnose/JsonFormat/WarnGroup/semantics.cj  | error: expected expression after keyword 'func', found %s at 14:5
-  Diagnose/JsonFormat/WarnGroup/semantics_woff.cj  | error: expected expression after keyword 'func', found %s at 14:5
-  Diagnose/JsonFormat/WarnGroup/ungrouped.cj  | error: expected expression after ':', found %s at 12:16
-  Diagnose/JsonFormat/WarnGroup/ungrouped_woff.cj  | error: expected expression after ':', found %s at 13:16
   Diagnose/JsonFormat/WarnGroup/unused.cj  | error: expected 'assign', found '<' at 11:7
   Diagnose/JsonFormat/WarnGroup/unused_woff.cj  | error: expected 'assign', found '<' at 11:7
   Diagnose/PlatformRelated/MisDiag/call.cj  | error: expected expression after '=>', found %s at 17:6
   Diagnose/PlatformRelated/MisDiag/define.cj  | error: expected macro name at 9:7
-  Diagnose/conditional/invalid_condition_value/arrayLitExpr.cj  | error: expected declaration, found '@' at 10:1
-  Diagnose/conditional/invalid_condition_value/asExpr.cj  | error: expected declaration, found '@' at 10:1
-  Diagnose/conditional/invalid_condition_value/binaryExpr.cj  | error: expected declaration, found '@' at 10:1
-  Diagnose/conditional/invalid_condition_value/callExpr.cj  | error: expected declaration, found '@' at 14:1
-  Diagnose/conditional/invalid_condition_value/decExpr.cj  | error: expected declaration, found '@' at 10:1
+  Diagnose/conditional/invalid_condition_value/arrayLitExpr.cj  | error: expected declaration, found ']' at 10:42
+  Diagnose/conditional/invalid_condition_value/subscriptExpr.cj  | error: expected declaration, found ']' at 11:22
+  Diagnose/conditional/invalid_condition_value/varrayExpr.cj  | error: expected declaration, found ')' at 10:59
+  Diagnose/lex_test/lex_expected_back_quote/case1.cj  | error: expected expression after '', found %s at 15:2
+  Diagnose/lex_test/lex_expected_back_quote/case2.cj  | error: expected expression after '', found %s at 14:2
+  Diagnose/lex_test/lex_expected_back_quote/case3.cj  | error: expected expression after '', found %s at 14:11
+  Diagnose/lex_test/lex_expected_back_quote/case5.cj  | error: expected expression after '', found %s at 14:2
+  Diagnose/lex_test/lex_expected_back_quote/lex_illegal_backquote.cj  | error: expected expression after '', found %s at 13:13
+  Diagnose/lex_test/lex_expected_character/case1.cj  | error: unclosed delimiter: '{' at 11:2
+  Diagnose/lex_test/lex_expected_character/case10.cj  | error: unclosed delimiter: '{' at 11:2
+  Diagnose/lex_test/lex_expected_character/case6.cj  | error: unclosed delimiter: '{' at 13:2
+  Diagnose/lex_test/lex_expected_character/lex_expected_charater.cj  | error: unclosed delimiter: '{' at 10:9
+  Diagnose/lex_test/lex_expected_character/wildcard.cj  | error: expected expression after '_', found %s at 12:5
+  Diagnose/lex_test/lex_expected_character_in_char_literal/case1.cj  | error: expected 'l_curl', found 'end' at 33:1
+  Diagnose/lex_test/lex_expected_digit/case1.cj  | error: expected expression after '', found %s at 14:13
+  Diagnose/lex_test/lex_expected_digit/case10.cj  | error: expected declaration, found literal '1e' at 13:1
+  Diagnose/lex_test/lex_expected_digit/case11.cj  | error: expected declaration, found '}' at 13:1
+  Diagnose/lex_test/lex_expected_digit/case12.cj  | error: expected declaration, found '}' at 13:1
+  Diagnose/lex_test/lex_expected_digit/case13.cj  | error: expected expression after '', found %s at 14:13
+  Diagnose/lex_test/lex_expected_digit/case14.cj  | error: expected expression after '', found %s at 16:10
+  Diagnose/lex_test/lex_expected_digit/case2.cj  | error: expected expression after '', found %s at 14:10
+  Diagnose/lex_test/lex_expected_digit/case4.cj  | error: expected expression after '', found %s at 14:10
+  Diagnose/lex_test/lex_expected_digit/case6.cj  | error: expected expression after '.', found %s at 15:10
+  Diagnose/lex_test/lex_expected_exponent_part/case1.cj  | error: expected expression after '', found %s at 16:10
 
 [failure message clusters — top 25 (normalized first diag)]
-   455  error: expected expression after ':', found %s   e.g. Lexer/Unicode/Diagnostic/20e0.cj
-   418  error: expected declaration, found keyword 'import'   e.g. Frontend/1K00/src/pkgB/b.cj
-   271  error: expected expression after '=', found %s   e.g. Lexer/Unicode/Diagnostic/zwj.cj
-   217  error: expected 'l_curl', found '<:'   e.g. Frontend/references/src/test001.cj
-   212  error: expected declaration, found keyword 'where'   e.g. Parser/generics/generic_constraint_and_2.cj
-   193  error: expected declaration, found '{'   e.g. Lexer/Unicode/suffix.cj
-   185  error: expected expression after keyword 'Int<n>', found %s   e.g. Frontend/DumpOptions/no_ir.cj
-   153  error: expected declaration, found '@'   e.g. Lexer/Unicode/macro.cj
-   140  error: expected declaration, found '&'   e.g. Parser/class_extends/class_extends_multi_1.cj
-   127  error: expected type name after '::', found '<'   e.g. Parser/ar/parse_support_keyword_context/decl/extend.cj
-   121  error: expected expression after '=>', found %s   e.g. Frontend/5807/src/lambda.cj
-   113  error: expected declaration, found keyword 'const'   e.g. Parser/ar/generic_in_expr_followed_commas/annotation.cj
-   105  error: expected declaration, found keyword 'operator'   e.g. Parser/class/paren.cj
-    64  error: expected expression after keyword 'func', found %s   e.g. Lexer/Unicode/u1.cj
-    61  error: expected expression after ')', found %s   e.g. Parser/expr/illegal_cfunc_type.cj
-    56  error: expected declaration, found '@!'   e.g. Parser/annotation/atexcl/bad_atexcl_builtin_annotation.cj
-    52  error: expected expression after 'illegal', found %s   e.g. Lexer/Unicode/illegal.cj
-    47  error: expected declaration, found '<:'   e.g. Sema/Extend/autobox_match5.cj
-    46  error: unclosed delimiter: '{'   e.g. Parser/function/func_body_missing_right_curl_01.cj
+   104  error: expected expression after ')', found %s   e.g. Parser/ar/support_tuple_left_value/libast/negative/add_assign.cj
+    79  error: expected declaration, found keyword 'override'   e.g. Parser/const/const_ast_func4.cj
+    64  error: expected 'double_arrow', found ':'   e.g. Parser/function/named_param_in_lambda.cj
+    60  error: expected declaration, found '<:'   e.g. Sema/Extend/autobox_match5.cj
+    59  error: expected expression after '', found %s   e.g. Lexer/Unicode/illegal.cj
+    57  error: expected 'greater', found '>>'   e.g. Sema/ErrMsgs/subscript_01.cj
+    57  error: expected 'r_paren', found '<-'   e.g. Sema/box/box_interface_multi_conversion.cj
+    56  error: unclosed delimiter: '{'   e.g. Parser/const/const_prop.cj
+    54  error: expected 'r_paren', found 'in'   e.g. Parser/expr/quote/quoteexpr3.cj
+    51  error: expected type name after '::', found '?'   e.g. Parser/ar/generic_in_expr_followed_commas/callsuffix.cj
+    48  error: expected 'assign', found '<'   e.g. Sema/Extend/extend_imp_type.cj
+    46  error: expected enum case name, found keyword 'func'   e.g. Parser/modifiers/ok_member_modifiers.cj
     45  error: expected macro name   e.g. Lexer/Unicode/macro.p.cj
-    42  error: expected declaration, found keyword 'override'   e.g. Sema/OptionalModifiers/optionalModifiers01.cj
-    42  error: expected 'r_paren', found '<-'   e.g. Sema/if/err_scope_00.cj
-    38  error: expected 'assign', found '<'   e.g. Sema/Extend/extend_imp_type.cj
-    36  error: expected expression after '_', found %s   e.g. Parser/ar/parser_support_wildcard/negative/expr_kind/range_expr.cj
-    36  error: expected enum case name, found keyword 'func'   e.g. Sema/Extend/extend_instantiation_function_ambiguous3.cj
+    45  error: expected 'l_curl', found '('   e.g. Parser/others/positionIsEmpty.cj
+    43  error: expected declaration, found '{'   e.g. Sema/Extend/default_implement/inherit_relation_of_extend01/pkg.cj
+    37  error: expected expression after '_', found %s   e.g. Parser/ar/parser_support_wildcard/negative/expr_kind/range_expr.cj
+    35  error: expected declaration, found keyword 'redef'   e.g. Sema/class/class_access_control20.cj
+    34  error: expected expression after keyword 'public', found %s   e.g. Parser/ar/parse_support_keyword_context/expr/try.cj
+    32  error: expected 'double_arrow', found 'case'   e.g. Parser/pattern_match/match_no_selector_decl_alone.cj
+    31  error: expected type name after '::', found '$'   e.g. Parser/expr/trailing_comma_varray.cj
+    29  error: expected declaration, found keyword 'foreign'   e.g. Lexer/Unicode/ending.cj
+    28  error: expected parameter name, found '_'   e.g. Parser/ar/parser_support_wildcard/negative/func_param/named_wildcard_parameter.cj
+    28  error: expected expression after '?', found %s   e.g. Parser/ar/parser_support_wildcard/positive/lambda_param/2_trailing_lambda_expr/item_after_quest_1.cj
+    27  error: expected declaration, found keyword 'as'   e.g. Parser/others/exit_at_parser.cj
+    25  error: expected expression after '=>', found %s   e.g. Sema/ErrMsgs/lambda_0.cj
 
 note: success = exit 0 + no parser diagnostic; fail = exit 0 + diagnostic(s); crash = non-zero exit/timeout.
 note: dump-ast renders every parser diag (incl. warnings) as 'error:' on stderr; fail may include warning-only files.

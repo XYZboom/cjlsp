@@ -6,7 +6,7 @@
 
 use super::Parser;
 use crate::ty::parse_type;
-use cj_ast::{AssignOp, BinOp, Expr, LitKind, Pattern, UnOp};
+use cj_ast::{AssignOp, BinOp, Expr, LitKind, Param, Pattern, Type, UnOp};
 use cj_lexer::TokenKind;
 
 /// Parse an expression at the current token.
@@ -19,13 +19,10 @@ pub fn parse_expr_prec(p: &mut Parser, min_prec: u8) -> Expr {
     let mut lhs = parse_unary(p);
     loop {
         let tok_kind = p.peek();
-        let prec = tok_kind.precedence();
-        if prec == 0 || prec < min_prec {
-            break;
-        }
-        // Handle assignment operators specially (right-assoc, precedence 0).
+        // Handle assignment operators specially (right-assoc, precedence 0):
+        // they bind looser than any binary op, only parsed at min_prec == 0.
+        // Must be checked BEFORE the `prec == 0` break below.
         if let Some(op) = assign_op_from_token(tok_kind) {
-            // assignment binds looser than any binary op; only at min_prec == 0
             if min_prec > 0 {
                 break;
             }
@@ -44,6 +41,31 @@ pub fn parse_expr_prec(p: &mut Parser, min_prec: u8) -> Expr {
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
                 pos,
+            };
+            continue;
+        }
+        let prec = tok_kind.precedence();
+        if prec == 0 || prec < min_prec {
+            break;
+        }
+        // `is` / `as` — type test / cast (official IsExpr/AsExpr). Their RHS is
+        // a TYPE, not an expression: `b is D`, `d as B`, `x is (Int64, Bool)`.
+        if tok_kind == TokenKind::IS || tok_kind == TokenKind::AS {
+            let op_tok = p.advance();
+            let ty = parse_type(p);
+            let pos = pos_of(&op_tok);
+            lhs = if tok_kind == TokenKind::IS {
+                Expr::Is {
+                    inner: Box::new(lhs),
+                    ty,
+                    pos,
+                }
+            } else {
+                Expr::As {
+                    inner: Box::new(lhs),
+                    ty,
+                    pos,
+                }
             };
             continue;
         }
@@ -114,6 +136,17 @@ fn parse_unary(p: &mut Parser) -> Expr {
                 pos: pos_of(&tok),
             };
         }
+        TokenKind::INCR | TokenKind::DECR => {
+            // prefix `++x` / `--x`
+            let tok = p.advance();
+            let inner = parse_unary(p);
+            return Expr::IncOrDec {
+                is_inc: tok.kind == TokenKind::INCR,
+                is_prefix: true,
+                inner: Box::new(inner),
+                pos: pos_of(&tok),
+            };
+        }
         _ => {}
     }
     parse_postfix(p)
@@ -162,6 +195,10 @@ fn parse_postfix(p: &mut Parser) -> Expr {
                 let name_tok = p.peek_token().clone();
                 if name_tok.kind == TokenKind::IDENTIFIER || name_tok.kind.is_identifier_like() {
                     let name = p.advance().text;
+                    // generic args after member name: `a.foo<Int64>(1)`
+                    if p.peek() == TokenKind::LT && lt_is_generic_args(p) {
+                        let _ = crate::ty::parse_generic_args(p);
+                    }
                     let pos = pos_of(&dot);
                     e = Expr::Member {
                         object: Box::new(e),
@@ -189,10 +226,95 @@ fn parse_postfix(p: &mut Parser) -> Expr {
                     pos,
                 };
             }
+            TokenKind::LT => {
+                // `foo<T>` or `A<Int64>.foo<Int64>(1)` — generic args on a
+                // name or member expression (bare function reference or
+                // qualified call).  Only consume if the lookahead confirms
+                // this is a generic-args list, not a less-than comparison.
+                if lt_is_generic_args(p) {
+                    let args = crate::ty::parse_generic_args(p);
+                    if let Expr::Name { type_args, .. } = &mut e {
+                        *type_args = args;
+                    }
+                    // For other expr kinds (Member, Call, ...) we discard the
+                    // args; the parse succeeds and sema can recover type info.
+                    continue;
+                }
+                break;
+            }
+            TokenKind::INCR | TokenKind::DECR => {
+                // postfix `x++` / `x--`
+                let tok = p.advance();
+                let pos = pos_of(&tok);
+                e = Expr::IncOrDec {
+                    is_inc: tok.kind == TokenKind::INCR,
+                    is_prefix: false,
+                    inner: Box::new(e),
+                    pos,
+                };
+            }
             _ => break,
         }
     }
     e
+}
+
+/// Heuristic: does `<` at the cursor open a generic-argument list rather than
+/// a less-than operator? Scans the raw token stream for a matching `>` (with
+/// proper nesting) and checks that the token right after it is one that a
+/// type-argument list can legally precede — `(`, `.`, `)`, `;`, `,`, `>`, etc.
+/// Returns `false` when the `<` is a comparison (e.g. `a < b`).
+fn lt_is_generic_args(p: &Parser) -> bool {
+    let mut depth = 0usize;
+    let mut i = p.cursor();
+    while i < p.token_len() {
+        let k = p.raw_kind_at(i);
+        i += 1;
+        if k == TokenKind::COMMENT || k == TokenKind::NL {
+            continue;
+        }
+        match k {
+            TokenKind::LT => depth += 1,
+            TokenKind::GT => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    // token right after matching `>` determines the verdict
+                    while i < p.token_len() {
+                        let n = p.raw_kind_at(i);
+                        i += 1;
+                        if n == TokenKind::COMMENT || n == TokenKind::NL {
+                            continue;
+                        }
+                        return matches!(
+                            n,
+                            TokenKind::LPAREN
+                                | TokenKind::DOT
+                                | TokenKind::LT
+                                | TokenKind::RPAREN
+                                | TokenKind::RSQUARE
+                                | TokenKind::RCURL
+                                | TokenKind::SEMI
+                                | TokenKind::COMMA
+                                | TokenKind::COLON
+                                | TokenKind::DOUBLE_COLON
+                                | TokenKind::END
+                                | TokenKind::ASSIGN
+                                | TokenKind::QUEST
+                                | TokenKind::DOUBLE_ARROW
+                                | TokenKind::NL
+                        );
+                    }
+                    return true;
+                }
+            }
+            TokenKind::END => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Parse a primary expression (atom).
@@ -246,11 +368,28 @@ fn parse_atom(p: &mut Parser) -> Expr {
                 pos,
             }
         }
-        TokenKind::IDENTIFIER | TokenKind::THIS | TokenKind::SUPER => {
+        TokenKind::IDENTIFIER
+        | TokenKind::THIS
+        | TokenKind::SUPER
+        | TokenKind::IS
+        | TokenKind::AS => {
             p.advance();
             let pos = pos_of(&tok);
             Expr::Name {
                 name: tok.text.clone(),
+                type_args: Vec::new(),
+                pos,
+            }
+        }
+        // Primitive type keywords used in expression position:
+        // `Int64(x)`, `Float64.tryParse(...)`, `UInt64(a)`, `Bool` ...
+        // The type name itself is a value (constructor call / static member
+        // access), matching official expression parsing.
+        k if is_primitive_type_kw(k) => {
+            p.advance();
+            let pos = pos_of(&tok);
+            Expr::Name {
+                name: tok.kind.literal().to_string(),
                 type_args: Vec::new(),
                 pos,
             }
@@ -402,9 +541,16 @@ fn parse_atom(p: &mut Parser) -> Expr {
                 pos,
             }
         }
-        TokenKind::LCURL => parse_block_expr(p),
-        TokenKind::LET | TokenKind::VAR => {
-            // `let pattern = expr` — LetPatternDestructor (a statement-like expr)
+        TokenKind::LCURL => {
+            if lambda_brace_ahead(p) {
+                parse_lambda(p)
+            } else {
+                parse_block_expr(p)
+            }
+        }
+        TokenKind::LET | TokenKind::VAR | TokenKind::CONST => {
+            // `let pattern = expr` / `const pattern = expr` — LetPatternDestructor
+            // (a statement-like expr); const is an immutable local
             p.advance();
             let mut pattern = parse_pattern(p);
             // Typed pattern: `let x: Int64 = expr` — attach the annotation to a
@@ -495,6 +641,14 @@ fn parse_atom(p: &mut Parser) -> Expr {
                 Expr::Invalid(pos)
             }
         }
+        TokenKind::FUNC => {
+            // local function declaration inside a block: `func f() { ... }`.
+            // The AST has no local-decl expression node yet, so the decl is
+            // parsed (validating its tokens) and discarded as Invalid.
+            let t = p.peek_token().clone();
+            let _ = crate::decl::parse_decl(p, false);
+            Expr::Invalid(pos_of(&t))
+        }
         TokenKind::END => {
             let pos = pos_of(&tok);
             Expr::Invalid(pos)
@@ -507,6 +661,83 @@ fn parse_atom(p: &mut Parser) -> Expr {
             let pos = pos_of(&tok);
             Expr::Invalid(pos)
         }
+    }
+}
+
+/// True if the `{` at the cursor opens a lambda (closure) literal rather than
+/// a block: a `=>` appears at nesting depth 0 before the matching `}`.
+/// Per spec Ch.05: `'{' lambdaParameters? '=>' expressionOrDeclarations '}'`.
+fn lambda_brace_ahead(p: &Parser) -> bool {
+    let mut depth = 0usize;
+    let mut i = p.cursor() + 1; // skip the opening `{`
+    while i < p.token_len() {
+        match p.raw_kind_at(i) {
+            TokenKind::LCURL | TokenKind::LPAREN | TokenKind::LSQUARE => depth += 1,
+            TokenKind::RCURL | TokenKind::RPAREN | TokenKind::RSQUARE => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            TokenKind::DOUBLE_ARROW if depth == 0 => return true,
+            TokenKind::END => return false,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Parse a lambda (closure) literal: `{a: Int64, b => a + b}`, `{=> 123}`,
+/// `{i =>}` — `{` params? `=>` body `}`.
+fn parse_lambda(p: &mut Parser) -> Expr {
+    let lc = p.expect(TokenKind::LCURL);
+    let mut params = Vec::new();
+    // lambda parameters until `=>`; may be empty (`{=> ...}`)
+    while !p.at(TokenKind::DOUBLE_ARROW) && !p.at(TokenKind::END) {
+        let name_tok = p.peek_token().clone();
+        if name_tok.kind != TokenKind::IDENTIFIER
+            && !name_tok.kind.is_name_like()
+            && name_tok.kind != TokenKind::WILDCARD
+        {
+            break;
+        }
+        let name = p.advance().text;
+        let ty = if p.eat(TokenKind::COLON) {
+            parse_type(p)
+        } else {
+            // unannotated lambda param — placeholder type (sema infers)
+            Type::Invalid(pos_of(&name_tok))
+        };
+        let is_named = p.eat(TokenKind::NOT); // `a!: T`
+        params.push(Param {
+            name,
+            is_named,
+            ty,
+            default: None,
+            pos: pos_of(&name_tok),
+        });
+        if !p.eat(TokenKind::COMMA) {
+            break;
+        }
+    }
+    let _ = p.expect(TokenKind::DOUBLE_ARROW);
+    // body: expression / declaration sequence until `}`
+    let mut stmts = Vec::new();
+    while !p.at(TokenKind::RCURL) && !p.at(TokenKind::END) {
+        if p.eat(TokenKind::SEMI) {
+            continue;
+        }
+        stmts.push(parse_expr_prec(p, 0));
+        p.eat(TokenKind::SEMI);
+    }
+    let _ = p.expect(TokenKind::RCURL);
+    let pos = pos_of(&lc);
+    let body = Expr::Block { stmts, pos };
+    Expr::Lambda {
+        params,
+        body: Box::new(body),
+        pos,
     }
 }
 
@@ -771,6 +1002,33 @@ fn parse_literal_pattern(p: &mut Parser) -> Option<Pattern> {
     }
 }
 
+/// True if the token is a primitive type keyword (`Int64`, `Float32`, `Bool`,
+/// `Rune`, `Unit`, ...) usable as a type name OR as an expression atom
+/// (constructor call / static access).
+pub fn is_primitive_type_kw(k: TokenKind) -> bool {
+    matches!(
+        k,
+        TokenKind::INT8
+            | TokenKind::INT16
+            | TokenKind::INT32
+            | TokenKind::INT64
+            | TokenKind::INTNATIVE
+            | TokenKind::UINT8
+            | TokenKind::UINT16
+            | TokenKind::UINT32
+            | TokenKind::UINT64
+            | TokenKind::UINTNATIVE
+            | TokenKind::FLOAT16
+            | TokenKind::FLOAT32
+            | TokenKind::FLOAT64
+            | TokenKind::RUNE
+            | TokenKind::BOOLEAN
+            | TokenKind::NOTHING
+            | TokenKind::UNIT
+            | TokenKind::VARRAY
+    )
+}
+
 /// True if the token can start an expression.
 pub fn is_expr_start(k: TokenKind) -> bool {
     matches!(
@@ -789,6 +1047,7 @@ pub fn is_expr_start(k: TokenKind) -> bool {
             | TokenKind::LCURL
             | TokenKind::LET
             | TokenKind::VAR
+            | TokenKind::CONST
             | TokenKind::IF
             | TokenKind::WHILE
             | TokenKind::FOR
@@ -799,13 +1058,14 @@ pub fn is_expr_start(k: TokenKind) -> bool {
             | TokenKind::THROW
             | TokenKind::TRY
             | TokenKind::SPAWN
+            | TokenKind::FUNC
             | TokenKind::DOLLAR
             | TokenKind::SUB
             | TokenKind::ADD
             | TokenKind::NOT
             | TokenKind::BITNOT
             | TokenKind::BOOL_LITERAL
-    )
+    ) || is_primitive_type_kw(k)
 }
 
 fn pos_of(tok: &cj_lexer::Token) -> cj_ast::CodePos {

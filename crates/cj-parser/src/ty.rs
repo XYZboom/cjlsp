@@ -179,7 +179,7 @@ pub fn parse_type(p: &mut Parser) -> Type {
     }
 }
 
-fn parse_generic_args(p: &mut Parser) -> Vec<Type> {
+pub(crate) fn parse_generic_args(p: &mut Parser) -> Vec<Type> {
     let _ = p.expect(TokenKind::LT);
     let mut args = Vec::new();
     while !p.at(TokenKind::GT) && !p.at(TokenKind::END) {

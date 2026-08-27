@@ -601,7 +601,7 @@ fn analyze_source(
             out.push(obj);
         }
     };
-for d in &all_diags {
+    for d in &all_diags {
         push(d);
     }
     out
