@@ -51,6 +51,21 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
                 is_const = true;
                 mods.push(p.advance());
             }
+            // `override` on members (spec Ch.09: overriding members of a base
+            // class-like). Consumed and recorded; sema verifies the member
+            // actually overrides one. Legal only in class-like bodies.
+            TokenKind::OVERRIDE => {
+                mods.push(p.advance());
+            }
+            // `foreign` — FFI function declaration (spec Ch.15): `foreign
+            // func bar(): Int` / `foreign let x`. Consumed, recorded.
+            TokenKind::FOREIGN => {
+                mods.push(p.advance());
+            }
+            // `redef` on enum cases (spec Ch.07) — consumed, recorded.
+            TokenKind::REDEF => {
+                mods.push(p.advance());
+            }
             // `operator func ...` — operator keyword precedes `func`
             TokenKind::OPERATOR => {
                 mods.push(p.advance());
@@ -258,6 +273,10 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let name_tok = p.expect_ident("struct name");
             let name = name_tok.text.clone();
             let type_params = parse_type_params(p);
+            // `struct R <: I { ... }` — structs can inherit interfaces too
+            // (spec Ch.06), so consume the supertype list like classes do.
+            // (Decl::Struct has no parents slot yet; discard at parser layer.)
+            let _parents = parse_parents(p);
             parse_where_clause(p);
             let members = if p.at(TokenKind::LCURL) {
                 parse_class_body(p)
@@ -332,6 +351,8 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             p.advance();
             let name_tok = p.expect_ident("type alias name");
             let name = name_tok.text.clone();
+            // generic type alias: `type A<T, K> = ...`
+            let _type_params = parse_type_params(p);
             let _ = p.expect(TokenKind::ASSIGN);
             let target = parse_type(p);
             Some(Decl::TypeAlias {
@@ -478,7 +499,7 @@ fn parse_type_params(p: &mut Parser) -> Vec<TypeParam> {
     let mut out = Vec::new();
     if p.at(TokenKind::LT) && looks_like_type_param_list(p) {
         p.advance(); // <
-        while !p.at(TokenKind::GT) && !p.at(TokenKind::END) {
+        while !p.at(TokenKind::GT) && !p.at(TokenKind::RSHIFT) && !p.at(TokenKind::END) {
             let name_tok = p.peek_token().clone();
             if name_tok.kind != TokenKind::IDENTIFIER {
                 break;
@@ -495,7 +516,7 @@ fn parse_type_params(p: &mut Parser) -> Vec<TypeParam> {
                 break;
             }
         }
-        let _ = p.expect(TokenKind::GT);
+        let _ = p.eat_gt_close();
     }
     out
 }
@@ -679,11 +700,11 @@ fn parse_prop_accessors(p: &mut Parser) {
         if p.eat(TokenKind::SEMI) {
             continue;
         }
-        // optional `mut` before the accessor name
-        if p.peek() == TokenKind::MUT
-            && (p.peek_ahead(1) == TokenKind::IDENTIFIER || p.peek_ahead(1) == TokenKind::INIT)
-        {
+        // optional `mut` / `static` before the accessor name
+        let mut is_accessor_mod = false;
+        while matches!(p.peek(), TokenKind::MUT | TokenKind::STATIC) {
             p.advance();
+            is_accessor_mod = true;
         }
         let k = p.peek();
         let is_accessor = if k == TokenKind::IDENTIFIER {
@@ -693,6 +714,11 @@ fn parse_prop_accessors(p: &mut Parser) {
             k == TokenKind::INIT
         };
         if !is_accessor {
+            // consumed a `mut`/`static` that turned out not to be an accessor
+            // — treat the whole thing as a member decl attempt and bail
+            if is_accessor_mod {
+                break;
+            }
             break;
         }
         p.advance();
@@ -749,6 +775,13 @@ fn parse_enum_cases(p: &mut Parser) -> Vec<EnumCase> {
     while !p.at(TokenKind::RCURL) && !p.at(TokenKind::END) {
         p.eat(TokenKind::BITOR); // optional leading |
         let name_tok = p.peek_token().clone();
+        // Enum member declarations (func/prop/init/...) come AFTER the cases,
+        // separated by newlines (no `|`). A modifier keyword or member-decl
+        // keyword here means the case list is over — parse the rest as
+        // members (discarded; Decl::Enum has no members slot).
+        if is_enum_member_start(name_tok.kind) {
+            break;
+        }
         if !name_tok.kind.is_name_like() {
             let found = crate::token_display_text(&name_tok);
             p.error_id(
@@ -785,8 +818,39 @@ fn parse_enum_cases(p: &mut Parser) -> Vec<EnumCase> {
             break;
         }
     }
+    // enum members after the cases: `enum E { A private func f() {} ... }`
+    while !p.at(TokenKind::RCURL) && !p.at(TokenKind::END) {
+        if p.eat(TokenKind::SEMI) {
+            continue;
+        }
+        let _ = parse_decl(p, true);
+    }
     let _ = p.expect(TokenKind::RCURL);
     out
+}
+
+/// True if `k` can begin an enum member declaration (after the case list).
+fn is_enum_member_start(k: TokenKind) -> bool {
+    matches!(
+        k,
+        TokenKind::FUNC
+            | TokenKind::PROP
+            | TokenKind::INIT
+            | TokenKind::MACRO
+            | TokenKind::PUBLIC
+            | TokenKind::PRIVATE
+            | TokenKind::PROTECTED
+            | TokenKind::INTERNAL
+            | TokenKind::STATIC
+            | TokenKind::MUT
+            | TokenKind::CONST
+            | TokenKind::ABSTRACT
+            | TokenKind::SEALED
+            | TokenKind::OPEN
+            | TokenKind::OVERRIDE
+            | TokenKind::REDEF
+            | TokenKind::UNSAFE
+    )
 }
 
 fn parse_init(p: &mut Parser, is_public: bool, pos: cj_ast::CodePos) -> Option<Decl> {

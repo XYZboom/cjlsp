@@ -36,6 +36,29 @@ pub fn is_type_start(kind: TokenKind) -> bool {
 pub fn parse_type(p: &mut Parser) -> Type {
     let tok = p.peek_token().clone();
     match tok.kind {
+        // `$3`, `$x` — dollar identifier used as a type name (quote meta
+        // vars / token placeholders, spec Ch.14). Lexed as `$` + name/number.
+        TokenKind::DOLLAR => {
+            let mut text = "$".to_string();
+            p.advance();
+            if matches!(p.peek(), TokenKind::IDENTIFIER | TokenKind::INTEGER_LITERAL) {
+                text.push_str(&p.advance().text);
+            }
+            Type::Ref {
+                name: text,
+                args: Vec::new(),
+                pos: pos_of(&tok),
+            }
+        }
+        // `?T` — Option type (spec Ch.08: `'?' type`). e.g. `(?Point2D)`.
+        TokenKind::QUEST => {
+            p.advance();
+            let inner = parse_type(p);
+            Type::Option {
+                inner: Box::new(inner),
+                pos: pos_of(&tok),
+            }
+        }
         TokenKind::INT8
         | TokenKind::INT16
         | TokenKind::INT32
@@ -182,13 +205,15 @@ pub fn parse_type(p: &mut Parser) -> Type {
 pub(crate) fn parse_generic_args(p: &mut Parser) -> Vec<Type> {
     let _ = p.expect(TokenKind::LT);
     let mut args = Vec::new();
-    while !p.at(TokenKind::GT) && !p.at(TokenKind::END) {
+    // `>>` (RSHIFT) also closes a nested generic arg list — eat_gt_close
+    // splits it in place, so stop the loop on GT | RSHIFT too.
+    while !p.at(TokenKind::GT) && !p.at(TokenKind::RSHIFT) && !p.at(TokenKind::END) {
         args.push(parse_type(p));
         if !p.eat(TokenKind::COMMA) {
             break;
         }
     }
-    let _ = p.expect(TokenKind::GT);
+    let _ = p.eat_gt_close();
     args
 }
 

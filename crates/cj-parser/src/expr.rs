@@ -402,18 +402,35 @@ fn parse_atom(p: &mut Parser) -> Expr {
             let open = p.expect(TokenKind::LPAREN);
             let pos = pos_of(&open);
             let mut parts: Vec<Expr> = Vec::new();
-            while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+            // Nesting-aware quote-body scan (official ParseQuoteTokens): the
+            // quote's own `(` starts depth 1; every nested `(` increments and
+            // every `)` decrements; the scan stops at the matching closing `)`
+            // (depth 0). Without this, `quote((a, b) += (2, 3))` terminated at
+            // the FIRST `)` and the rest desynced the enclosing expression.
+            let mut depth = 1i32;
+            let mut closed = false;
+            while depth > 0 && !p.at(TokenKind::END) {
                 let t = p.peek_token().clone();
                 // `$(expr)` interpolation
+                if t.kind == TokenKind::DOLLAR && p.peek_ahead(1) == TokenKind::LPAREN {
+                    let dpos = pos_of(&t);
+                    p.advance(); // $
+                    p.advance(); // (
+                    let inner = parse_expr(p);
+                    let rp = p.expect(TokenKind::RPAREN);
+                    let mut ipos = dpos;
+                    ipos.end_line = rp.end.line;
+                    ipos.end_col = rp.end.column;
+                    ipos.end_offset = rp.end.offset;
+                    parts.push(Expr::Paren {
+                        inner: Box::new(inner),
+                        pos: ipos,
+                    });
+                    continue;
+                }
+                // bare `$` -> literal token
                 if t.kind == TokenKind::DOLLAR {
                     p.advance();
-                    if p.eat(TokenKind::LPAREN) {
-                        let inner = parse_expr(p);
-                        p.expect(TokenKind::RPAREN);
-                        parts.push(inner);
-                        continue;
-                    }
-                    // bare `$` -> literal token
                     parts.push(Expr::TokenPart {
                         text: "$".to_string(),
                         pos: pos_of(&t),
@@ -429,22 +446,25 @@ fn parse_atom(p: &mut Parser) -> Expr {
                     let mname = name_tok.text.clone();
                     let mut margs: Vec<cj_ast::Tokenish> = Vec::new();
                     if p.eat(TokenKind::LPAREN) {
-                        while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+                        // nesting-aware: stop at the macro's own closing `)`
+                        let mut mdepth = 1i32;
+                        while mdepth > 0 && !p.at(TokenKind::END) {
                             let a = p.advance();
                             margs.push(cj_ast::Tokenish {
                                 text: a.text.clone(),
                                 pos: pos_of(&a),
                             });
-                            mpos.end_line = a.end.line;
-                            mpos.end_col = a.end.column;
-                            mpos.end_offset = a.end.offset;
-                        }
-                        // extend the call span through the closing `)`
-                        let rp = p.expect(TokenKind::RPAREN);
-                        if rp.kind == TokenKind::RPAREN {
-                            mpos.end_line = rp.end.line;
-                            mpos.end_col = rp.end.column;
-                            mpos.end_offset = rp.end.offset;
+                            match a.kind {
+                                TokenKind::LPAREN => mdepth += 1,
+                                TokenKind::RPAREN => mdepth -= 1,
+                                _ => {}
+                            }
+                            if mdepth == 0 {
+                                mpos.end_line = a.end.line;
+                                mpos.end_col = a.end.column;
+                                mpos.end_offset = a.end.offset;
+                                break;
+                            }
                         }
                     }
                     parts.push(Expr::MacroExpand {
@@ -456,12 +476,26 @@ fn parse_atom(p: &mut Parser) -> Expr {
                 }
                 // plain token — capture its text as a TokenPart
                 p.advance();
+                match t.kind {
+                    TokenKind::LPAREN => depth += 1,
+                    TokenKind::RPAREN => {
+                        depth -= 1;
+                        // the quote's own closing `)` ends the scan
+                        if depth == 0 {
+                            closed = true;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
                 parts.push(Expr::TokenPart {
                     text: t.text.clone(),
                     pos: pos_of(&t),
                 });
             }
-            p.expect(TokenKind::RPAREN);
+            if !closed {
+                let _ = p.expect(TokenKind::RPAREN);
+            }
             Expr::Quote { parts, pos }
         }
         // `@` macro invocation: `@Foo(args...)`
@@ -500,28 +534,41 @@ fn parse_atom(p: &mut Parser) -> Expr {
         }
         TokenKind::LPAREN => {
             p.advance();
-            // tuple or parenthesized expr
-            let first = parse_expr_prec(p, 1);
-            if p.eat(TokenKind::COMMA) {
-                let mut elems = vec![first];
-                while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
-                    elems.push(parse_expr_prec(p, 1));
-                    if !p.eat(TokenKind::COMMA) {
-                        break;
-                    }
-                }
-                let _ = p.expect(TokenKind::RPAREN);
+            // empty parens `()` — the Unit value (spec Ch.02/Ch.05). Parse it
+            // as a Unit literal; the inner expression path would otherwise
+            // call parse_atom on `)` and emit a spurious diagnostic.
+            if p.at(TokenKind::RPAREN) {
+                p.advance();
                 let pos = pos_of(&tok);
-                Expr::Tuple {
-                    elements: elems,
+                Expr::Lit {
+                    kind: LitKind::Unit,
+                    value: "()".to_string(),
                     pos,
                 }
             } else {
-                let _ = p.expect(TokenKind::RPAREN);
-                let pos = pos_of(&tok);
-                Expr::Paren {
-                    inner: Box::new(first),
-                    pos,
+                // tuple or parenthesized expr
+                let first = parse_expr_prec(p, 1);
+                if p.eat(TokenKind::COMMA) {
+                    let mut elems = vec![first];
+                    while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+                        elems.push(parse_expr_prec(p, 1));
+                        if !p.eat(TokenKind::COMMA) {
+                            break;
+                        }
+                    }
+                    let _ = p.expect(TokenKind::RPAREN);
+                    let pos = pos_of(&tok);
+                    Expr::Tuple {
+                        elements: elems,
+                        pos,
+                    }
+                } else {
+                    let _ = p.expect(TokenKind::RPAREN);
+                    let pos = pos_of(&tok);
+                    Expr::Paren {
+                        inner: Box::new(first),
+                        pos,
+                    }
                 }
             }
         }
@@ -562,6 +609,10 @@ fn parse_atom(p: &mut Parser) -> Expr {
             }
             let init = if p.eat(TokenKind::ASSIGN) {
                 parse_expr_prec(p, 1)
+            } else if p.eat(TokenKind::BACKARROW) {
+                // pattern-match bind: `let Some(x) <- v` (spec Ch.12 if-let /
+                // match-with-pattern). Same shape as `=`, different operator.
+                parse_expr_prec(p, 1)
             } else {
                 Expr::Lit {
                     kind: LitKind::Unit,
@@ -578,6 +629,7 @@ fn parse_atom(p: &mut Parser) -> Expr {
         }
         TokenKind::IF => parse_if_expr(p),
         TokenKind::WHILE => parse_while_expr(p),
+        TokenKind::DO => parse_do_while(p),
         TokenKind::FOR => parse_for_in(p),
         TokenKind::MATCH => parse_match(p),
         TokenKind::RETURN => {
@@ -703,13 +755,14 @@ fn parse_lambda(p: &mut Parser) -> Expr {
             break;
         }
         let name = p.advance().text;
+        // '!' named-param marker comes right after the name: `a!: T`
+        let is_named = p.eat(TokenKind::NOT);
         let ty = if p.eat(TokenKind::COLON) {
             parse_type(p)
         } else {
             // unannotated lambda param — placeholder type (sema infers)
             Type::Invalid(pos_of(&name_tok))
         };
-        let is_named = p.eat(TokenKind::NOT); // `a!: T`
         params.push(Param {
             name,
             is_named,
@@ -818,12 +871,33 @@ fn parse_while_expr(p: &mut Parser) -> Expr {
     }
 }
 
+/// `do { body } while (cond)` — loop that runs the body before testing.
+fn parse_do_while(p: &mut Parser) -> Expr {
+    let d = p.expect(TokenKind::DO);
+    let body = parse_block_expr(p);
+    let _ = p.expect(TokenKind::WHILE);
+    let cond = parse_expr_prec(p, 1);
+    let pos = pos_of(&d);
+    Expr::While {
+        cond: Box::new(cond),
+        body: Box::new(body),
+        pos,
+    }
+}
+
 fn parse_for_in(p: &mut Parser) -> Expr {
     let f = p.expect(TokenKind::FOR);
-    // pattern `in` iterable
+    // `for (pattern in iterable [where guard]) { body }` — the `(` belongs to
+    // the for construct itself (official ParseForInExpr), NOT a tuple pattern.
+    let _ = p.expect(TokenKind::LPAREN);
     let pattern = parse_pattern(p);
     let _ = p.expect(TokenKind::IN);
     let iter = parse_expr_prec(p, 1);
+    // optional `where` pattern guard (consumed; no AST slot)
+    if p.eat(TokenKind::WHERE) {
+        let _ = parse_expr_prec(p, 1);
+    }
+    let _ = p.expect(TokenKind::RPAREN);
     let body = parse_block_expr(p);
     let pos = pos_of(&f);
     Expr::ForIn {
@@ -836,13 +910,23 @@ fn parse_for_in(p: &mut Parser) -> Expr {
 
 fn parse_match(p: &mut Parser) -> Expr {
     let m = p.expect(TokenKind::MATCH);
-    let scrutinee = parse_expr_prec(p, 1);
+    // selectorless match: `match { case ... }` (each case is a bool expr)
+    let scrutinee = if p.at(TokenKind::LCURL) {
+        Expr::Lit {
+            kind: LitKind::Unit,
+            value: String::new(),
+            pos: pos_of(&m),
+        }
+    } else {
+        parse_expr_prec(p, 1)
+    };
     let _ = p.expect(TokenKind::LCURL);
     let mut cases = Vec::new();
     while !p.at(TokenKind::RCURL) && !p.at(TokenKind::END) {
         let _ = p.expect(TokenKind::CASE);
         let pattern = parse_pattern(p);
-        let guard = if p.eat(TokenKind::IF) {
+        // guard: `case p if cond =>` or `case p where cond =>` (LLT uses both)
+        let guard = if p.eat(TokenKind::IF) || p.eat(TokenKind::WHERE) {
             Some(parse_expr_prec(p, 1))
         } else {
             None
@@ -868,10 +952,33 @@ fn parse_match(p: &mut Parser) -> Expr {
 
 fn parse_try(p: &mut Parser) -> Expr {
     let t = p.expect(TokenKind::TRY);
+    // try-with-resources: `try (x = expr, ...) { body }` — the resource
+    // declarations sit in parens before the block; consume and discard
+    // (the AST has no resource slot yet).
+    if p.at(TokenKind::LPAREN) {
+        p.advance();
+        while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+            if p.peek().is_name_like() {
+                p.advance();
+                if p.eat(TokenKind::ASSIGN) {
+                    let _ = parse_expr_prec(p, 1);
+                }
+            } else {
+                break;
+            }
+            if !p.eat(TokenKind::COMMA) {
+                break;
+            }
+        }
+        let _ = p.expect(TokenKind::RPAREN);
+    }
     let body = parse_block_expr(p);
     let mut catches = Vec::new();
     while p.at(TokenKind::CATCH) {
         let c = p.advance();
+        // `catch (e: Exception)` — parens around the exception binding
+        // are optional (`catch e: Exception` also legal).
+        let has_paren = p.eat(TokenKind::LPAREN);
         let name = if p.peek() == TokenKind::IDENTIFIER {
             Some(p.advance().text)
         } else {
@@ -882,6 +989,9 @@ fn parse_try(p: &mut Parser) -> Expr {
         } else {
             None
         };
+        if has_paren {
+            let _ = p.expect(TokenKind::RPAREN);
+        }
         let cbody = parse_block_expr(p);
         catches.push(cj_ast::CatchClause {
             name,
@@ -907,7 +1017,7 @@ fn parse_try(p: &mut Parser) -> Expr {
 /// Pattern for `let`/`match`/`for`.
 pub fn parse_pattern(p: &mut Parser) -> Pattern {
     let tok = p.peek_token().clone();
-    match tok.kind {
+    let mut pat = match tok.kind {
         TokenKind::WILDCARD => {
             p.advance();
             Pattern::Wildcard(pos_of(&tok))
@@ -966,7 +1076,17 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
                 Pattern::Invalid(pos_of(&tok))
             }
         }
+    };
+    // typed pattern: `pattern : Type` — consume `:` and parse type,
+    // attaching to Var if applicable, discarding for other patterns.
+    // (Spec Ch.12: match-case patterns can carry a type annotation.)
+    if p.eat(TokenKind::COLON) {
+        let ty = parse_type(p);
+        if let Pattern::Var { ty: slot, .. } = &mut pat {
+            *slot = Some(ty);
+        }
     }
+    pat
 }
 
 fn parse_literal_pattern(p: &mut Parser) -> Option<Pattern> {
@@ -1050,6 +1170,7 @@ pub fn is_expr_start(k: TokenKind) -> bool {
             | TokenKind::CONST
             | TokenKind::IF
             | TokenKind::WHILE
+            | TokenKind::DO
             | TokenKind::FOR
             | TokenKind::MATCH
             | TokenKind::RETURN

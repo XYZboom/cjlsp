@@ -638,7 +638,9 @@ impl<'a> Lexer<'a> {
         let is_double = quote == b'"';
         is_rune = is_rune || !is_double;
         // Multiline: three consecutive identical quotes.
-        let multiline = self.peek() == Some(quote) && self.peek2() == Some(quote);
+        let multiline = self.peek() == Some(quote)
+            && self.peek2() == Some(quote)
+            && self.peek3() == Some(quote);
         if multiline {
             self.bump(); // 1st
             self.bump(); // 2nd

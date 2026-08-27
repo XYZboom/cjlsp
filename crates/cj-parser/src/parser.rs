@@ -131,6 +131,56 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Consume a closing `>` for a generic type-argument / type-parameter
+    /// list, handling the lexer's merged `>>` shift token (nested generics
+    /// like `Array<Array<UInt64>>`): the RSHIFT token is split in place into
+    /// two `>` tokens and the first is consumed. Official ParseTypeArguments
+    /// does the same — `>>` reads as `> >` in type context. Returns false
+    /// if neither `>` nor `>>` is at the cursor.
+    pub fn eat_gt_close(&mut self) -> bool {
+        // absolute index of the next non-trivia token
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            let k = self.tokens[i].kind;
+            if k != TokenKind::COMMENT && k != TokenKind::NL {
+                break;
+            }
+            i += 1;
+        }
+        if i >= self.tokens.len() {
+            return false;
+        }
+        match self.tokens[i].kind {
+            TokenKind::GT => {
+                self.advance();
+                true
+            }
+            TokenKind::RSHIFT => {
+                let t = self.tokens[i].clone();
+                let begin = t.begin;
+                // first `>` keeps the token's span start; length 1
+                let mut gt1 = t.clone();
+                gt1.kind = TokenKind::GT;
+                gt1.text = ">".to_string();
+                gt1.end.column = begin.column + 1;
+                gt1.end.offset = begin.offset + 1;
+                // second `>` starts one char later (length 1)
+                let mut gt2 = t;
+                gt2.kind = TokenKind::GT;
+                gt2.text = ">".to_string();
+                gt2.begin.column = begin.column + 1;
+                gt2.begin.offset = begin.offset + 1;
+                gt2.end.column = begin.column + 2;
+                gt2.end.offset = begin.offset + 2;
+                self.tokens[i] = gt1;
+                self.tokens.insert(i + 1, gt2);
+                self.advance();
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Expect `kind`, else emit diagnostic and return the current token (recovery).
     pub fn expect(&mut self, kind: TokenKind) -> Token {
         let tok = self.peek_token().clone();
@@ -588,6 +638,12 @@ impl<'a> Parser<'a> {
                 if !self.eat(TokenKind::COMMA) {
                     break;
                 }
+            }
+        } else if self.eat(TokenKind::AS) {
+            // `import a.b as alias` — imported package renamed (spec Ch.03)
+            if self.peek().is_name_like() {
+                let a = self.advance();
+                last_tok_end = a.end;
             }
         }
         let pos = CodePos::new(
