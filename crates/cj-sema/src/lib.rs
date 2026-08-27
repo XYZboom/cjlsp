@@ -17,6 +17,7 @@ use cj_diag::Diag;
 use std::collections::HashMap;
 
 pub mod dep_graph;
+pub mod expander;
 pub mod parallel;
 pub mod resolver;
 pub mod typecheck;

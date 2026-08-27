@@ -254,6 +254,10 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let name_tok = p.expect_ident("macro name");
             let name = name_tok.text.clone();
             let params = parse_param_list(p);
+            // optional return type: `macro M(...): Tokens { ... }`
+            if p.eat(TokenKind::COLON) {
+                let _ = parse_type(p);
+            }
             Some(Decl::Macro {
                 name,
                 is_public,
