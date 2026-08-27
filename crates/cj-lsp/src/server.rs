@@ -3,12 +3,9 @@
 use cj_sema::FuncSig;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-<<<<<<< HEAD
 use std::fs;
 use std::path::{Path, PathBuf};
-=======
 use std::path::PathBuf;
->>>>>>> wt/t2-package
 
 /// LSP server: tracks open documents and computes diagnostics via the
 /// cj-frontend pipeline (lexer -> parser -> sema collector/resolver/dep).
@@ -152,7 +149,6 @@ impl LspServer {
         let Some((_, text)) = self.open_docs.get(uri) else {
             return Vec::new();
         };
-<<<<<<< HEAD
         // The test harness runs us with cwd = <workspace>/sourcecode/cangjieTest
         // and sends a *virtual* uri for the opened file; sibling same-package
         // sources (needed for cross-file call type checking) live on disk under
@@ -164,10 +160,8 @@ impl LspServer {
         } else {
             analyze_source(text, project_root.as_deref())
         };
-=======
         let expected = self.expected_package_name(uri);
         let diagnostics = analyze_source(text, expected.as_deref());
->>>>>>> wt/t2-package
         let msg = json!({
             "jsonrpc": "2.0",
             "method": "textDocument/publishDiagnostics",
@@ -225,7 +219,6 @@ impl LspServer {
     }
 }
 
-<<<<<<< HEAD
 /// Resolve the real project root directory for a uri-derived path.
 ///
 /// The harness rewrites the opened uri to a path that does NOT exist on disk
@@ -298,7 +291,6 @@ fn analyze_file(path: &PathBuf, project_root: Option<&Path>) -> Vec<Value> {
     match fs::read_to_string(path) {
         Ok(s) => analyze_source(&s, project_root),
         Err(_) => Vec::new(),
-=======
 /// Convert an LSP 0-based (line, character) position to a byte offset in
 /// `src`. `character` counts Unicode code points (matches the lexer's column
 /// semantics). Out-of-range positions clamp to the nearest valid offset.
@@ -340,20 +332,16 @@ fn apply_incremental_change(text: &mut String, range: &Value, new_text: &str) {
     let e = lsp_pos_to_byte(text, e_line, e_char);
     if s <= e && e <= text.len() {
         text.replace_range(s..e, new_text);
->>>>>>> wt/t2-package
     }
 }
 
 /// Run the full frontend pipeline on source text and return LSP-format
 /// diagnostics (1-based diag positions -> 0-based LSP ranges).
-<<<<<<< HEAD
 fn analyze_source(src: &str, project_root: Option<&Path>) -> Vec<Value> {
-=======
 ///
 /// `expected` — the package name derived from the file's URI (pass `None`
 /// when it cannot be inferred); drives package-level checks.
 fn analyze_source(src: &str, expected: Option<&str>) -> Vec<Value> {
->>>>>>> wt/t2-package
     let mut parser = cj_parser::Parser::new(src, cj_lexer::Lexer::new(src).tokenize());
     let file = parser.run();
 
@@ -368,8 +356,6 @@ fn analyze_source(src: &str, expected: Option<&str>) -> Vec<Value> {
     let dep_graph = cj_sema::dep_graph::DepGraph::build(&[&file]);
     let dep_diags = dep_graph.detect_cycles();
     let unused_diags = cj_sema::unused::detect_unused(&file);
-<<<<<<< HEAD
-<<<<<<< HEAD
     // Literal type checking for typed var decls (M3c, spec Ch.02): String=1,
     // Int8='x', Int8=999999 etc. — the 011 suite.
     let lit_diags = cj_sema::typecheck::check_decls(&file);
@@ -383,12 +369,8 @@ fn analyze_source(src: &str, expected: Option<&str>) -> Vec<Value> {
         }
     }
     let call_diags = cj_sema::typecheck::check_calls(&file, &func_sigs);
-=======
     let package_diags = cj_sema::package::check_package(&file, expected);
->>>>>>> wt/t2-package
-=======
     let overload_diags = cj_sema::overload::detect_overload_conflicts(&file);
->>>>>>> wt/t3-unused-members
 
     // Convert (line, col) 1-based -> LSP 0-based positions.
     let mut out = Vec::new();
@@ -426,16 +408,10 @@ fn analyze_source(src: &str, expected: Option<&str>) -> Vec<Value> {
         .chain(resolve_diags.iter())
         .chain(dep_diags.iter())
         .chain(unused_diags.iter())
-<<<<<<< HEAD
-<<<<<<< HEAD
         .chain(call_diags.iter())
         .chain(lit_diags.iter())
-=======
         .chain(package_diags.iter())
->>>>>>> wt/t2-package
-=======
         .chain(overload_diags.iter())
->>>>>>> wt/t3-unused-members
     {
         push(d);
     }

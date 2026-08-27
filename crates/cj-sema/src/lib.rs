@@ -17,12 +17,9 @@ use cj_diag::Diag;
 use std::collections::HashMap;
 
 pub mod dep_graph;
-<<<<<<< HEAD
 pub mod expander;
 pub mod package;
-=======
 pub mod overload;
->>>>>>> wt/t3-unused-members
 pub mod parallel;
 pub mod resolver;
 pub mod typecheck;

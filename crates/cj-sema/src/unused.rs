@@ -49,10 +49,6 @@ impl DeclKind {
     }
 }
 
-<<<<<<< HEAD
-/// Collect identifiers referenced by an expression tree into `out`.
-pub(crate) fn collect_refs(e: &Expr, out: &mut HashSet<String>) {
-=======
 /// A declared name collected for the unused check.
 #[derive(Debug)]
 struct DeclInfo {
@@ -79,7 +75,6 @@ struct Refs {
 
 /// Collect identifier references from an expression tree into `refs`.
 fn collect_refs(e: &Expr, refs: &mut Refs) {
->>>>>>> wt/t3-unused-members
     match e {
         Expr::Name { name, .. } => {
             refs.names.insert(name.clone());
@@ -413,41 +408,6 @@ fn collect_unused_params(d: &Decl, enclosing: Option<&str>, diags: &mut Vec<Diag
                     }
                 }
             }
-<<<<<<< HEAD
-            Decl::Class { name, pos, .. } => {
-                top_decls.push((name.clone(), DeclKind::Class, pos.line, pos.col));
-            }
-            Decl::Interface { name, pos, .. } => {
-                top_decls.push((name.clone(), DeclKind::Interface, pos.line, pos.col));
-            }
-            Decl::Struct { name, pos, .. } => {
-                top_decls.push((name.clone(), DeclKind::Struct, pos.line, pos.col));
-            }
-            Decl::Enum { name, pos, .. } => {
-                top_decls.push((name.clone(), DeclKind::Enum, pos.line, pos.col));
-            }
-            Decl::Var {
-                name,
-                name_pos,
-                init,
-                ..
-            } => {
-                top_decls.push((name.clone(), DeclKind::Var, name_pos.line, name_pos.col));
-                if let Some(init) = init {
-                    let mut init_refs: HashSet<String> = HashSet::new();
-                    collect_refs(init, &mut init_refs);
-                    let unresolved: Vec<&String> = init_refs
-                        .iter()
-                        .filter(|r| !known.contains(*r) && !is_builtin(r))
-                        .collect();
-                    if !unresolved.is_empty() {
-                        unresolved_names.push(name.clone());
-                    }
-                }
-            }
-            _ => {}
-=======
->>>>>>> wt/t3-unused-members
         }
         Decl::Class { name, members, .. }
         | Decl::Interface { name, members, .. }
@@ -528,14 +488,9 @@ fn is_builtin(name: &str) -> bool {
     )
 }
 
-<<<<<<< HEAD
-/// Collect all identifier references in a declaration (for the used set).
-pub(crate) fn collect_decl_refs(d: &Decl, used: &mut HashSet<String>) {
-=======
 /// Collect all identifier references in a declaration (top-level and members),
 /// including type-name references (parents, annotations, generic args).
 fn collect_decl_refs(d: &Decl, refs: &mut Refs) {
->>>>>>> wt/t3-unused-members
     match d {
         Decl::Func {
             params,
