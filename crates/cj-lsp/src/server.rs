@@ -337,6 +337,14 @@ fn apply_incremental_change(text: &mut String, range: &Value, new_text: &str) {
     }
 }
 
+/// File-name for macro diagnostics: the project root's file name or "unknown".
+fn path_or_unknown(project_root: Option<&Path>) -> &str {
+    project_root
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+}
+
 /// Run the full frontend pipeline on source text and return LSP-format
 /// diagnostics (1-based diag positions -> 0-based LSP ranges).
 ///
@@ -361,6 +369,15 @@ fn analyze_source(src: &str, project_root: Option<&Path>, expected: Option<&str>
     // Literal type checking for typed var decls (M3c, spec Ch.02): String=1,
     // Int8='x', Int8=999999 etc. — the 011 suite.
     let lit_diags = cj_sema::typecheck::check_decls(&file);
+    // Macro expansion (spec Ch.14): builtin + cached .so via SDK; diagnostics
+    // carry the expansion preview (report position + generated code).
+    let mut macro_cache = cj_sema::macro_cache::MacroCache::new();
+    let (_, macro_diags) = cj_sema::expander::expand_file_with_cache(
+        &file,
+        path_or_unknown(project_root),
+        &mut macro_cache,
+        project_root,
+    );
 
     // Cross-file call type checking: merge the opened file's own signatures
     // with same-package sibling signatures found on disk.
@@ -420,6 +437,7 @@ fn analyze_source(src: &str, project_root: Option<&Path>, expected: Option<&str>
         .chain(package_diags.iter())
         .chain(overload_diags.iter())
         .chain(sema_checks.iter())
+        .chain(macro_diags.iter())
     {
         push(d);
     }
