@@ -203,6 +203,11 @@ impl Collector {
             return;
         };
         let name = decl_name(d).unwrap_or_default();
+        // Recovery decls (e.g. `let <invalid-pattern>` from the parser) carry an
+        // empty name — skip them entirely (no redefinition, no symbols).
+        if name.is_empty() {
+            return;
+        }
         // Report redefinition at the *name* (not the decl start keyword) —
         // official reports `let zzzz` at the variable/function name position.
         let pos = decl_name_pos(d).unwrap_or_else(|| decl_pos(d));
