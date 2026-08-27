@@ -42,6 +42,23 @@ pub fn hover_at(
     json!(Value::Null)
 }
 
+/// Find the declaration at the cursor and return it as an LSP Location
+/// (uri + name span). Reuses decl_hover's span matching.
+pub fn definition_at(file: &File, uri: &str, line: u32, character: u32) -> Value {
+    for d in &file.decls {
+        if let Some((_, start, end)) = decl_hover(d, line, character) {
+            return json!({
+                "uri": uri,
+                "range": {
+                    "start": {"line": start.line, "character": start.col},
+                    "end": {"line": end.line, "character": end.col},
+                }
+            });
+        }
+    }
+    json!(Value::Null)
+}
+
 /// If the declaration's name span contains the cursor, return the hover detail
 /// and the name's byte-range (LSP 0-based).
 fn decl_hover(d: &Decl, line: u32, character: u32) -> Option<(String, CodePos, CodePos)> {
