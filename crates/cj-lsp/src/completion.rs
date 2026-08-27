@@ -33,161 +33,520 @@ const KIND_KEYWORD: u32 = 14;
 const KIND_STRUCT: u32 = 22;
 
 // ─── Std-core symbols (implicitly imported into every package) ────────────
-const STD_CORE: &[(&str, u32, &str)] = &[
-    ("Any", KIND_INTERFACE, "public interface Any"),
-    ("AnyClass", KIND_CLASS, "public class AnyClass"),
-    ("String", KIND_STRUCT, "public struct String"),
-    ("Int8", KIND_STRUCT, "public struct Int8"),
-    ("Int16", KIND_STRUCT, "public struct Int16"),
-    ("Int32", KIND_STRUCT, "public struct Int32"),
-    ("Int64", KIND_STRUCT, "public struct Int64"),
-    ("UInt8", KIND_STRUCT, "public struct UInt8"),
-    ("UInt16", KIND_STRUCT, "public struct UInt16"),
-    ("UInt32", KIND_STRUCT, "public struct UInt32"),
-    ("UInt64", KIND_STRUCT, "public struct UInt64"),
-    ("Float16", KIND_STRUCT, "public struct Float16"),
-    ("Float32", KIND_STRUCT, "public struct Float32"),
-    ("Float64", KIND_STRUCT, "public struct Float64"),
-    ("Bool", KIND_STRUCT, "public struct Bool"),
-    ("Unit", KIND_STRUCT, "public struct Unit"),
-    ("Nothing", KIND_INTERFACE, "public interface Nothing"),
-    ("Nope", KIND_STRUCT, "public struct Nope"),
-    ("Tuple0", KIND_STRUCT, "public struct Tuple0"),
-    ("Tuple1", KIND_STRUCT, "public struct Tuple1"),
-    ("Tuple2", KIND_STRUCT, "public struct Tuple2"),
-    ("Tuple3", KIND_STRUCT, "public struct Tuple3"),
-    ("Tuple4", KIND_STRUCT, "public struct Tuple4"),
-    ("Tuple5", KIND_STRUCT, "public struct Tuple5"),
-    ("Rune", KIND_STRUCT, "public struct Rune"),
-    // Common std exceptions and classes
-    (
-        "ArithmeticException",
-        KIND_CLASS,
-        "public open class ArithmeticException <: Exception",
-    ),
-    (
-        "IllegalArgumentException",
-        KIND_CLASS,
-        "public open class IllegalArgumentException <: Exception",
-    ),
-    (
-        "IllegalFormatException",
-        KIND_CLASS,
-        "public open class IllegalFormatException <: IllegalArgumentException",
-    ),
-    (
-        "IndexOutOfBoundsException",
-        KIND_CLASS,
-        "public class IndexOutOfBoundsException <: Exception",
-    ),
-    (
-        "NegativeArraySizeException",
-        KIND_CLASS,
-        "public class NegativeArraySizeException <: Exception",
-    ),
-    (
-        "IllegalMemoryException",
-        KIND_CLASS,
-        "public class IllegalMemoryException <: Exception",
-    ),
-    (
-        "IllegalStateException",
-        KIND_CLASS,
-        "public class IllegalStateException <: Exception",
-    ),
-    (
-        "IncompatiblePackageException",
-        KIND_CLASS,
-        "public class IncompatiblePackageException <: Exception",
-    ),
-    (
-        "NoneValueException",
-        KIND_CLASS,
-        "public class NoneValueException <: Exception",
-    ),
-    (
-        "OutOfMemoryError",
-        KIND_CLASS,
-        "public class OutOfMemoryError <: Error",
-    ),
-    (
-        "OverflowException",
-        KIND_CLASS,
-        "public class OverflowException <: ArithmeticException",
-    ),
-    (
-        "SpawnException",
-        KIND_CLASS,
-        "public class SpawnException <: Exception",
-    ),
-    (
-        "StackOverflowError",
-        KIND_CLASS,
-        "public class StackOverflowError <: Error",
-    ),
-    (
-        "TimeoutException",
-        KIND_CLASS,
-        "public class TimeoutException <: Exception",
-    ),
-    (
-        "UnsupportedException",
-        KIND_CLASS,
-        "public class UnsupportedException <: Exception",
-    ),
-    (
-        "ExclusiveScopeException",
-        KIND_CLASS,
-        "public class ExclusiveScopeException <: Exception",
-    ),
-    (
-        "Exception",
-        KIND_CLASS,
-        "public open class Exception <: ToString",
-    ),
-    (
-        "StringBuilder",
-        KIND_CLASS,
-        "public class StringBuilder <: ToString",
-    ),
-    (
-        "ThreadSnapshot",
-        KIND_CLASS,
-        "public class ThreadSnapshot <: ToString",
-    ),
-    ("DefaultHasher", KIND_STRUCT, "public struct DefaultHasher"),
-    ("Duration", KIND_STRUCT, "public struct Duration"),
-    (
-        "ThreadState",
-        KIND_ENUM,
-        "public enum ThreadState <: ToString",
-    ),
-    ("AnnotationKind", KIND_ENUM, "public enum AnnotationKind"),
-    (
-        "CPointerResource",
-        KIND_STRUCT,
-        "public struct CPointerResource<T>",
-    ),
-    (
-        "CStringResource",
-        KIND_STRUCT,
-        "public struct CStringResource",
-    ),
-    (
-        "ArrayIterator",
-        KIND_CLASS,
-        "public class ArrayIterator<T> <: Iterator<T>",
-    ),
-    ("Box", KIND_CLASS, "public class Box<T>"),
-    ("AB", KIND_CLASS, "public class AB"),
-    ("CString", KIND_CLASS, "public Type CString"),
-    ("CFunc", KIND_CLASS, "public Type CFunc<T>"),
-    ("ToString", KIND_INTERFACE, "public interface ToString"),
-    (
-        "GreaterOrEqual",
-        KIND_INTERFACE,
-        "public interface GreaterOrEqual<T>",
-    ),
+// ─── Std-core symbols (implicitly imported into every package) ────────────
+// Each entry carries the type/class item plus its constructor items (kind 3),
+// matching the official completion engine's std table. `ctors` holds
+// (label, detail, insertText, insertTextFormat) tuples.
+struct StdSym {
+    name: &'static str,
+    kind: u32,
+    detail: &'static str,
+    ctors: &'static [(&'static str, &'static str, &'static str, u32)],
+}
+
+const STD_CORE: &[StdSym] = &[
+    StdSym {
+        name: "Any",
+        kind: KIND_INTERFACE,
+        detail: "public interface Any",
+        ctors: &[],
+    },
+    StdSym {
+        name: "CString",
+        kind: KIND_CLASS,
+        detail: "public Type CString",
+        ctors: &[],
+    },
+    StdSym {
+        name: "CFunc",
+        kind: KIND_CLASS,
+        detail: "public Type CFunc<T>",
+        ctors: &[],
+    },
+    StdSym {
+        name: "CStringResource",
+        kind: KIND_STRUCT,
+        detail: "public struct CStringResource",
+        ctors: &[],
+    },
+    StdSym {
+        name: "CPointerResource",
+        kind: KIND_STRUCT,
+        detail: "public struct CPointerResource<T>",
+        ctors: &[],
+    },
+    StdSym {
+        name: "String",
+        kind: KIND_STRUCT,
+        detail: "public struct String",
+        ctors: &[
+            ("String()", "public func init()", "String()", 1),
+            (
+                "String(value: Array<Rune>)",
+                "public func init(value: Array<Rune>)",
+                "String(${1:value: Array<Rune>})",
+                2,
+            ),
+            (
+                "String(value: Collection<Rune>)",
+                "public func init(value: Collection<Rune>)",
+                "String(${1:value: Collection<Rune>})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "StringBuilder",
+        kind: KIND_CLASS,
+        detail: "public class StringBuilder <: ToString",
+        ctors: &[
+            (
+                "StringBuilder()",
+                "public func init()",
+                "StringBuilder()",
+                1,
+            ),
+            (
+                "StringBuilder(capacity: Int64)",
+                "public func init(capacity: Int64)",
+                "StringBuilder(${1:capacity: Int64})",
+                2,
+            ),
+            (
+                "StringBuilder(r: Rune, n: Int64)",
+                "public func init(r: Rune, n: Int64)",
+                "StringBuilder(${1:r: Rune}, ${2:n: Int64})",
+                2,
+            ),
+            (
+                "StringBuilder(str: String)",
+                "public func init(str: String)",
+                "StringBuilder(${1:str: String})",
+                2,
+            ),
+            (
+                "StringBuilder(value: Array<Rune>)",
+                "public func init(value: Array<Rune>)",
+                "StringBuilder(${1:value: Array<Rune>})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "ToString",
+        kind: KIND_INTERFACE,
+        detail: "public interface ToString",
+        ctors: &[],
+    },
+    StdSym {
+        name: "GreaterOrEqual",
+        kind: KIND_INTERFACE,
+        detail: "public interface GreaterOrEqual<T>",
+        ctors: &[],
+    },
+    StdSym {
+        name: "DefaultHasher",
+        kind: KIND_STRUCT,
+        detail: "public struct DefaultHasher",
+        ctors: &[(
+            "DefaultHasher(res!: Int64 = 0)",
+            "public func init(res!: Int64 = 0)",
+            "DefaultHasher(res: ${1:Int64 = 0})",
+            2,
+        )],
+    },
+    StdSym {
+        name: "ThreadState",
+        kind: KIND_ENUM,
+        detail: "public enum ThreadState <: ToString",
+        ctors: &[],
+    },
+    StdSym {
+        name: "ThreadSnapshot",
+        kind: KIND_CLASS,
+        detail: "public class ThreadSnapshot <: ToString",
+        ctors: &[],
+    },
+    StdSym {
+        name: "Duration",
+        kind: KIND_STRUCT,
+        detail: "public struct Duration",
+        ctors: &[],
+    },
+    StdSym {
+        name: "AnnotationKind",
+        kind: KIND_ENUM,
+        detail: "public enum AnnotationKind",
+        ctors: &[],
+    },
+    StdSym {
+        name: "Box",
+        kind: KIND_CLASS,
+        detail: "public class Box<T>",
+        ctors: &[],
+    },
+    StdSym {
+        name: "AB",
+        kind: KIND_CLASS,
+        detail: "public class AB",
+        ctors: &[
+            (
+                "AB(b: Int64, a: Int32, c: Int32)",
+                "public func init(b: Int64, a: Int32, c: Int32)",
+                "AB(${1:b: Int64}, ${2:a: Int32}, ${3:c: Int32})",
+                2,
+            ),
+            (
+                "AB(x: Int32, y: Int32)",
+                "public func init(x: Int32, y: Int32)",
+                "AB(${1:x: Int32}, ${2:y: Int32})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "ArrayIterator",
+        kind: KIND_CLASS,
+        detail: "public class ArrayIterator<T> <: Iterator<T>",
+        ctors: &[(
+            "ArrayIterator<T>(data: Array<T>)",
+            "public func init(data: Array<T>)",
+            "ArrayIterator<${1:T}>(${2:data: Array<T>})",
+            2,
+        )],
+    },
+    StdSym {
+        name: "acquireArrayRawData",
+        kind: KIND_METHOD,
+        detail: "",
+        ctors: &[(
+            "acquireArrayRawData<T>(arr: Array<T>)",
+            "public unsafe func acquireArrayRawData<T>(arr: Array<T>): CPointerHandle<T>",
+            "acquireArrayRawData<${1:T}>(${2:arr: Array<T>})",
+            2,
+        )],
+    },
+    StdSym {
+        name: "releaseArrayRawData",
+        kind: KIND_METHOD,
+        detail: "",
+        ctors: &[(
+            "releaseArrayRawData<T>(handle: CPointerHandle<T>)",
+            "public unsafe func releaseArrayRawData<T>(handle: CPointerHandle<T>): Unit",
+            "releaseArrayRawData<${1:T}>(${2:handle: CPointerHandle<T>})",
+            2,
+        )],
+    },
+    StdSym {
+        name: "exclusiveScope",
+        kind: KIND_METHOD,
+        detail: "",
+        ctors: &[
+            (
+                "exclusiveScope<T> {  => T }",
+                "public func exclusiveScope<T>(fn: () -> T): T",
+                "exclusiveScope<${1:T}> {  => ${3:T} }",
+                2,
+            ),
+            (
+                "exclusiveScope<T>(fn: () -> T)",
+                "public func exclusiveScope<T>(fn: () -> T): T",
+                "exclusiveScope<${1:T}>(${3:fn: () -> T})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "Exception",
+        kind: KIND_CLASS,
+        detail: "public open class Exception <: ToString",
+        ctors: &[
+            ("Exception()", "public func init()", "Exception()", 1),
+            (
+                "Exception(causedBy: Exception)",
+                "public func init(causedBy: Exception)",
+                "Exception(${1:causedBy: Exception})",
+                2,
+            ),
+            (
+                "Exception(message: String)",
+                "public func init(message: String)",
+                "Exception(${1:message: String})",
+                2,
+            ),
+            (
+                "Exception(message: String, causedBy: Exception)",
+                "public func init(message: String, causedBy: Exception)",
+                "Exception(${1:message: String}, ${2:causedBy: Exception})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "ArithmeticException",
+        kind: KIND_CLASS,
+        detail: "public open class ArithmeticException <: Exception",
+        ctors: &[
+            (
+                "ArithmeticException()",
+                "public func init()",
+                "ArithmeticException()",
+                1,
+            ),
+            (
+                "ArithmeticException(message: String)",
+                "public func init(message: String)",
+                "ArithmeticException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "IllegalArgumentException",
+        kind: KIND_CLASS,
+        detail: "public open class IllegalArgumentException <: Exception",
+        ctors: &[
+            (
+                "IllegalArgumentException()",
+                "public func init()",
+                "IllegalArgumentException()",
+                1,
+            ),
+            (
+                "IllegalArgumentException(message: String)",
+                "public func init(message: String)",
+                "IllegalArgumentException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "IllegalFormatException",
+        kind: KIND_CLASS,
+        detail: "public open class IllegalFormatException <: IllegalArgumentException",
+        ctors: &[
+            (
+                "IllegalFormatException()",
+                "public func init()",
+                "IllegalFormatException()",
+                1,
+            ),
+            (
+                "IllegalFormatException(message: String)",
+                "public func init(message: String)",
+                "IllegalFormatException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "IllegalMemoryException",
+        kind: KIND_CLASS,
+        detail: "public class IllegalMemoryException <: Exception",
+        ctors: &[
+            (
+                "IllegalMemoryException()",
+                "public func init()",
+                "IllegalMemoryException()",
+                1,
+            ),
+            (
+                "IllegalMemoryException(message: String)",
+                "public func init(message: String)",
+                "IllegalMemoryException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "IllegalStateException",
+        kind: KIND_CLASS,
+        detail: "public class IllegalStateException <: Exception",
+        ctors: &[
+            (
+                "IllegalStateException()",
+                "public func init()",
+                "IllegalStateException()",
+                1,
+            ),
+            (
+                "IllegalStateException(message: String)",
+                "public func init(message: String)",
+                "IllegalStateException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "IncompatiblePackageException",
+        kind: KIND_CLASS,
+        detail: "public class IncompatiblePackageException <: Exception",
+        ctors: &[
+            (
+                "IncompatiblePackageException()",
+                "public func init()",
+                "IncompatiblePackageException()",
+                1,
+            ),
+            (
+                "IncompatiblePackageException(message: String)",
+                "public func init(message: String)",
+                "IncompatiblePackageException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "IndexOutOfBoundsException",
+        kind: KIND_CLASS,
+        detail: "public class IndexOutOfBoundsException <: Exception",
+        ctors: &[
+            (
+                "IndexOutOfBoundsException()",
+                "public func init()",
+                "IndexOutOfBoundsException()",
+                1,
+            ),
+            (
+                "IndexOutOfBoundsException(message: String)",
+                "public func init(message: String)",
+                "IndexOutOfBoundsException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "NegativeArraySizeException",
+        kind: KIND_CLASS,
+        detail: "public class NegativeArraySizeException <: Exception",
+        ctors: &[
+            (
+                "NegativeArraySizeException()",
+                "public func init()",
+                "NegativeArraySizeException()",
+                1,
+            ),
+            (
+                "NegativeArraySizeException(message: String)",
+                "public func init(message: String)",
+                "NegativeArraySizeException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "NoneValueException",
+        kind: KIND_CLASS,
+        detail: "public class NoneValueException <: Exception",
+        ctors: &[
+            (
+                "NoneValueException()",
+                "public func init()",
+                "NoneValueException()",
+                1,
+            ),
+            (
+                "NoneValueException(message: String)",
+                "public func init(message: String)",
+                "NoneValueException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "OverflowException",
+        kind: KIND_CLASS,
+        detail: "public class OverflowException <: ArithmeticException",
+        ctors: &[
+            (
+                "OverflowException()",
+                "public func init()",
+                "OverflowException()",
+                1,
+            ),
+            (
+                "OverflowException(message: String)",
+                "public func init(message: String)",
+                "OverflowException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "SpawnException",
+        kind: KIND_CLASS,
+        detail: "public class SpawnException <: Exception",
+        ctors: &[
+            (
+                "SpawnException()",
+                "public func init()",
+                "SpawnException()",
+                1,
+            ),
+            (
+                "SpawnException(message: String)",
+                "public func init(message: String)",
+                "SpawnException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "TimeoutException",
+        kind: KIND_CLASS,
+        detail: "public class TimeoutException <: Exception",
+        ctors: &[
+            (
+                "TimeoutException()",
+                "public func init()",
+                "TimeoutException()",
+                1,
+            ),
+            (
+                "TimeoutException(message: String)",
+                "public func init(message: String)",
+                "TimeoutException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "UnsupportedException",
+        kind: KIND_CLASS,
+        detail: "public class UnsupportedException <: Exception",
+        ctors: &[
+            (
+                "UnsupportedException()",
+                "public func init()",
+                "UnsupportedException()",
+                1,
+            ),
+            (
+                "UnsupportedException(message: String)",
+                "public func init(message: String)",
+                "UnsupportedException(${1:message: String})",
+                2,
+            ),
+        ],
+    },
+    StdSym {
+        name: "ExclusiveScopeException",
+        kind: KIND_CLASS,
+        detail: "public class ExclusiveScopeException <: Exception",
+        ctors: &[],
+    },
+    StdSym {
+        name: "OutOfMemoryError",
+        kind: KIND_CLASS,
+        detail: "public class OutOfMemoryError <: Error",
+        ctors: &[],
+    },
+    StdSym {
+        name: "StackOverflowError",
+        kind: KIND_CLASS,
+        detail: "public class StackOverflowError <: Error",
+        ctors: &[],
+    },
 ];
 
 // ─── Keywords (kind 14) ──────────────────────────────────────────────────
@@ -329,6 +688,11 @@ const KEYWORDS: &[(&str, &str, u32, &str)] = &[
     ("this", "", 1, "this"),
     ("super", "", 1, "super"),
     ("new", "", 1, "new"),
+    ("operator", "", 1, "operator"),
+    ("except", "", 1, "except"),
+    ("IntNative", "", 1, "IntNative"),
+    ("UIntNative", "", 1, "UIntNative"),
+    ("This", "", 1, "This"),
     ("foreign", "", 1, "foreign"),
     ("foreign {}", "foreign {}", 2, "foreign {\n\t$0\n}"),
     ("Annotation", "Annotation", 1, "Annotation"),
@@ -370,6 +734,34 @@ pub fn prefix_at_line(line_text: &str, character: u32) -> String {
         }
     }
     prefix
+}
+
+// ─── Helper: case-insensitive fuzzy subsequence match ─────────────────────
+// Official completion filter: every char of `pat` must appear in order inside
+// `text` (case-insensitive). Verified against the suite: prefix "String"
+// matches CString/ToString, prefix "i1" matches Int16/UInt16/Derived1.
+fn fuzzy_match(text: &str, pat: &str) -> bool {
+    let t: Vec<char> = text.chars().collect();
+    let p: Vec<char> = pat.chars().collect();
+    if p.is_empty() {
+        return true;
+    }
+    let mut ti = 0;
+    for pc in &p {
+        let mut found = false;
+        while ti < t.len() {
+            if t[ti].eq_ignore_ascii_case(pc) {
+                found = true;
+                ti += 1;
+                break;
+            }
+            ti += 1;
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
 }
 
 // ─── Helper: source line text (0-based line) ─────────────────────────────
@@ -470,16 +862,24 @@ fn func_sig(vis: &str, name: &str, params: &[Param], ret: &Option<Type>) -> Stri
 }
 
 // ─── Helper: visibility prefix ──────────────────────────────────────────
+// `show_internal` is false for top-level decls from the current package
+// (official omits the implicit `internal` there: `class Derived1 <: Base1`)
+// and true for class members / cross-package symbols (`internal let a: Int64`).
+// Modifier order matches official detail strings: internal/public first, then
+// abstract/open/sealed/static.
 fn vis_prefix(
     is_public: bool,
     is_open: bool,
     is_sealed: bool,
     is_abstract: bool,
     is_static: bool,
+    show_internal: bool,
 ) -> String {
     let mut s = String::new();
     if is_public {
         s.push_str("public ");
+    } else if show_internal {
+        s.push_str("internal ");
     }
     if is_abstract {
         s.push_str("abstract ");
@@ -492,9 +892,6 @@ fn vis_prefix(
     }
     if is_static {
         s.push_str("static ");
-    }
-    if !is_public && !is_abstract && !is_open && !is_sealed && !is_static {
-        s.push_str("internal ");
     }
     s
 }
@@ -533,13 +930,21 @@ fn emit_func_items(
     is_public: bool,
     is_static: bool,
     is_abstract: bool,
+    show_internal: bool,
     params: &[Param],
     ret: &Option<Type>,
     type_params: &[cj_ast::TypeParam],
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
 ) {
-    let vis = vis_prefix(is_public, false, false, is_abstract, is_static);
+    let vis = vis_prefix(
+        is_public,
+        false,
+        false,
+        is_abstract,
+        is_static,
+        show_internal,
+    );
     let sig = func_sig(&vis, name, params, ret);
     let tp = type_params_str(type_params);
     let tp_prefix = if tp.is_empty() {
@@ -611,7 +1016,7 @@ fn emit_ctor_items(
     is_abstract: bool,
     type_params: &[cj_ast::TypeParam],
 ) {
-    let vis = vis_prefix(is_public, is_open, is_sealed, is_abstract, false);
+    let vis = vis_prefix(is_public, is_open, is_sealed, is_abstract, false, false);
     let tp = type_params_str(type_params);
     let tp_prefix = if tp.is_empty() {
         String::new()
@@ -681,7 +1086,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                 members,
                 ..
             } => {
-                let vis = vis_prefix(*is_public, *is_open, *is_sealed, *is_abstract, false);
+                let vis = vis_prefix(*is_public, *is_open, *is_sealed, *is_abstract, false, false);
                 let p = if parents.is_empty() {
                     String::new()
                 } else {
@@ -762,7 +1167,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                 members,
                 ..
             } => {
-                let vis = vis_prefix(*is_public, *is_open, false, false, false);
+                let vis = vis_prefix(*is_public, *is_open, false, false, false, false);
                 let tp = type_params_str(type_params);
                 let label = if tp.is_empty() {
                     name.clone()
@@ -835,7 +1240,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                 parents,
                 ..
             } => {
-                let vis = vis_prefix(*is_public, false, false, false, false);
+                let vis = vis_prefix(*is_public, false, false, false, false, false);
                 let tp = type_params_str(type_params);
                 let p = if parents.is_empty() {
                     String::new()
@@ -872,7 +1277,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                 cases,
                 ..
             } => {
-                let vis = vis_prefix(*is_public, false, false, false, false);
+                let vis = vis_prefix(*is_public, false, false, false, false, false);
                 let detail = format!("{vis}enum {name}");
                 push_candidate(
                     cands,
@@ -928,7 +1333,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                 target,
                 ..
             } => {
-                let vis = vis_prefix(*is_public, false, false, false, false);
+                let vis = vis_prefix(*is_public, false, false, false, false, false);
                 let target_s = display_type(target);
                 let has_generic = matches!(target, Type::Ref { args, .. } if !args.is_empty());
                 let detail = format!("{vis}type {name} = {target_s}");
@@ -974,6 +1379,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                     *is_public,
                     false,
                     *is_abstract,
+                    false,
                     params,
                     ret,
                     type_params,
@@ -989,7 +1395,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                 init,
                 ..
             } => {
-                let vis = vis_prefix(*is_public, false, false, false, false);
+                let vis = vis_prefix(*is_public, false, false, false, false, false);
                 let ty_s = ty.as_ref().map(display_type).unwrap_or_default();
                 let init_s = init
                     .as_ref()
@@ -1021,7 +1427,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                 ty,
                 ..
             } => {
-                let vis = vis_prefix(*is_public, false, false, false, *is_static);
+                let vis = vis_prefix(*is_public, false, false, false, *is_static, false);
                 let ty_s = display_type(ty);
                 let detail = format!("{vis}prop {name}: {ty_s}");
                 push_candidate(
@@ -1060,9 +1466,27 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
     }
 }
 
+// ─── Helper: position of any expression node ─────────────────────────────
+// ─── Helper: initializer text of a statement for detail strings ───────────
+// Official detail shows the literal initializer source (`let x: T = <init>`),
+// not `= ...`. Statements are single-line in the test suite, so slice from the
+// first `=` on the statement's line to the end of the statement.
+fn stmt_init_source(source: &str, line_1based: u32) -> String {
+    let line_text = source_line_text(source, line_1based.saturating_sub(1));
+    if let Some(eq) = line_text.find('=') {
+        let rest = line_text[eq + 1..].trim();
+        let rest = rest.split(';').next().unwrap_or(rest).trim();
+        if !rest.is_empty() {
+            return rest.to_string();
+        }
+    }
+    "...".to_string()
+}
+
 /// Collect local variables/params in scope from the file AST.
 fn collect_local_scope(
     file: &File,
+    source: &str,
     cursor_line: u32,
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
@@ -1084,7 +1508,7 @@ fn collect_local_scope(
                 );
             }
             if let Body::Block(exprs) = body {
-                collect_lets_in_block(exprs, cursor_line, cands, seen);
+                collect_lets_in_block(exprs, source, cursor_line, cands, seen);
             }
         }
     }
@@ -1093,6 +1517,7 @@ fn collect_local_scope(
 /// Recursively collect let/var statements in a block of expressions.
 fn collect_lets_in_block(
     exprs: &[Expr],
+    source: &str,
     cursor_line: u32,
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
@@ -1102,14 +1527,29 @@ fn collect_lets_in_block(
             Expr::LetPatternDestructor { patterns, pos, .. } => {
                 if pos.line <= cursor_line {
                     for p in patterns {
-                        if let Pattern::Var { name, .. } = p {
+                        if let Pattern::Var {
+                            name,
+                            is_mutable,
+                            ty,
+                            ..
+                        } = p
+                        {
+                            // Official detail: `let x: T = <init>` — the
+                            // literal initializer text, not `= ...`.
+                            let kw = if *is_mutable { "var" } else { "let" };
+                            let init_s = stmt_init_source(source, pos.line);
+                            let detail = if let Some(t) = ty {
+                                format!("{kw} {name}: {} = {init_s}", display_type(t))
+                            } else {
+                                format!("{kw} {name} = {init_s}")
+                            };
                             push_candidate(
                                 cands,
                                 seen,
                                 Candidate {
                                     label: name.clone(),
                                     kind: KIND_VARIABLE,
-                                    detail: format!("let {name} = ..."),
+                                    detail,
                                     insert_text: name.clone(),
                                     insert_text_format: 1,
                                     filter_text: name.clone(),
@@ -1120,20 +1560,22 @@ fn collect_lets_in_block(
                 }
             }
             Expr::If { then, els, .. } => {
-                collect_expr_block(then, cursor_line, cands, seen);
+                collect_expr_block(then, source, cursor_line, cands, seen);
                 if let Some(e) = els {
-                    collect_expr_block(e, cursor_line, cands, seen);
+                    collect_expr_block(e, source, cursor_line, cands, seen);
                 }
             }
             Expr::Block { stmts, .. } => {
-                collect_lets_in_block(stmts, cursor_line, cands, seen);
+                collect_lets_in_block(stmts, source, cursor_line, cands, seen);
             }
-            Expr::ForIn { body, .. } => collect_expr_block(body, cursor_line, cands, seen),
-            Expr::While { body, .. } => collect_expr_block(body, cursor_line, cands, seen),
-            Expr::DoWhile { body, .. } => collect_expr_block(body, cursor_line, cands, seen),
+            Expr::ForIn { body, .. } => collect_expr_block(body, source, cursor_line, cands, seen),
+            Expr::While { body, .. } => collect_expr_block(body, source, cursor_line, cands, seen),
+            Expr::DoWhile { body, .. } => {
+                collect_expr_block(body, source, cursor_line, cands, seen)
+            }
             Expr::Match { cases, .. } => {
                 for mc in cases {
-                    collect_expr_block(&mc.body, cursor_line, cands, seen);
+                    collect_expr_block(&mc.body, source, cursor_line, cands, seen);
                 }
             }
             Expr::Try {
@@ -1142,12 +1584,12 @@ fn collect_lets_in_block(
                 finally,
                 ..
             } => {
-                collect_expr_block(body, cursor_line, cands, seen);
+                collect_expr_block(body, source, cursor_line, cands, seen);
                 for c in catches {
-                    collect_expr_block(&c.body, cursor_line, cands, seen);
+                    collect_expr_block(&c.body, source, cursor_line, cands, seen);
                 }
                 if let Some(f) = finally {
-                    collect_expr_block(f, cursor_line, cands, seen);
+                    collect_expr_block(f, source, cursor_line, cands, seen);
                 }
             }
             _ => {}
@@ -1157,12 +1599,13 @@ fn collect_lets_in_block(
 
 fn collect_expr_block(
     e: &Expr,
+    source: &str,
     cursor_line: u32,
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
 ) {
     if let Expr::Block { stmts, .. } = e {
-        collect_lets_in_block(stmts, cursor_line, cands, seen);
+        collect_lets_in_block(stmts, source, cursor_line, cands, seen);
     }
 }
 
@@ -1210,7 +1653,7 @@ fn collect_member_scope(
                 init,
                 ..
             } => {
-                let vis = vis_prefix(*is_public, false, false, false, false);
+                let vis = vis_prefix(*is_public, false, false, false, false, true);
                 let ty_s = ty.as_ref().map(display_type).unwrap_or_default();
                 let init_s = init
                     .as_ref()
@@ -1249,6 +1692,7 @@ fn collect_member_scope(
                     *is_public,
                     false,
                     *is_abstract,
+                    true,
                     params,
                     ret,
                     type_params,
@@ -1263,7 +1707,7 @@ fn collect_member_scope(
                 ty,
                 ..
             } => {
-                let vis = vis_prefix(*is_public, false, false, false, *is_static);
+                let vis = vis_prefix(*is_public, false, false, false, *is_static, true);
                 let ty_s = display_type(ty);
                 let detail = format!("{vis}prop {name}: {ty_s}");
                 push_candidate(
@@ -1301,7 +1745,7 @@ fn collect_members_as_candidates(
                 init,
                 ..
             } => {
-                let vis = vis_prefix(*is_public, false, false, false, false);
+                let vis = vis_prefix(*is_public, false, false, false, false, true);
                 let ty_s = ty.as_ref().map(display_type).unwrap_or_default();
                 let init_s = init
                     .as_ref()
@@ -1340,6 +1784,7 @@ fn collect_members_as_candidates(
                     *is_public,
                     false,
                     *is_abstract,
+                    true,
                     params,
                     ret,
                     type_params,
@@ -1354,7 +1799,7 @@ fn collect_members_as_candidates(
                 ty,
                 ..
             } => {
-                let vis = vis_prefix(*is_public, false, false, false, *is_static);
+                let vis = vis_prefix(*is_public, false, false, false, *is_static, true);
                 let ty_s = display_type(ty);
                 let detail = format!("{vis}prop {name}: {ty_s}");
                 push_candidate(
@@ -1443,19 +1888,34 @@ fn decl_pos(d: &Decl) -> cj_ast::CodePos {
 
 /// Collect std-core symbols as candidates.
 fn collect_std_symbols(cands: &mut Vec<Candidate>, seen: &mut HashSet<String>) {
-    for (name, kind, detail) in STD_CORE {
+    for sym in STD_CORE {
         push_candidate(
             cands,
             seen,
             Candidate {
-                label: name.to_string(),
-                kind: *kind,
-                detail: detail.to_string(),
-                insert_text: name.to_string(),
+                label: sym.name.to_string(),
+                kind: sym.kind,
+                detail: sym.detail.to_string(),
+                insert_text: sym.name.to_string(),
                 insert_text_format: 1,
-                filter_text: name.to_string(),
+                filter_text: sym.name.to_string(),
             },
         );
+        // Constructor / overload items share the type's filterText.
+        for (label, detail, insert, fmt) in sym.ctors {
+            push_candidate(
+                cands,
+                seen,
+                Candidate {
+                    label: label.to_string(),
+                    kind: KIND_FUNCTION,
+                    detail: detail.to_string(),
+                    insert_text: insert.to_string(),
+                    insert_text_format: *fmt,
+                    filter_text: sym.name.to_string(),
+                },
+            );
+        }
     }
 }
 
@@ -1638,7 +2098,7 @@ pub fn complete_at(
         let _ = project_root;
 
         // 3. Local scope (params, let/var in function body)
-        collect_local_scope(file, line, &mut candidates, &mut seen);
+        collect_local_scope(file, source, line, &mut candidates, &mut seen);
 
         // 4. Class members in scope (if cursor inside a class)
         for d in &file.decls {
@@ -1652,39 +2112,27 @@ pub fn complete_at(
         collect_std_symbols(&mut candidates, &mut seen);
     }
 
-    // Prefix filter (skip for member access — client filters)
-    let mut items: Vec<Value> = if !is_member_access {
+    // Official: empty prefix in plain context → null (no trigger).
+    if !is_member_access && prefix.is_empty() {
+        return Value::Null;
+    }
+
+    // Prefix filter — fuzzy subsequence match (case-insensitive).
+    // For member access, the client filters, so we don't filter here.
+    let items: Vec<Value> = if !is_member_access {
         candidates
             .iter()
-            .filter(|c| prefix.is_empty() || c.filter_text.starts_with(&prefix))
+            .filter(|c| fuzzy_match(&c.filter_text, &prefix))
             .map(item_json)
             .collect()
     } else {
         candidates.iter().map(item_json).collect()
     };
 
-    // Official exact-match rule: when prefix non-empty and there's an exact
-    // match, return ONLY exact matches.
-    if !prefix.is_empty() {
-        let exact: Vec<Value> = items
-            .iter()
-            .filter(|it| {
-                it.get("filterText")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|f| f == prefix)
-            })
-            .cloned()
-            .collect();
-        if !exact.is_empty() {
-            items = exact;
-        }
-    }
-
     // Return null when no candidates (official behavior)
     if items.is_empty() {
         return Value::Null;
     }
-
     let _ = uri;
     json!(items)
 }
