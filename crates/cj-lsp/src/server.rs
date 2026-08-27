@@ -102,14 +102,27 @@ impl LspServer {
         let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
         let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
 
-        let Some((_, source)) = self.open_docs.get(&uri) else {
+        let Some((path, source)) = self.open_docs.get(&uri) else {
             return json!([]);
         };
         // Parse the current buffer to collect visible declarations.
         let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
         let file = parser.run();
 
-        crate::completion::complete_at(&file, source, line, character, None)
+        // Resolve the project root so completion can include same-package
+        // sibling file decls (official behavior: cross-file completion).
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let project_root = resolve_project_root(&cwd, path);
+
+        crate::completion::complete_at(
+            &file,
+            source,
+            line,
+            character,
+            None,
+            project_root.as_deref(),
+            &uri,
+        )
     }
 
     /// Handle textDocument/hover: return declaration info at the cursor.
