@@ -421,6 +421,22 @@ fn lsp_pos_to_byte(src: &str, line: u32, character: u32) -> usize {
     line_start + col_bytes
 }
 
+/// Count characters in the given 0-based line.
+fn line_char_len(src: &str, line: u32) -> usize {
+    let mut cur_line = 0u32;
+    let mut line_start = 0usize;
+    for (i, b) in src.bytes().enumerate() {
+        if b == b'\n' {
+            if cur_line == line {
+                return src[line_start..i].chars().count();
+            }
+            cur_line += 1;
+            line_start = i + 1;
+        }
+    }
+    src[line_start..].chars().count()
+}
+
 /// Apply one incremental content change (range + new text) to `text`.
 fn apply_incremental_change(text: &mut String, range: &Value, new_text: &str) {
     let start = &range["start"];
@@ -429,6 +445,11 @@ fn apply_incremental_change(text: &mut String, range: &Value, new_text: &str) {
     let s_char = start["character"].as_u64().unwrap_or(0) as u32;
     let e_line = end["line"].as_u64().unwrap_or(0) as u32;
     let e_char = end["character"].as_u64().unwrap_or(0) as u32;
+    // Official ignores edits whose range end exceeds the line's length
+    // (invalid ranges — e.g. a typed prefix beyond an empty line).
+    if e_char as usize > line_char_len(text, e_line) {
+        return;
+    }
     let s = lsp_pos_to_byte(text, s_line, s_char);
     let e = lsp_pos_to_byte(text, e_line, e_char);
     if s <= e && e <= text.len() {
