@@ -51,7 +51,7 @@ pub fn hover_at(
     let Some(word) = word_at(source, line, character) else {
         return Value::Null;
     };
-    if let Some(hi) = idx.resolve(&word.text, line, character) {
+    if let Some(hi) = idx.resolve(&word.text, line, character, word.start) {
         return render_hover(hi, LspRange(word.line, word.start, word.end));
     }
     Value::Null
@@ -153,6 +153,7 @@ struct Word {
 
 struct Index<'a> {
     source: &'a str,
+    total_lines: u32,
     package: Option<&'a str>,
     file_name: &'a str,
     /// Every declaration (top-level + members + local decls) — hit-test space.
@@ -169,6 +170,9 @@ struct Index<'a> {
     containers: Vec<Container>,
     /// type name -> parent type display names (for `super` resolution).
     parents: HashMap<String, Vec<String>>,
+    /// class/struct name -> synthesized default ctor (`public func init()`).
+    /// Used when a type name in call position has no declared init member.
+    implicit_inits: HashMap<String, Hoverable>,
     /// std.core builtin symbols.
     std: HashMap<String, Hoverable>,
 }
@@ -177,6 +181,7 @@ impl<'a> Index<'a> {
     fn new(file: &'a File, source: &'a str, package: Option<&'a str>, file_name: &'a str) -> Self {
         let mut idx = Index {
             source,
+            total_lines: source.lines().count() as u32,
             package,
             file_name,
             all: Vec::new(),
@@ -186,6 +191,7 @@ impl<'a> Index<'a> {
             members: HashMap::new(),
             containers: Vec::new(),
             parents: HashMap::new(),
+            implicit_inits: HashMap::new(),
             std: HashMap::new(),
         };
         for s in STD_SYMS {
@@ -269,6 +275,9 @@ impl<'a> Index<'a> {
                         self.members.entry(c).or_default().push(idx);
                     }
                 }
+                // params are hoverable locals (`let x: T`) and the cursor lands
+                // on them in many official cases (e.g. `testArr(x!...)`).
+                self.collect_params(params);
                 if let Body::Block(stmts) = body {
                     self.collect_locals(stmts, name_pos.line);
                 }
@@ -314,6 +323,7 @@ impl<'a> Index<'a> {
                 };
                 self.push(hi, true);
                 self.types.insert(name.clone(), self.all.len() - 1);
+                self.add_implicit_init(name, &label);
                 if !parents.is_empty() {
                     self.parents
                         .insert(name.clone(), parents.iter().map(render_type).collect());
@@ -325,6 +335,10 @@ impl<'a> Index<'a> {
                     last_member_line: 0,
                 });
                 self.collect_members(members, &label, ci);
+                // the container body extends past the last member (closing
+                // `}`), so everything below the declaration line is "inside"
+                // it for `this`/`super`/member-access resolution
+                self.containers[ci].last_member_line = self.total_lines;
             }
             Decl::Interface {
                 name,
@@ -373,6 +387,7 @@ impl<'a> Index<'a> {
                     last_member_line: 0,
                 });
                 self.collect_members(members, &label, ci);
+                self.containers[ci].last_member_line = self.total_lines;
             }
             Decl::Struct {
                 name,
@@ -406,6 +421,7 @@ impl<'a> Index<'a> {
                 };
                 self.push(hi, true);
                 self.types.insert(name.clone(), self.all.len() - 1);
+                self.add_implicit_init(name, &label);
                 let ci = self.containers.len();
                 self.containers.push(Container {
                     name: name.clone(),
@@ -413,6 +429,7 @@ impl<'a> Index<'a> {
                     last_member_line: 0,
                 });
                 self.collect_members(members, &label, ci);
+                self.containers[ci].last_member_line = self.total_lines;
             }
             Decl::Enum {
                 name,
@@ -483,11 +500,15 @@ impl<'a> Index<'a> {
                     self.effective_mods(pos, *is_public, container, member, &Body::Empty, false);
                 let sig = format!("{mods}type {name} = {}", render_type(target));
                 let sig = self.with_container(&sig, container);
+                // the AST stores only `pos` (the `type` keyword); recover the
+                // alias-name span from the source line for hit-testing
+                let src_line = self.source_line(pos.line);
+                let name_col = src_line.find(name).unwrap_or(pos.col as usize);
                 let hi = Hoverable {
                     name: name.clone(),
                     line: pos.line,
-                    col: pos.col,
-                    end_col: pos.end_col,
+                    col: (name_col + 1) as u32,
+                    end_col: (name_col + name.len() + 1) as u32,
                     signature: sig,
                     doc: self.doc_comment(pos.line),
                     declared_in: self.file_name.to_string(),
@@ -509,26 +530,9 @@ impl<'a> Index<'a> {
             } => {
                 let mods =
                     self.effective_mods(pos, *is_public, container, member, &Body::Empty, false);
-                let ty_disp = match ty {
-                    Some(t) => {
-                        let r = render_type(t);
-                        if r == "?" {
-                            self.slice_type_from_source(name_pos.line, name)
-                                .map(|s| format!(": {s}"))
-                        } else {
-                            Some(format!(": {r}"))
-                        }
-                    }
-                    None => None,
-                };
-                let init_s = Some(self.init_slice(name_pos.line));
-                let mut sig = format!(
-                    "{mods}{} {name}{}{}",
-                    if *is_mutable { "var" } else { "let" },
-                    ty_disp.as_deref().unwrap_or(""),
-                    init_s.as_deref().unwrap_or("")
-                );
-                sig = self.with_container(&sig, container);
+                // declared/inferred type (bare, no `: ` prefix); the inferred
+                // initializer type is used when no annotation is written
+                // (official renders `var arr1: Array<Int64> = [...]`).
                 let disp = ty
                     .as_ref()
                     .map(render_type)
@@ -540,6 +544,26 @@ impl<'a> Index<'a> {
                             None
                         }
                     });
+                let ty_disp = match ty {
+                    Some(t) => {
+                        let r = render_type(t);
+                        if r == "?" {
+                            self.slice_type_from_source(name_pos.line, name)
+                                .map(|s| format!(": {s}"))
+                        } else {
+                            Some(format!(": {r}"))
+                        }
+                    }
+                    None => disp.as_deref().map(|t| format!(": {t}")),
+                };
+                let init_s = Some(self.init_slice(name_pos.line));
+                let mut sig = format!(
+                    "{mods}{} {name}{}{}",
+                    if *is_mutable { "var" } else { "let" },
+                    ty_disp.as_deref().unwrap_or(""),
+                    init_s.as_deref().unwrap_or("")
+                );
+                sig = self.with_container(&sig, container);
                 let hi = Hoverable {
                     name: name.clone(),
                     line: name_pos.line,
@@ -586,6 +610,8 @@ impl<'a> Index<'a> {
                 if let Some(c) = cname {
                     self.members.entry(c).or_default().push(idx);
                 }
+                // `init(...)` ctor params are hoverable locals too
+                self.collect_params(params);
                 if let Body::Block(stmts) = body {
                     self.collect_locals(stmts, pos.line);
                 }
@@ -669,22 +695,19 @@ impl<'a> Index<'a> {
         for m in members {
             match m {
                 // class-name constructor: `Test(a: Int64, ...) { }` inside the
-                // class — official hover renders it as `internal func init(...)`
+                // class — official hover renders it as `internal func init(...)`.
+                // Distinguished from a same-named `func Test()` METHOD by the
+                // absence of the `func` keyword before the name in the source.
                 Decl::Func {
                     name,
                     name_pos,
                     params,
-                    ret,
-                    body,
                     ..
-                } if name == container => {
+                } if (name == container || container.ends_with(&format!(" {name}")))
+                    && !self.before_kind(name_pos).trim_end().ends_with("func") => {
                     let params_s = render_params(params, true);
-                    let ret_s = ret
-                        .as_ref()
-                        .map(render_type)
-                        .or_else(|| infer_body_ret(body))
-                        .unwrap_or_else(|| "Unit".to_string());
-                    let sig = format!("// In {container}\ninternal func init({params_s}){ret_s}");
+                    // ctor signatures never carry a return type
+                    let sig = format!("// In {container}\ninternal func init({params_s})");
                     let hi = Hoverable {
                         name: "init".to_string(),
                         line: name_pos.line,
@@ -698,10 +721,12 @@ impl<'a> Index<'a> {
                         is_type: false,
                     };
                     let idx = self.push(hi, false);
-                    self.members
-                        .entry(container.to_string())
-                        .or_default()
-                        .push(idx);
+                    if let Some(cn) = container_type_name(container) {
+                        self.members
+                            .entry(cn)
+                            .or_default()
+                            .push(idx);
+                    }
                     self.containers[ci].last_member_line =
                         self.containers[ci].last_member_line.max(name_pos.line);
                     // also collect the ctor params as locals (they are hoverable)
@@ -743,6 +768,28 @@ impl<'a> Index<'a> {
         }
     }
 
+    /// Register the synthesized default constructor (`public func init()`) for
+    /// a class/struct so a constructor call `Name()` with no declared init
+    /// still resolves to the official `// In class Name` / `// In struct Name`
+    /// hover instead of the type declaration itself.
+    fn add_implicit_init(&mut self, name: &str, label: &str) {
+        self.implicit_inits.insert(
+            name.to_string(),
+            Hoverable {
+                name: "init".to_string(),
+                line: 0,
+                col: 0,
+                end_col: 0,
+                signature: format!("// In {label}\npublic func init()"),
+                doc: None,
+                declared_in: self.file_name.to_string(),
+                pkg: self.package.map(str::to_string),
+                ty: None,
+                is_type: false,
+            },
+        );
+    }
+
     /// Collect local declarations from a function/init body: local vars,
     /// params are added separately by the caller when available.
     fn collect_locals(&mut self, stmts: &'a [Expr], fn_line: u32) {
@@ -765,17 +812,27 @@ impl<'a> Index<'a> {
                 pos,
                 ..
             } => {
-                let ty_disp = infer_init_expr(initializer, self);
+                // position-aware inference so name refs in the initializer
+                // resolve against in-scope locals/params (e.g. `var a = x`)
+                let inferred =
+                    infer_init_expr_at(initializer, self, pos.line.saturating_sub(1), 0);
                 for pat in patterns {
                     if let Pattern::Var {
                         name,
                         name_pos,
                         is_mutable,
+                        ty,
                         pos,
                         ..
                     } = pat
                     {
                         let kind = if *is_mutable { "var" } else { "let" };
+                        // an explicit annotation (`var ii: Any = AA()`) wins
+                        // over the type inferred from the initializer
+                        let ty_disp = ty
+                            .as_ref()
+                            .map(render_type)
+                            .or_else(|| inferred.clone());
                         let td = ty_disp
                             .as_deref()
                             .map(|t| format!(": {t}"))
@@ -1146,13 +1203,18 @@ impl<'a> Index<'a> {
 
     /// Slice the initializer text from the source line: from the first `=`
     /// after the variable's name up to the end of the line (minus a trailing
-    /// comment or comma).
+    /// comment or comma). Lambda initializers (`= {x => x}`) are omitted —
+    /// the official hover renders only the declared signature.
     fn init_slice(&self, line: u32) -> String {
         let line = self.source_line(line);
-        let idx = line.find('=').map(|i| i + 1).unwrap_or(0);
-        let after = line[idx..].trim();
+        // the assignment `=` may not exist on the line (declaration-only
+        // member var) — then there is no initializer to slice
+        let Some(eq) = line.find('=') else {
+            return String::new();
+        };
+        let after = line[eq + 1..].trim();
         let after = strip_trailing_comment(after);
-        if after.is_empty() {
+        if after.is_empty() || after.starts_with('{') {
             String::new()
         } else {
             format!(" = {after}")
@@ -1228,7 +1290,7 @@ impl<'a> Index<'a> {
         self.all.iter().find(|h| h.contains(line, character))
     }
 
-    fn resolve(&self, word: &str, line: u32, character: u32) -> Option<&Hoverable> {
+    fn resolve(&self, word: &str, line: u32, character: u32, word_start: u32) -> Option<&Hoverable> {
         if word.is_empty() {
             return None;
         }
@@ -1260,7 +1322,12 @@ impl<'a> Index<'a> {
                 if let Some(hi) = self.member_lookup(word, "init") {
                     return Some(hi);
                 }
-                return self.lookup_type(word);
+                // no declared init — official shows the synthesized default
+                // ctor (`// In class X\npublic func init()`)
+                return self
+                    .implicit_inits
+                    .get(word)
+                    .or_else(|| self.lookup_type(word));
             }
             if let Some(hits) = self.by_name.get(word) {
                 return self
@@ -1270,7 +1337,7 @@ impl<'a> Index<'a> {
             return self.lookup_local(word, line, character);
         }
         // type position (preceded by : < as is extend etc)
-        if self.is_type_position(word, line, character) {
+        if self.is_type_position(word, line, word_start) {
             if let Some(hi) = self.lookup_type(word) {
                 return Some(hi);
             }
@@ -1367,26 +1434,23 @@ impl<'a> Index<'a> {
         false
     }
 
-    fn is_type_position(&self, word: &str, line: u32, character: u32) -> bool {
+    fn is_type_position(&self, word: &str, line: u32, word_start: u32) -> bool {
         let l = self.source_line(line + 1);
-        let col = character as usize;
+        let col = word_start as usize;
         if col > l.len() {
             return false;
         }
         let before = &l[..col];
-        let before_trim = before.trim_end();
+        // check explicit keyword prefixes (as, is, extend, ->, =>) — these
+        // are the most common type-position indicators in the official suite
         for kw in ["as ", "is ", "extend ", "-> ", "=> "] {
-            if before_trim.ends_with(kw) {
+            if before.ends_with(kw) {
                 return true;
             }
         }
-        let lastch = before_trim.chars().next_back();
+        let lastch = before.trim_end().chars().next_back();
         match lastch {
             Some(':') | Some('<') | Some('&') | Some('|') | Some('(') | Some('>') | Some(',') => {
-                // `:` may also be a named arg (`b: 2`) — but a declared type
-                // name is a strong signal; type names start uppercase or `_`
-                // in the test suite. Only treat as a type position when the
-                // word is actually a known type.
                 word.chars()
                     .next()
                     .map(|c| c.is_uppercase() || c == '_')
@@ -1654,16 +1718,26 @@ fn infer_expr_type(e: &Expr) -> Option<String> {
 /// Infer the declared type of a `var x = <init>` when no explicit type is
 /// written. Returns a display string (e.g. `Array<Int64>`, `Option<Base1>`).
 fn infer_init_expr(e: &Expr, idx: &Index) -> Option<String> {
+    infer_init_expr_at(e, idx, 0, 0)
+}
+
+/// Position-aware variant: `line`/`character` (0-based) let name references
+/// in the initializer resolve against locals that are in scope there.
+fn infer_init_expr_at(e: &Expr, idx: &Index, line: u32, character: u32) -> Option<String> {
     match e {
         Expr::Lit { kind, .. } => Some(lit_type(kind)),
         Expr::ArrayLit { elements, .. } => {
-            let elem = elements.first().and_then(|e| infer_init_expr(e, idx));
+            let elem = elements
+                .first()
+                .and_then(|e| infer_init_expr_at(e, idx, line, character));
             elem.map(|t| format!("Array<{t}>"))
         }
-        Expr::Call {
-            callee, type_args, ..
-        } => match callee.as_ref() {
-            Expr::Name { name, .. } => {
+        Expr::Call { callee, .. } => match callee.as_ref() {
+            // type args live on the callee Name, not on the Call node
+            // (`Array<String>()` → Name{ name: "Array", type_args: [String] })
+            Expr::Name {
+                name, type_args, ..
+            } => {
                 if type_args.is_empty() {
                     Some(name.clone())
                 } else {
@@ -1677,32 +1751,58 @@ fn infer_init_expr(e: &Expr, idx: &Index) -> Option<String> {
                     ))
                 }
             }
-            Expr::Member { object, .. } => {
-                if let Expr::Name { name, .. } = object.as_ref() {
-                    Some(name.clone())
-                } else {
-                    None
+            Expr::Member { object, name, .. } => match object.as_ref() {
+                // enum case / static ctor with explicit type args: the result
+                // type is the receiver type as written (`Time3<Array<Int64>>`)
+                Expr::Name {
+                    name: on,
+                    type_args,
+                    ..
+                } if !type_args.is_empty() => Some(format!(
+                    "{on}<{}>",
+                    type_args
+                        .iter()
+                        .map(render_type)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+                Expr::Name { name: on, .. } => {
+                    // value receiver `recv.member(...)`: resolve through the
+                    // member's declared type (`c1.C2()` → `Unit`)
+                    if let Some(recv_ty) = idx.receiver_type(on, line, character) {
+                        if let Some(hi) = idx.member_lookup(&recv_ty, name) {
+                            if let Some(t) = &hi.ty {
+                                return Some(t.clone());
+                            }
+                        }
+                    }
+                    Some(on.clone())
                 }
-            }
+                _ => None,
+            },
             _ => None,
         },
         Expr::As { ty, .. } => Some(format!("Option<{}>", render_type(ty))),
         Expr::Name { name, .. } => {
-            // resolve the referenced symbol's declared type
-            if let Some(hi) = idx.lookup_top_value(name) {
+            // resolve the referenced symbol's declared type; locals (params
+            // and earlier local vars) take precedence over top-level names
+            if let Some(hi) = idx
+                .lookup_local(name, line, character)
+                .or_else(|| idx.lookup_top_value(name))
+            {
                 return hi.ty.clone();
             }
             idx.lookup_std(name).and_then(|s| s.ty.clone())
         }
         Expr::Subscript { object, .. } => {
-            let oty = infer_init_expr(object, idx)?;
+            let oty = infer_init_expr_at(object, idx, line, character)?;
             if let Some(inner) = oty.strip_prefix("Array<") {
                 inner.strip_suffix('>').map(str::to_string)
             } else {
                 None
             }
         }
-        Expr::Binary { lhs, .. } => infer_init_expr(lhs, idx),
+        Expr::Binary { lhs, .. } => infer_init_expr_at(lhs, idx, line, character),
         Expr::StrInterpolation { .. } | Expr::Interpolation { .. } => Some("String".to_string()),
         Expr::Lambda { body, .. } => infer_expr_type(body),
         _ => None,
@@ -1868,8 +1968,15 @@ fn strip_trailing_comment(s: &str) -> String {
     out.trim().trim_end_matches(',').trim_end().to_string()
 }
 
-fn container_type_name(_label: &str) -> Option<String> {
-    // The label format is `class Foo`; callers pass the bare type name in most
-    // places via `member_of`. This helper is only kept for API symmetry.
+fn container_type_name(label: &str) -> Option<String> {
+    // The label format is `class Foo` / `struct Foo` / `interface Foo` /
+    // `enum Foo`; extract the bare type name (may be followed by type-param
+    // or inheritance text in the label, so take the first token).
+    for prefix in ["class ", "struct ", "interface ", "enum "] {
+        if let Some(rest) = label.strip_prefix(prefix) {
+            let name = rest.split(|c: char| c.is_whitespace() || c == '<').next()?;
+            return Some(name.to_string());
+        }
+    }
     None
 }

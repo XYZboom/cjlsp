@@ -208,6 +208,108 @@ impl<'a> Parser<'a> {
         self.tokens.get(i).map(|t| t.kind).unwrap_or(TokenKind::END)
     }
 
+    /// True when the next non-trivia token can close a `>` generic-args list:
+    /// `>` itself, or a compound token that starts with `>` (`>>`, `>=`,
+    /// `>>=`) which must be split by `eat_gt`.
+    pub(crate) fn is_gt_close(&self) -> bool {
+        matches!(
+            self.peek(),
+            TokenKind::GT | TokenKind::RSHIFT | TokenKind::GE | TokenKind::RSHIFT_ASSIGN
+        )
+    }
+
+    /// Consume the next non-trivia token as a generic-args `>` closer.
+    /// Compound tokens (`>>`, `>=`, `>>=`) are split so the remaining
+    /// `>`/`=` stays in the stream for the enclosing level (nested generics
+    /// `A<B<C>>`; the lexer merges adjacent closers into one token).
+    pub(crate) fn eat_gt(&mut self) -> Token {
+        // find the raw index of the next non-trivia token
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            let k = self.tokens[i].kind;
+            if k == TokenKind::COMMENT || k == TokenKind::NL {
+                i += 1;
+                continue;
+            }
+            break;
+        }
+        if i >= self.tokens.len() {
+            return self.peek_token().clone();
+        }
+        let tok = self.tokens[i].clone();
+        match tok.kind {
+            TokenKind::GT => {
+                self.pos = i + 1;
+                tok
+            }
+            TokenKind::RSHIFT => {
+                // `>>` → `>` + `>`
+                self.tokens[i].kind = TokenKind::GT;
+                self.tokens[i].text = String::new();
+                self.tokens[i].end.column = tok.begin.column + 1;
+                self.tokens[i].end.offset = tok.begin.offset + 1;
+                let mut rest = tok.clone();
+                rest.kind = TokenKind::GT;
+                rest.text = String::new();
+                rest.begin.column = tok.begin.column + 1;
+                rest.begin.offset = tok.begin.offset + 1;
+                self.tokens.insert(i + 1, rest);
+                self.pos = i + 1;
+                self.tokens[i].clone()
+            }
+            TokenKind::GE => {
+                // `>=` → `>` + `=`
+                self.tokens[i].kind = TokenKind::GT;
+                self.tokens[i].text = String::new();
+                self.tokens[i].end.column = tok.begin.column + 1;
+                self.tokens[i].end.offset = tok.begin.offset + 1;
+                let mut rest = tok.clone();
+                rest.kind = TokenKind::ASSIGN;
+                rest.text = String::new();
+                rest.begin.column = tok.begin.column + 1;
+                rest.begin.offset = tok.begin.offset + 1;
+                self.tokens.insert(i + 1, rest);
+                self.pos = i + 1;
+                self.tokens[i].clone()
+            }
+            TokenKind::RSHIFT_ASSIGN => {
+                // `>>=` → `>` + `>` + `=`
+                self.tokens[i].kind = TokenKind::GT;
+                self.tokens[i].text = String::new();
+                self.tokens[i].end.column = tok.begin.column + 1;
+                self.tokens[i].end.offset = tok.begin.offset + 1;
+                let mut gt = tok.clone();
+                gt.kind = TokenKind::GT;
+                gt.text = String::new();
+                gt.begin.column = tok.begin.column + 1;
+                gt.begin.offset = tok.begin.offset + 1;
+                gt.end.column = tok.begin.column + 2;
+                gt.end.offset = tok.begin.offset + 2;
+                let mut eq = tok.clone();
+                eq.kind = TokenKind::ASSIGN;
+                eq.text = String::new();
+                eq.begin.column = tok.begin.column + 2;
+                eq.begin.offset = tok.begin.offset + 2;
+                self.tokens.insert(i + 1, gt);
+                self.tokens.insert(i + 2, eq);
+                self.pos = i + 1;
+                self.tokens[i].clone()
+            }
+            other => {
+                // no closing `>`: report and recover (mirror `expect(GT)`)
+                let found = crate::token_display_text(&tok);
+                self.error_id(
+                    &tok,
+                    cj_diag::DiagId::PARSE_EXPECTED_RIGHT_DELIMITER,
+                    &["<", ">", "<", &found],
+                );
+                self.pos = i + 1;
+                let _ = other;
+                tok
+            }
+        }
+    }
+
     /// Absolute index of the next unconsumed token in the raw stream.
     pub(crate) fn cursor(&self) -> usize {
         self.pos
