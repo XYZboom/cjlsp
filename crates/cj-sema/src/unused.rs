@@ -22,7 +22,7 @@
 // bare `T` reference is a *type* use, not a constructor use (official 026).
 
 use cj_ast::{Body, Decl, Expr, File, Pattern};
-use cj_diag::{Diag, Severity};
+use cj_diag::{Diag, DiagFix, FixKind, Severity};
 use std::collections::HashSet;
 
 /// Kind label used in the diagnostic message ("Function", "Variable", ...).
@@ -47,6 +47,31 @@ impl DeclKind {
             DeclKind::Var => "Variable",
         }
     }
+
+    fn fix_kind(self) -> FixKind {
+        match self {
+            DeclKind::Func => FixKind::Func,
+            DeclKind::Class => FixKind::Class,
+            DeclKind::Interface => FixKind::Interface,
+            DeclKind::Struct => FixKind::Struct,
+            DeclKind::Enum => FixKind::Enum,
+            DeclKind::Var => FixKind::Var,
+        }
+    }
+}
+
+/// The noun used in a quickfix title (`Remove unused <noun> '<name>'`).
+fn fix_title_noun(kind: FixKind) -> &'static str {
+    match kind {
+        FixKind::Func => "function",
+        FixKind::Class => "class",
+        FixKind::Interface => "interface",
+        FixKind::Struct => "struct",
+        FixKind::Enum => "enum",
+        FixKind::Var => "variable",
+        FixKind::Param => "parameter",
+        FixKind::Symbol => "symbol",
+    }
 }
 
 /// A declared name collected for the unused check.
@@ -54,8 +79,13 @@ impl DeclKind {
 struct DeclInfo {
     name: String,
     kind: DeclKind,
+    /// 1-based anchor of the diagnostic (the name position in the source).
     line: u32,
     col: u32,
+    /// 1-based start of the DECLARATION (the `func`/`let`/`class` keyword, the
+    /// ctor/finalizer name, or the param name) — drives the quickfix range.
+    start_line: u32,
+    start_col: u32,
     /// true for a type-named constructor member (`T(...)` inside type T).
     is_type_ctor: bool,
 }
@@ -203,12 +233,19 @@ fn collect_decls(
     known: &mut HashSet<String>,
 ) {
     match d {
-        Decl::Func { name, name_pos, .. } => {
+        Decl::Func {
+            name,
+            name_pos,
+            pos,
+            ..
+        } => {
             out.push(DeclInfo {
                 name: name.clone(),
                 kind: DeclKind::Func,
                 line: name_pos.line,
                 col: name_pos.col,
+                start_line: pos.line,
+                start_col: pos.col,
                 is_type_ctor: is_member && Some(name.as_str()) == enclosing,
             });
             if !is_member {
@@ -218,6 +255,7 @@ fn collect_decls(
         Decl::Class {
             name,
             name_pos,
+            pos,
             members,
             ..
         } => {
@@ -226,6 +264,8 @@ fn collect_decls(
                 kind: DeclKind::Class,
                 line: name_pos.line,
                 col: name_pos.col,
+                start_line: pos.line,
+                start_col: pos.col,
                 is_type_ctor: false,
             });
             if !is_member {
@@ -238,6 +278,7 @@ fn collect_decls(
         Decl::Interface {
             name,
             name_pos,
+            pos,
             members,
             ..
         } => {
@@ -246,6 +287,8 @@ fn collect_decls(
                 kind: DeclKind::Interface,
                 line: name_pos.line,
                 col: name_pos.col,
+                start_line: pos.line,
+                start_col: pos.col,
                 is_type_ctor: false,
             });
             if !is_member {
@@ -258,6 +301,7 @@ fn collect_decls(
         Decl::Struct {
             name,
             name_pos,
+            pos,
             members,
             ..
         } => {
@@ -266,6 +310,8 @@ fn collect_decls(
                 kind: DeclKind::Struct,
                 line: name_pos.line,
                 col: name_pos.col,
+                start_line: pos.line,
+                start_col: pos.col,
                 is_type_ctor: false,
             });
             if !is_member {
@@ -275,24 +321,38 @@ fn collect_decls(
                 collect_decls(m, true, Some(name.as_str()), out, known);
             }
         }
-        Decl::Enum { name, name_pos, .. } => {
+        Decl::Enum {
+            name,
+            name_pos,
+            pos,
+            ..
+        } => {
             out.push(DeclInfo {
                 name: name.clone(),
                 kind: DeclKind::Enum,
                 line: name_pos.line,
                 col: name_pos.col,
+                start_line: pos.line,
+                start_col: pos.col,
                 is_type_ctor: false,
             });
             if !is_member {
                 known.insert(name.clone());
             }
         }
-        Decl::Var { name, name_pos, .. } => {
+        Decl::Var {
+            name,
+            name_pos,
+            pos,
+            ..
+        } => {
             out.push(DeclInfo {
                 name: name.clone(),
                 kind: DeclKind::Var,
                 line: name_pos.line,
                 col: name_pos.col,
+                start_line: pos.line,
+                start_col: pos.col,
                 is_type_ctor: false,
             });
             if !is_member {
@@ -360,14 +420,24 @@ pub fn detect_unused(file: &File) -> Vec<Diag> {
         if used || unresolved.contains(&info.name) {
             continue;
         }
+        let fix_kind = if info.is_type_ctor {
+            FixKind::Symbol
+        } else {
+            info.kind.fix_kind()
+        };
+        let label = if info.is_type_ctor {
+            "Function"
+        } else {
+            info.kind.label()
+        };
         diags.push(unused_diag(
+            fix_kind,
+            label,
+            &info.name,
             info.line,
             info.col,
-            format!(
-                "{} '{}' is declared but never used",
-                info.kind.label(),
-                info.name
-            ),
+            info.start_line,
+            info.start_col,
         ));
     }
 
@@ -393,9 +463,13 @@ pub fn detect_unused(file: &File) -> Vec<Diag> {
                 continue;
             }
             diags.push(unused_diag(
+                FixKind::Var,
+                "Variable",
+                &info.name,
                 info.line,
                 info.col,
-                format!("Variable '{}' is declared but never used", info.name),
+                info.start_line,
+                info.start_col,
             ));
         }
     }
@@ -433,7 +507,7 @@ fn collect_local_decls(d: &Decl, out: &mut Vec<DeclInfo>) {
 
 /// Walk an expression tree for local `let`/`var` bindings (Var patterns).
 fn collect_local_decls_expr(e: &Expr, out: &mut Vec<DeclInfo>) {
-    if let Expr::LetPatternDestructor { patterns, .. } = e {
+    if let Expr::LetPatternDestructor { patterns, pos, .. } = e {
         for p in patterns {
             if let Pattern::Var { name, name_pos, .. } = p {
                 out.push(DeclInfo {
@@ -441,6 +515,9 @@ fn collect_local_decls_expr(e: &Expr, out: &mut Vec<DeclInfo>) {
                     kind: DeclKind::Var,
                     line: name_pos.line,
                     col: name_pos.col,
+                    // the `let`/`var` keyword starts the statement
+                    start_line: pos.line,
+                    start_col: pos.col,
                     is_type_ctor: false,
                 });
             }
@@ -488,9 +565,13 @@ fn collect_unused_params(d: &Decl, enclosing: Option<&str>, diags: &mut Vec<Diag
                 for p in params {
                     if !body_refs.names.contains(&p.name) && !body_refs.members.contains(&p.name) {
                         diags.push(unused_diag(
+                            FixKind::Param,
+                            "Parameter",
+                            &p.name,
                             p.pos.line,
                             p.pos.col,
-                            format!("Parameter '{}' is declared but never used", p.name),
+                            p.pos.line,
+                            p.pos.col,
                         ));
                     }
                 }
@@ -671,16 +752,39 @@ pub fn collect_decl_refs(d: &Decl, refs: &mut Refs) {
     }
 }
 
-fn unused_diag(line: u32, col: u32, message: String) -> Diag {
+/// Build an unused-declaration diagnostic: severity Hint, tagged `Unnecessary`
+/// (LSP tags `[1]`), and a `quickfix.removeUnusedSymbol` code action whose
+/// deletion range the LSP server computes from the source text (given the
+/// declaration start position `start_line`/`start_col`).
+#[allow(clippy::too_many_arguments)]
+fn unused_diag(
+    kind: FixKind,
+    label: &str,
+    name: &str,
+    line: u32,
+    col: u32,
+    start_line: u32,
+    start_col: u32,
+) -> Diag {
+    // The diagnostic span covers the whole identifier (official cjlsp:
+    // `range.end = start + name length`), not a single character.
+    let end_col = col + name.chars().count() as u32;
     Diag {
         severity: Severity::Hint,
-        message,
+        message: format!("{label} '{name}' is declared but never used"),
         line,
         col,
         end_line: line,
-        end_col: col,
+        end_col,
         here: None,
         notes: Vec::new(),
+        tags: vec![1],
+        fix: Some(DiagFix {
+            title: format!("Remove unused {} '{name}'", fix_title_noun(kind)),
+            kind,
+            start_line,
+            start_col,
+        }),
     }
 }
 

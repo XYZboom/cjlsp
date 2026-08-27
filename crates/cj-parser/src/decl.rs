@@ -62,7 +62,8 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
         // class-like body. Official reports it as an unused *function*.
         k if k.is_name_like() && is_member && p.peek_ahead(1) == TokenKind::LPAREN => {
             p.advance();
-            let params = parse_param_list(p);
+            let mut params = parse_param_list(p);
+            parse_extra_param_lists(p, &mut params);
             let body = parse_body(p);
             Some(Decl::Func {
                 name: tok.text.clone(),
@@ -80,7 +81,8 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
         TokenKind::BITNOT if is_member && p.peek_ahead(1) == TokenKind::INIT => {
             p.advance(); // ~
             p.advance(); // init
-            let params = parse_param_list(p);
+            let mut params = parse_param_list(p);
+            parse_extra_param_lists(p, &mut params);
             let body = parse_body(p);
             Some(Decl::Func {
                 name: "~init".to_string(),
@@ -114,7 +116,8 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
                 }
             };
             let type_params = parse_type_params(p);
-            let params = parse_param_list(p);
+            let mut params = parse_param_list(p);
+            parse_extra_param_lists(p, &mut params);
             // return type after `:`
             let ret = if p.eat(TokenKind::COLON) {
                 Some(parse_type(p))
@@ -375,6 +378,19 @@ fn looks_like_type_param_list(p: &Parser) -> bool {
         && matches!(p.peek_ahead(2), TokenKind::GT | TokenKind::COMMA)
 }
 
+/// Parse a rejected second parameter list: `func f(a: T)(b: U)` is invalid in
+/// Cangjie, but the official parser reports `expected '{', found '('` and then
+/// recovers by parsing `(...)` as more params so they stay analyzable for
+/// later diagnostics (diagnostics_022: `Parameter 's'`).
+fn parse_extra_param_lists(p: &mut Parser, params: &mut Vec<Param>) {
+    while p.at(TokenKind::LPAREN) {
+        let l = p.peek_token().clone();
+        let found = crate::token_display_text(&l);
+        p.error_id(&l, cj_diag::DiagId::PARSE_EXPECTED_LEFT_BRACE, &[&found]);
+        params.extend(parse_param_list(p));
+    }
+}
+
 fn parse_param_list(p: &mut Parser) -> Vec<Param> {
     let mut out = Vec::new();
     let _ = p.expect(TokenKind::LPAREN);
@@ -404,7 +420,24 @@ fn parse_param_list(p: &mut Parser) -> Vec<Param> {
             let is_named = p.eat(TokenKind::NOT);
             let _ = p.expect(TokenKind::COLON);
             let ty = parse_type(p);
-            let default = None;
+            // Default value: `name: T = expr`. Legal only on named params
+            // (`a!:`); on positional ones the official parser reports
+            // `expected ',' or ')', found '='` but still parses the default
+            // so the following params stay analyzable (diagnostics_021).
+            let mut default = None;
+            if p.at(TokenKind::ASSIGN) {
+                let eq_tok = p.peek_token().clone();
+                if !is_named {
+                    let found = crate::token_display_text(&eq_tok);
+                    p.error_id(
+                        &eq_tok,
+                        cj_diag::DiagId::PARSE_EXPECTED_DOT_LPAREN,
+                        &[&found],
+                    );
+                }
+                p.advance();
+                default = Some(parse_expr_prec(p, 0));
+            }
             out.push(Param {
                 name: name_tok.text.clone(),
                 is_named,

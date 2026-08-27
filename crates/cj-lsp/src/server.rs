@@ -1,5 +1,7 @@
 // cj-lsp: LSP server state machine + diagnostics pipeline.
 
+use cj_diag::{DiagFix, FixKind};
+use cj_lexer::TokenKind;
 use cj_sema::FuncSig;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -162,12 +164,12 @@ impl LspServer {
             // still produce package-name diagnostics (diag_001).
             match fs::read_to_string(path) {
                 Ok(s) if !s.is_empty() => {
-                    analyze_source(&s, project_root.as_deref(), expected.as_deref())
+                    analyze_source(&s, project_root.as_deref(), expected.as_deref(), uri)
                 }
-                _ => analyze_source("", project_root.as_deref(), expected.as_deref()),
+                _ => analyze_source("", project_root.as_deref(), expected.as_deref(), uri),
             }
         } else {
-            analyze_source(text, project_root.as_deref(), expected.as_deref())
+            analyze_source(text, project_root.as_deref(), expected.as_deref(), uri)
         };
         let msg = json!({
             "jsonrpc": "2.0",
@@ -342,8 +344,17 @@ fn apply_incremental_change(text: &mut String, range: &Value, new_text: &str) {
 ///
 /// `project_root` — the resolved project root (for cross-file function
 /// signature collection); `expected` — the package name derived from the
-/// file's URI (pass `None` when it cannot be inferred); drives package checks.
-fn analyze_source(src: &str, project_root: Option<&Path>, expected: Option<&str>) -> Vec<Value> {
+/// file's URI (pass `None` when it cannot be inferred); `uri` — the file's
+/// LSP URI, used as the `changes` target of unused-symbol code actions.
+fn analyze_source(
+    src: &str,
+    project_root: Option<&Path>,
+    expected: Option<&str>,
+    uri: &str,
+) -> Vec<Value> {
+    // Tokens for quickfix deletion-range computation. Strings/comments are
+    // already handled by the lexer, so brace/paren matching below is safe.
+    let toks = cj_lexer::Lexer::new(src).tokenize();
     let mut parser = cj_parser::Parser::new(src, cj_lexer::Lexer::new(src).tokenize());
     let file = parser.run();
 
@@ -394,19 +405,62 @@ fn analyze_source(src: &str, project_root: Option<&Path>, expected: Option<&str>
         } else {
             d.col + 1
         };
-        out.push(json!({
-            "category": null,
-            "code": null,
-            "codeActions": null,
-            "range": {
-                "start": {"line": d.line.saturating_sub(1), "character": d.col.saturating_sub(1)},
-                "end": {"line": d.end_line.saturating_sub(1), "character": end_col.saturating_sub(1)}
-            },
-            "severity": severity,
-            "message": d.message,
-            "source": "Cangjie",
-            "data": {"codeActions": null}
-        }));
+        // Unused-declaration diagnostics carry `tags: [Unnecessary]` plus a
+        // `quickfix.removeUnusedSymbol` code action deleting the declaration.
+        // The official key set for these is `code/codeActions/data/message/
+        // range/severity/source/tags` — note there is NO `category` key, and
+        // `code` is 0. Other diagnostics keep the plain shape below.
+        if let Some(fix) = &d.fix {
+            let (ca, data) = match compute_remove_range(src, &toks, fix) {
+                Some(((sl, sc), (el, ec))) => {
+                    let ca = json!([{
+                        "edit": {
+                            "changes": {
+                                uri: [{
+                                    "newText": "",
+                                    "range": {
+                                        "start": {"line": sl, "character": sc},
+                                        "end": {"line": el, "character": ec}
+                                    }
+                                }]
+                            }
+                        },
+                        "kind": "quickfix.removeUnusedSymbol",
+                        "title": fix.title,
+                    }]);
+                    let cloned = ca.clone();
+                    (cloned, json!({"codeActions": ca}))
+                }
+                None => (Value::Null, Value::Null),
+            };
+            out.push(json!({
+                "code": 0,
+                "codeActions": ca,
+                "data": data,
+                "message": d.message,
+                "range": {
+                    "start": {"line": d.line.saturating_sub(1), "character": d.col.saturating_sub(1)},
+                    "end": {"line": d.end_line.saturating_sub(1), "character": end_col.saturating_sub(1)}
+                },
+                "severity": severity,
+                "source": "Cangjie",
+                "tags": if d.tags.is_empty() { Value::Null } else { json!(d.tags) },
+            }));
+        } else {
+            out.push(json!({
+                "category": null,
+                "code": null,
+                "codeActions": null,
+                "range": {
+                    "start": {"line": d.line.saturating_sub(1), "character": d.col.saturating_sub(1)},
+                    "end": {"line": d.end_line.saturating_sub(1), "character": end_col.saturating_sub(1)}
+                },
+                "severity": severity,
+                "message": d.message,
+                "source": "Cangjie",
+                "data": {"codeActions": null}
+            }));
+        }
     };
     for d in parser
         .diags
@@ -424,4 +478,235 @@ fn analyze_source(src: &str, project_root: Option<&Path>, expected: Option<&str>
         push(d);
     }
     out
+}
+
+/// Whether `kind` is a declaration modifier that can precede the decl keyword
+/// (`open class C`, `public static func f`) — included in the deletion range.
+fn is_decl_modifier(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::PUBLIC
+            | TokenKind::PRIVATE
+            | TokenKind::PROTECTED
+            | TokenKind::INTERNAL
+            | TokenKind::STATIC
+            | TokenKind::ABSTRACT
+            | TokenKind::OPEN
+            | TokenKind::SEALED
+            | TokenKind::MUT
+            | TokenKind::OPERATOR
+    )
+}
+
+/// Index of the first token of a declaration: walk backward from the decl
+/// keyword (at `kw_idx`) over modifier tokens, so the removal range covers
+/// `public static func f` from `public`, not from `func`.
+fn decl_start_index(toks: &[cj_lexer::Token], kw_idx: usize) -> usize {
+    let mut i = kw_idx;
+    while i > 0 && is_decl_modifier(toks[i - 1].kind) {
+        i -= 1;
+    }
+    i
+}
+
+/// Convert a byte offset to an LSP 0-based (line, character) position.
+/// `character` counts Unicode scalar values (matches the lexer's columns).
+fn offset_to_lsp_pos(src: &str, off: usize) -> (u32, u32) {
+    let off = off.min(src.len());
+    let mut line = 0u32;
+    let mut line_start = 0usize;
+    for (i, b) in src.bytes().enumerate().take(off) {
+        if b == b'\n' {
+            line += 1;
+            line_start = i + 1;
+        }
+    }
+    let char_count = src[line_start..off].chars().count() as u32;
+    (line, char_count)
+}
+
+/// Deletion range of an unused *parameter*: from the name, extended over the
+/// marker/type/default plus one adjacent comma with surrounding whitespace,
+/// matching the official cjlsp output:
+///   `a:Int8,` / `,b: Bool` / `a: Int64 = 1, ` / `b!: Float64 = 1.0`
+/// The first param claims the trailing comma (+ following whitespace); a
+/// non-first param without a default claims the leading comma (+ preceding
+/// whitespace); params with a default value claim no comma. Type scanning
+/// stops at `,`/`)` at depth 0, so generic/tuple types stay whole.
+fn param_range(
+    toks: &[cj_lexer::Token],
+    src: &str,
+    name_idx: usize,
+) -> Option<((u32, u32), (u32, u32))> {
+    let name = &toks[name_idx];
+    let bytes = src.as_bytes();
+
+    // Is this the first param of the list? (previous non-NL/COMMENT token is `(`.)
+    let is_first = toks[..name_idx]
+        .iter()
+        .rev()
+        .find(|t| !matches!(t.kind, TokenKind::NL | TokenKind::COMMENT))
+        .is_none_or(|t| t.kind == TokenKind::LPAREN);
+
+    // Walk the `!` marker, `: type`, and an optional `= default` expression.
+    let mut i = name_idx + 1;
+    if toks.get(i).is_some_and(|t| t.kind == TokenKind::NOT) {
+        i += 1;
+    }
+    if toks.get(i).is_some_and(|t| t.kind == TokenKind::COLON) {
+        i += 1;
+    }
+    let mut depth = 0i32;
+    let mut has_default = false;
+    let mut end_off = name.end.offset;
+    while let Some(t) = toks.get(i) {
+        let boundary = depth == 0 && matches!(t.kind, TokenKind::COMMA | TokenKind::RPAREN);
+        if boundary {
+            break;
+        }
+        if depth == 0 && t.kind == TokenKind::ASSIGN {
+            has_default = true;
+        }
+        match t.kind {
+            TokenKind::LPAREN | TokenKind::LSQUARE | TokenKind::LT => depth += 1,
+            TokenKind::RPAREN | TokenKind::RSQUARE | TokenKind::GT => depth = (depth - 1).max(0),
+            _ => {}
+        }
+        end_off = t.end.offset;
+        i += 1;
+    }
+
+    // Start: extend LEFT over whitespace and a preceding comma for non-first
+    // params without a default (`, b: Bool`).
+    let mut start_off = name.begin.offset;
+    if !is_first && !has_default {
+        let mut s = start_off;
+        while s > 0 && matches!(bytes[s - 1], b' ' | b'\t' | b'\r') {
+            s -= 1;
+        }
+        if s > 0 && bytes[s - 1] == b',' {
+            start_off = s - 1;
+        }
+    }
+
+    // End: extend RIGHT over a following comma + whitespace for the first
+    // param (`a: Int8, `).
+    if is_first {
+        let mut e = end_off;
+        while e < bytes.len() && matches!(bytes[e], b' ' | b'\t' | b'\r') {
+            e += 1;
+        }
+        if e < bytes.len() && bytes[e] == b',' {
+            e += 1;
+            while e < bytes.len() && matches!(bytes[e], b' ' | b'\t' | b'\r') {
+                e += 1;
+            }
+            end_off = e;
+        }
+    }
+
+    Some((
+        offset_to_lsp_pos(src, start_off),
+        offset_to_lsp_pos(src, end_off),
+    ))
+}
+
+/// End of a single-line `let`/`var` statement: the last token before the next
+/// newline/semicolon/closing-brace at depth 0 (multi-line inits stay whole via
+/// paren/bracket/brace depth tracking).
+fn var_end(toks: &[cj_lexer::Token], start_idx: usize) -> Option<&cj_lexer::Token> {
+    let mut depth = 0i32;
+    let mut last: Option<&cj_lexer::Token> = None;
+    for t in toks.iter().skip(start_idx + 1) {
+        match t.kind {
+            TokenKind::NL | TokenKind::SEMI => {
+                if depth == 0 {
+                    return last;
+                }
+            }
+            TokenKind::RCURL if depth == 0 => return last,
+            TokenKind::LPAREN | TokenKind::LSQUARE | TokenKind::LCURL => {
+                depth += 1;
+                last = Some(t);
+            }
+            TokenKind::RPAREN | TokenKind::RSQUARE | TokenKind::RCURL => {
+                depth = (depth - 1).max(0);
+                last = Some(t);
+            }
+            _ => last = Some(t),
+        }
+    }
+    last
+}
+
+/// The closing brace of a braced declaration: find the body `{` (the first
+/// `{` at paren/bracket depth 0 after the decl start — param lists, parent
+/// types and generic args are skipped), then match `}` by brace depth.
+fn braced_end(toks: &[cj_lexer::Token], start_idx: usize) -> Option<&cj_lexer::Token> {
+    let mut paren = 0i32;
+    let mut i = start_idx + 1;
+    let mut body: Option<usize> = None;
+    while let Some(t) = toks.get(i) {
+        match t.kind {
+            TokenKind::LCURL if paren == 0 => {
+                body = Some(i);
+                break;
+            }
+            TokenKind::LPAREN | TokenKind::LSQUARE => paren += 1,
+            TokenKind::RPAREN | TokenKind::RSQUARE => paren = (paren - 1).max(0),
+            _ => {}
+        }
+        i += 1;
+    }
+    let body = body?;
+    let mut brace = 1i32;
+    for t in toks.iter().skip(body + 1) {
+        match t.kind {
+            TokenKind::LCURL => brace += 1,
+            TokenKind::RCURL => {
+                brace -= 1;
+                if brace == 0 {
+                    return Some(t);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Compute the LSP 0-based deletion range `(start, end)` of an unused-symbol
+/// quickfix from the source text + tokens. The fix's `start_line`/`start_col`
+/// anchor the declaration keyword/name; the end depends on the fix kind.
+fn compute_remove_range(
+    src: &str,
+    toks: &[cj_lexer::Token],
+    fix: &DiagFix,
+) -> Option<((u32, u32), (u32, u32))> {
+    let start_off = lsp_pos_to_byte(
+        src,
+        fix.start_line.saturating_sub(1),
+        fix.start_col.saturating_sub(1),
+    );
+    let kw_idx = toks.iter().position(|t| t.begin.offset == start_off)?;
+    match fix.kind {
+        FixKind::Param => param_range(toks, src, kw_idx),
+        _ => {
+            let start_idx = decl_start_index(toks, kw_idx);
+            let start = &toks[start_idx];
+            let s = (
+                start.begin.line.saturating_sub(1),
+                start.begin.column.saturating_sub(1),
+            );
+            let end_tok = match fix.kind {
+                FixKind::Var => var_end(toks, start_idx)?,
+                _ => braced_end(toks, start_idx)?,
+            };
+            let e = (
+                end_tok.end.line.saturating_sub(1),
+                end_tok.end.column.saturating_sub(1),
+            );
+            Some((s, e))
+        }
+    }
 }

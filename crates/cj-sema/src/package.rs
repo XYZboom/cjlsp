@@ -70,6 +70,8 @@ pub fn check_package(file: &File, expected: Option<&str>) -> Vec<Diag> {
                 end_col: pos.end_col,
                 here: None,
                 notes: Vec::new(),
+                tags: Vec::new(),
+                fix: None,
             });
         }
 

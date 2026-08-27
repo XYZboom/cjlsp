@@ -934,7 +934,7 @@ mod tests {
         // `0x1.` as float and `foo` separately. We refine in M1-iteration 2.
         let t = kinds("0x1.foo");
         // Current behavior: [FLOAT_LITERAL] consuming "0x1.foo"; refinement pending.
-        assert!(t.len() >= 1);
+        assert!(!t.is_empty());
     }
 
     #[test]

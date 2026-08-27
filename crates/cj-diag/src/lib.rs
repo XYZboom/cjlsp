@@ -39,6 +39,36 @@ impl Severity {
     }
 }
 
+/// What kind of declaration an unused-symbol quickfix deletes. Drives the
+/// source-text computation of the deletion range in the LSP server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixKind {
+    /// `func` with a braced body (incl. `main`, finalizer `~init`)
+    Func,
+    Class,
+    Interface,
+    Struct,
+    Enum,
+    /// `let`/`var` — top-level, member or local statement (single-line)
+    Var,
+    /// a function parameter (range covers name + type + adjacent comma)
+    Param,
+    /// type-named constructor inside a class-like body (title is "symbol")
+    Symbol,
+}
+
+/// A quickfix attached to a diagnostic (official: `quickfix.removeUnusedSymbol`).
+/// The LSP server fills in the concrete deletion range from the source text.
+#[derive(Debug, Clone)]
+pub struct DiagFix {
+    pub title: String,
+    pub kind: FixKind,
+    /// 1-based start of the declaration (keyword/name; incl. any modifiers —
+    /// the server extends backward over modifier tokens when needed).
+    pub start_line: u32,
+    pub start_col: u32,
+}
+
 /// A single diagnostic message with an optional source range.
 #[derive(Debug, Clone)]
 pub struct Diag {
@@ -54,6 +84,10 @@ pub struct Diag {
     pub here: Option<String>,
     /// Notes appended under the caret block (# note: ...).
     pub notes: Vec<String>,
+    /// LSP DiagnosticTag values (1 = Unnecessary); empty for non-tagged diags.
+    pub tags: Vec<i32>,
+    /// Optional quickfix (unused-symbol removal) the editor can apply.
+    pub fix: Option<DiagFix>,
 }
 
 impl Diag {
@@ -67,6 +101,8 @@ impl Diag {
             end_col: col,
             here: None,
             notes: Vec::new(),
+            tags: Vec::new(),
+            fix: None,
         }
     }
 
@@ -80,6 +116,8 @@ impl Diag {
             end_col: col,
             here: None,
             notes: Vec::new(),
+            tags: Vec::new(),
+            fix: None,
         }
     }
 

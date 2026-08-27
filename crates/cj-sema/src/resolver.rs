@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn unresolved_identifier() {
         let (file, _) = parse_source("func f() { let z = z }");
-        let mut pkg = PackageTable::default();
+        let pkg = PackageTable::default();
         let r = Resolver::new(&pkg);
         let mut file_resolver = r;
         file_resolver.resolve_file(&file);
