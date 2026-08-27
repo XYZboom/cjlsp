@@ -806,11 +806,7 @@ pub enum Decl {
     Var {
         /// variable name
         name: String,
-<<<<<<< HEAD
-        /// position of the binding name token
-=======
         /// position of the variable name token
->>>>>>> wt/t3-unused-members
         name_pos: CodePos,
         /// var vs let
         is_mutable: bool,
