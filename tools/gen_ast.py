@@ -216,7 +216,9 @@ FIELDS: dict[str, list[tuple[str, str, str]]] = {
     # ---- Patterns ----
     "VAR_PATTERN": [
         ("name", "String", "binding name"),
+        ("name_pos", "CodePos", "position of the binding name token"),
         ("is_mutable", "bool", "mut modifier"),
+        ("ty", "Option<Type>", "optional type annotation (e.g. `let x: Int64 = ...`)"),
     ],
     "CONST_PATTERN": [("literal", "Option<Box<Expr>>", "literal constant (ConstPattern.literal)")],
     "TUPLE_PATTERN": [("elements", "Vec<Pattern>", "tuple elements")],

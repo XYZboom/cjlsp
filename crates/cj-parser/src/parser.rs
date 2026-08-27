@@ -302,6 +302,9 @@ pub fn token_display_text(t: &Token) -> String {
     match t.kind {
         TokenKind::END => "'<EOF>'".to_string(),
         TokenKind::NL => "'<NL>'".to_string(),
+        // Official TOKEN(ILLEGAL, "illegal", "", 0) — ConvertToken renders it
+        // as `''` (empty quoted string), e.g. the package-name diag in 007.
+        TokenKind::ILLEGAL => "''".to_string(),
         TokenKind::INTEGER_LITERAL | TokenKind::FLOAT_LITERAL => {
             format!("literal '{}'", t.text)
         }
@@ -334,8 +337,50 @@ impl<'a> Parser<'a> {
         if self.at(TokenKind::PACKAGE) {
             let pkg_tok = self.advance();
             let (name, name_pos) = self.parse_package_name();
-            package = Some(name);
-            package_pos = Some(name_pos);
+            match name {
+                Some(n) => {
+                    package = Some(n);
+                    package_pos = Some(name_pos);
+                    // official ParsePackageHeaderEnd: the package header must be
+                    // terminated by `;` or `<NL>` (comments/EOF are fine too).
+                    // peek() skips NL, so scan the raw token stream here.
+                    let mut i = self.pos;
+                    let mut term_ok = false;
+                    while i < self.tokens.len() {
+                        match self.tokens[i].kind {
+                            TokenKind::COMMENT => i += 1,
+                            TokenKind::NL | TokenKind::SEMI | TokenKind::END => {
+                                term_ok = true;
+                                break;
+                            }
+                            _ => break,
+                        }
+                    }
+                    if !term_ok && self.pos < self.tokens.len() {
+                        let t = self.peek_token().clone();
+                        let found = crate::token_display_text(&t);
+                        self.error_id(
+                            &t,
+                            cj_diag::DiagId::PARSE_EXPECTED_CHARACTER,
+                            &["';' or '<NL>'", &found],
+                        );
+                    }
+                }
+                None => {
+                    // official DiagExpectedIdentifierPackageSpec: `expected a
+                    // package name after keyword 'package', found ''`, then
+                    // consume the rest of the line (IS_BROKEN) so the garbage
+                    // does not cascade into top-level decl errors (007).
+                    let t = self.peek_token().clone();
+                    let found = crate::token_display_text(&t);
+                    self.error_id(
+                        &t,
+                        cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                        &["a package name", "after keyword 'package'", &found],
+                    );
+                    self.consume_until_nl();
+                }
+            }
             let _ = pkg_tok;
         }
 
@@ -411,7 +456,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_package_name(&mut self) -> (String, CodePos) {
+    fn parse_package_name(&mut self) -> (Option<String>, CodePos) {
         let mut parts = Vec::new();
         let mut first = None;
         let mut last_end = None;
@@ -435,6 +480,7 @@ impl<'a> Parser<'a> {
             // anchor at the current token, which sits where the name was expected.
             _ => self.cur_pos(),
         };
+        let name = if parts.is_empty() { None } else { Some(name) };
         (name, pos)
     }
 

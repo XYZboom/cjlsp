@@ -446,8 +446,15 @@ fn analyze_source(
 ) -> Vec<Value> {
     // Tokens for quickfix deletion-range computation. Strings/comments are
     // already handled by the lexer, so brace/paren matching below is safe.
-    let toks = cj_lexer::Lexer::new(src).tokenize();
-    let mut parser = cj_parser::Parser::new(src, cj_lexer::Lexer::new(src).tokenize());
+    // Lexer errors (number-suffix etc.) surface as diagnostics, matching the
+    // official pipeline (lexer runs before the parser).
+    let mut lexer = cj_lexer::Lexer::new(src);
+    let toks = lexer.tokenize();
+    let lex_diags: Vec<cj_diag::Diag> = std::mem::take(&mut lexer.errors)
+        .into_iter()
+        .map(|e| cj_diag::Diag::error(e.pos.line, e.pos.column, e.message))
+        .collect();
+    let mut parser = cj_parser::Parser::new(src, toks.clone());
     let file = parser.run();
 
     // Sema: collect + resolve + dep graph + package/import checks.
@@ -496,6 +503,7 @@ fn analyze_source(
     // came from the expansion — official cjc shows "the code after the macro
     // is expanded as follows" for these).
     let mut all_diags: Vec<cj_diag::Diag> = Vec::new();
+    all_diags.extend(lex_diags.iter().cloned());
     all_diags.extend(parser.diags.iter().cloned());
     all_diags.extend(sema_result.diags.iter().cloned());
     all_diags.extend(resolve_diags.iter().cloned());
@@ -593,7 +601,7 @@ fn analyze_source(
             out.push(obj);
         }
     };
-    for d in &all_diags {
+for d in &all_diags {
         push(d);
     }
     out
