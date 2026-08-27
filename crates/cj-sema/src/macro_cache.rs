@@ -25,9 +25,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// SDK root (set at build/test time; resolves via CANGJIE_HOME or default).
-fn sdk_root() -> PathBuf {
+pub(crate) fn sdk_root() -> PathBuf {
     if let Ok(home) = std::env::var("CANGJIE_HOME") {
-        return PathBuf::from(home);
+        let p = PathBuf::from(&home);
+        // The env var may point at a stale/deleted install (e.g. the old
+        // self-hosting SDK); only trust it if a compiler binary actually
+        // exists there, otherwise fall through to the project default.
+        if p.join("bin/cjc").exists() {
+            return p;
+        }
     }
     // Default: the SDK we installed for this project.
     PathBuf::from("/root/Code/cangjie/sdk/cangjie")
@@ -78,35 +84,42 @@ impl MacroCache {
     }
 
     /// Compile a macro package and cache the resulting .so keyed by source hash.
-    /// Returns the .so path. Reuses cached artifact when source unchanged,
-    /// otherwise invokes cjpm build via the SDK.
-    pub fn compile_macro_package(&mut self, pkg_dir: &Path) -> std::io::Result<PathBuf> {
+    /// Returns the .so path to dlopen plus the macro package's full name (e.g.
+    /// `macro_calling.define` — derived from the `lib-macro_<pkg>.so` filename,
+    /// needed to form the `macroCall_c_<name>_<pkg>` symbol). Reuses cached
+    /// artifacts when the source is unchanged, otherwise invokes cjpm build.
+    pub fn compile_macro_package(&mut self, pkg_dir: &Path) -> std::io::Result<(PathBuf, String)> {
+        // The original build artifact gives us the macro package full name.
+        let (_orig_so, pkg_name) = find_macro_so_and_pkg(pkg_dir)?;
         // Source hash = hash of all .cj files under pkg_dir.
         let src_hash = hash_package_sources(pkg_dir)?;
-        if let Some(so) = self.compiled.get(&src_hash) {
-            if so.exists() {
-                return Ok(so.clone());
-            }
-        }
 
         let cache_dir = sdk_root().join("..").join(".macro-cache");
         fs::create_dir_all(&cache_dir)?;
-        let so_name = format!("lib-macro-{}.so", src_hash);
-        let so_path = cache_dir.join(&so_name);
+        let cache_so = cache_dir.join(format!("lib-macro-{src_hash}.so"));
 
-        if so_path.exists() {
-            // Rebuilt by a previous process; still cache in-session.
-            self.compiled.insert(src_hash, so_path.clone());
-            return Ok(so_path);
+        // 1. Cross-session artifact: reuse the cached .so without rebuilding.
+        if cache_so.exists() {
+            self.compiled.insert(src_hash, cache_so.clone());
+            return Ok((cache_so, pkg_name));
+        }
+        // 2. In-session memo (a previous compile in this process).
+        if let Some(so) = self.compiled.get(&src_hash) {
+            if so.exists() {
+                return Ok((so.clone(), pkg_name));
+            }
         }
 
         // Compile: run cjpm in the package dir (source envsetup first).
         let root = sdk_root();
         let envsetup = root.join("envsetup.sh");
-        let shell_cmd = format!(
-            "source {} && cjpm build --output-type=dynamic 2>&1",
-            envsetup.display()
-        );
+        if !envsetup.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("SDK envsetup.sh not found at {}", envsetup.display()),
+            ));
+        }
+        let shell_cmd = format!("source {} && cjpm build 2>&1", envsetup.display());
         let _ = Command::new("bash")
             .arg("-c")
             .arg(&shell_cmd)
@@ -114,11 +127,11 @@ impl MacroCache {
             .output()?;
 
         // cjpm emits target/release/<pkg>/lib-*.so — locate it.
-        let so = find_macro_so(pkg_dir)?;
+        let (so, pkg_name) = find_macro_so_and_pkg(pkg_dir)?;
         // Copy into cache under content-hash name.
-        fs::copy(&so, &so_path)?;
-        self.compiled.insert(src_hash, so_path.clone());
-        Ok(so_path)
+        let _ = fs::copy(&so, &cache_so);
+        self.compiled.insert(src_hash, cache_so.clone());
+        Ok((cache_so, pkg_name))
     }
 
     /// Expand a macro call: (macro name, serialized args) -> expanded text,
@@ -182,7 +195,7 @@ fn collect_cj_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
 }
 
 /// Locate the macro .so cjpm produced under a package dir.
-fn find_macro_so(pkg_dir: &Path) -> std::io::Result<PathBuf> {
+pub(crate) fn find_macro_so(pkg_dir: &Path) -> std::io::Result<PathBuf> {
     let target = pkg_dir.join("target").join("release");
     for entry in fs::read_dir(target)? {
         let path = entry?.path();
@@ -190,7 +203,7 @@ fn find_macro_so(pkg_dir: &Path) -> std::io::Result<PathBuf> {
             for f in fs::read_dir(&path)? {
                 let p = f?.path();
                 let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name.starts_with("lib-macro-") && name.ends_with(".so") {
+                if name.starts_with("lib-macro_") && name.ends_with(".so") {
                     return Ok(p);
                 }
             }
@@ -200,6 +213,26 @@ fn find_macro_so(pkg_dir: &Path) -> std::io::Result<PathBuf> {
         std::io::ErrorKind::NotFound,
         format!("no macro .so under {}", pkg_dir.display()),
     ))
+}
+
+/// Locate the macro .so and derive the macro package's full name from its
+/// filename. cjpm emits `lib-macro_<module>.<pkg>.so`, so the pkg name is the
+/// filename with the `lib-macro_` prefix and `.so` suffix stripped. That name is
+/// what the exported symbol embeds (`macroCall_c_<Macro>_<pkg>` with `.`→`_`).
+fn find_macro_so_and_pkg(pkg_dir: &Path) -> std::io::Result<(PathBuf, String)> {
+    let so = find_macro_so(pkg_dir)?;
+    let name = so.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let pkg = name
+        .strip_prefix("lib-macro_")
+        .and_then(|n| n.strip_suffix(".so"))
+        .map(str::to_string)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("cannot derive macro package name from {name}"),
+            )
+        })?;
+    Ok((so, pkg))
 }
 
 #[cfg(test)]

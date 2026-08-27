@@ -10,4 +10,6 @@ cj-ast = { path = "../cj-ast" }
 cj-diag = { path = "../cj-diag" }
 cj-lexer = { path = "../cj-lexer" }
 cj-parser = { path = "../cj-parser" }
+libc = "0.2"
+libloading = "0.8"
 rayon = "1"

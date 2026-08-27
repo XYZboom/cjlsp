@@ -41,6 +41,9 @@ pub struct Expansion {
 /// Shared expansion context (avoids 8-arg function signatures).
 struct ExpandCtx<'a> {
     file_name: &'a str,
+    /// Macro definitions collected from this file (used by the quote-template
+    /// fallback when the compiled .so path is unavailable or fails).
+    defs: &'a HashMap<String, MacroDef>,
     cache: &'a mut crate::macro_cache::MacroCache,
     pkg_dir: Option<&'a std::path::Path>,
     expansions: &'a mut Vec<Expansion>,
@@ -296,8 +299,10 @@ pub fn expand_file_with_cache(
 ) -> (Vec<Expansion>, Vec<Diag>) {
     let mut expansions = Vec::new();
     let mut diags = Vec::new();
+    let defs = collect_macros(file);
     let mut ctx = ExpandCtx {
         file_name,
+        defs: &defs,
         cache,
         pkg_dir,
         expansions: &mut expansions,
@@ -377,16 +382,21 @@ fn expand_one_cached(name: &str, args: &[cj_ast::Tokenish], pos: &CodePos, ctx: 
     }
 
     // 2. Macro-package compile cache: if a package dir is available, compile
-    //    the macro package (cached by source hash) and note the .so. We don't
-    //    dlopen here (Tokens ABI is cjc-specific); the cache guarantees the
-    //    .so is up-to-date for a later external expansion pass. Record the
-    //    expansion as the generated text for previews.
+    //    the macro package (cached by source hash) and dlopen the resulting
+    //    .so to actually run `macroCall_c_*` (real expansion, spec Ch.14).
+    //    On any failure (no SDK, dlopen/dlsym miss, call error) we fall back
+    //    gracefully — template expansion if a def is available, else the
+    //    previous placeholder text — so the LSP never destabilizes.
     if let Some(dir) = ctx.pkg_dir {
-        if let Ok(so) = ctx.cache.compile_macro_package(dir) {
+        if let Ok((so, pkg_name)) = ctx.cache.compile_macro_package(dir) {
             let key = crate::macro_cache::MacroCache::expansion_key(name, &args_text(args));
-            let expanded = ctx.cache.expand_cached(&key, || {
-                format!("<macro {} compiled to {}>", name, so.display())
-            });
+            let expanded =
+                ctx.cache.expand_cached(&key, || {
+                    match crate::dylib::expand_macro_call(&so, name, &pkg_name, args) {
+                        Ok(tokens) => crate::dylib::tokens_to_text(&tokens),
+                        Err(e) => fallback_expansion(name, args, ctx.defs, &so, &e),
+                    }
+                });
             ctx.expansions.push(Expansion {
                 call_line: pos.line,
                 call_col: pos.col,
@@ -402,6 +412,29 @@ fn expand_one_cached(name: &str, args: &[cj_ast::Tokenish], pos: &CodePos, ctx: 
         pos.col,
         format!("unresolved macro '{name}'"),
     ));
+}
+
+/// Graceful fallback when the compiled .so cannot be invoked: template
+/// expansion via the macro's quote body (the pre-T11 behavior), else a
+/// placeholder noting the .so + failure. Never returns an unresolved diag —
+/// the caller has already decided this macro has a definition.
+fn fallback_expansion(
+    name: &str,
+    args: &[cj_ast::Tokenish],
+    defs: &HashMap<String, MacroDef>,
+    so: &std::path::Path,
+    err: &str,
+) -> String {
+    if let Some(def) = defs.get(name) {
+        let (out, _) = expand_user_macro(def, args);
+        if !out.is_empty() {
+            return out;
+        }
+    }
+    format!(
+        "<macro {name} compiled to {} (dlopen/expand failed: {err})>",
+        so.display()
+    )
 }
 
 fn args_text(args: &[cj_ast::Tokenish]) -> String {
