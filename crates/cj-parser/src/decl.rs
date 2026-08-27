@@ -16,6 +16,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
     let mut is_open = false;
     let mut is_sealed = false;
     let mut is_mutable = false;
+    let mut is_const = false;
     loop {
         match p.peek() {
             TokenKind::PUBLIC => {
@@ -43,6 +44,15 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             }
             TokenKind::MUT => {
                 is_mutable = true;
+                mods.push(p.advance());
+            }
+            // `const` prefix: const var / const func / const init (spec Ch.16)
+            TokenKind::CONST => {
+                is_const = true;
+                mods.push(p.advance());
+            }
+            // `operator func ...` — operator keyword precedes `func`
+            TokenKind::OPERATOR => {
                 mods.push(p.advance());
             }
             _ => break,
@@ -103,8 +113,23 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let name_tok = p.peek_token().clone();
             let name = match name_tok.kind {
                 k if k.is_name_like() => p.advance().text,
-                // operator overload names: `+`, `==`, `[]`, `()` etc.
-                k if k.operator_like() => p.advance().text,
+                // operator overload names: `+`, `==`, `[]`, `()` etc. The
+                // call/index operator names span both delimiters: `operator
+                // func [](...)` / `operator func ()(...)`.
+                k if k.operator_like() => {
+                    let t = p.advance();
+                    let close = match t.kind {
+                        TokenKind::LPAREN => Some(TokenKind::RPAREN),
+                        TokenKind::LSQUARE => Some(TokenKind::RSQUARE),
+                        _ => None,
+                    };
+                    if let Some(c) = close {
+                        if p.peek() == c {
+                            p.advance();
+                        }
+                    }
+                    t.text.clone()
+                }
                 _ => {
                     let found = crate::token_display_text(&name_tok);
                     p.error_id(
@@ -138,6 +163,8 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             } else {
                 None
             };
+            // generic constraints: `func foo<T>(a: T) where T <: C { ... }`
+            parse_where_clause(p);
             let body = parse_body(p);
             Some(Decl::Func {
                 name,
@@ -207,6 +234,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let type_params = parse_type_params(p);
             let parents = parse_parents(p);
             // class body { ... } or `:` inheritance then body
+            parse_where_clause(p);
             let members = if p.at(TokenKind::LCURL) || p.at(TokenKind::COLON) {
                 parse_class_body(p)
             } else {
@@ -230,6 +258,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let name_tok = p.expect_ident("struct name");
             let name = name_tok.text.clone();
             let type_params = parse_type_params(p);
+            parse_where_clause(p);
             let members = if p.at(TokenKind::LCURL) {
                 parse_class_body(p)
             } else {
@@ -250,6 +279,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let name_tok = p.expect_ident("enum name");
             let name = name_tok.text.clone();
             let type_params = parse_type_params(p);
+            parse_where_clause(p);
             let cases = parse_enum_cases(p);
             Some(Decl::Enum {
                 name,
@@ -266,6 +296,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let name = name_tok.text.clone();
             let type_params = parse_type_params(p);
             let parents = parse_parents(p);
+            parse_where_clause(p);
             let members = if p.at(TokenKind::LCURL) {
                 parse_class_body(p)
             } else {
@@ -283,7 +314,12 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
         }
         TokenKind::EXTEND => {
             p.advance();
+            // optional generic type params: `extend<U> A<U> {` / `extend<K> A<K>`
+            let _type_params = parse_type_params(p);
             let target = parse_type(p);
+            // optional parent types: `extend Int64 <: Eqq { ... }`
+            let _parents = parse_parents(p);
+            parse_where_clause(p);
             let members = parse_class_body(p);
             Some(Decl::Extend {
                 is_public,
@@ -311,6 +347,10 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let name = name_tok.text.clone();
             let _ = p.expect(TokenKind::COLON);
             let ty = parse_type(p);
+            // optional accessor block: `prop p: T { get() {...} set(v) {...} }`
+            if p.at(TokenKind::LCURL) {
+                parse_prop_accessors(p);
+            }
             Some(Decl::Prop {
                 name,
                 is_public,
@@ -360,6 +400,66 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             p.advance();
             Some(Decl::Package {
                 name,
+                pos: pos_of(&tok),
+            })
+        }
+        // Top-level macro invocation expanding to a declaration: `@M(...)`
+        TokenKind::AT | TokenKind::AT_EXCL => {
+            p.advance();
+            let name_tok = p.peek_token().clone();
+            if !name_tok.kind.is_name_like() {
+                // bare `@`/`@!` — let top-level recovery report it
+                return None;
+            }
+            let name = p.advance().text;
+            let mut args: Vec<cj_ast::Tokenish> = Vec::new();
+            if p.eat(TokenKind::LPAREN) {
+                while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+                    let a = p.advance();
+                    args.push(cj_ast::Tokenish {
+                        text: a.text.clone(),
+                        pos: pos_of(&a),
+                    });
+                }
+                let _ = p.expect(TokenKind::RPAREN);
+            } else if p.eat(TokenKind::LSQUARE) {
+                // annotation argument block: `@A[a < b, c >= d]`
+                while !p.at(TokenKind::RSQUARE) && !p.at(TokenKind::END) {
+                    let a = p.advance();
+                    args.push(cj_ast::Tokenish {
+                        text: a.text.clone(),
+                        pos: pos_of(&a),
+                    });
+                }
+                let _ = p.expect(TokenKind::RSQUARE);
+            }
+            Some(Decl::MacroExpand {
+                name,
+                args,
+                pos: pos_of(&tok),
+            })
+        }
+        // `const name = expr` / `const name: T = expr` — const variable
+        k if is_const && k.is_name_like() => {
+            let name_tok = p.advance();
+            let name = name_tok.text.clone();
+            let ty = if p.eat(TokenKind::COLON) {
+                Some(parse_type(p))
+            } else {
+                None
+            };
+            let init = if p.eat(TokenKind::ASSIGN) {
+                Some(parse_expr_prec(p, 0))
+            } else {
+                None
+            };
+            Some(Decl::Var {
+                name,
+                name_pos: pos_of(&name_tok),
+                is_mutable: false,
+                is_public,
+                ty,
+                init,
                 pos: pos_of(&tok),
             })
         }
@@ -417,6 +517,31 @@ fn parse_extra_param_lists(p: &mut Parser, params: &mut Vec<Param>) {
         // found token for the second param list: `expected '{', found (` (022).
         p.error_id(&l, cj_diag::DiagId::PARSE_EXPECTED_LEFT_BRACE, &["("]);
         params.extend(parse_param_list(p));
+    }
+}
+
+/// Parse a `where` clause (generic constraints), per spec Ch.09:
+/// `'where' identifier '<:' upperBounds (',' identifier '<:' upperBounds)*`,
+/// where upperBounds may chain with `&` (`T <: Comparable<T> & Seqence`).
+/// Constraints are consumed and discarded at the parser layer (sema checks
+/// them later); this only keeps the declaration from desyncing.
+fn parse_where_clause(p: &mut Parser) {
+    if !p.eat(TokenKind::WHERE) {
+        return;
+    }
+    loop {
+        // lower bound: a type variable name
+        if p.peek().is_name_like() {
+            p.advance();
+        }
+        let _ = p.expect(TokenKind::UPPERBOUND);
+        let _ = parse_type(p);
+        while p.eat(TokenKind::BITAND) {
+            let _ = parse_type(p);
+        }
+        if !p.eat(TokenKind::COMMA) {
+            break;
+        }
     }
 }
 
@@ -522,24 +647,79 @@ fn parse_body(p: &mut Parser) -> Body {
 
 fn parse_parents(p: &mut Parser) -> Vec<Type> {
     let mut out = Vec::new();
-    // `class A <: B, C` or `class A : B`
+    // `class A <: B, C` / `class A <: B & I1 & I2` (multiple interfaces
+    // separated by `&`, per official supertype-list grammar) / `class A : B`
     if p.at(TokenKind::UPPERBOUND) {
         p.advance();
         loop {
             out.push(parse_type(p));
-            if !p.eat(TokenKind::COMMA) {
+            // interface separator is `&`; `,` also accepted
+            if !p.eat(TokenKind::COMMA) && !p.eat(TokenKind::BITAND) {
                 break;
             }
         }
     } else if p.eat(TokenKind::COLON) {
         loop {
             out.push(parse_type(p));
-            if !p.eat(TokenKind::COMMA) {
+            if !p.eat(TokenKind::COMMA) && !p.eat(TokenKind::BITAND) {
                 break;
             }
         }
     }
     out
+}
+
+/// Consume a property accessor block: `prop p: T { get() {...} set(v) {...} }`
+/// or `prop p: T { init(v) {...} }`. The accessor keyword is a plain
+/// identifier (`get`/`set`); `init` is a keyword token. Bodies are parsed and
+/// discarded at the parser layer (the AST has no accessor nodes yet).
+fn parse_prop_accessors(p: &mut Parser) {
+    let _ = p.expect(TokenKind::LCURL);
+    while !p.at(TokenKind::RCURL) && !p.at(TokenKind::END) {
+        if p.eat(TokenKind::SEMI) {
+            continue;
+        }
+        // optional `mut` before the accessor name
+        if p.peek() == TokenKind::MUT
+            && (p.peek_ahead(1) == TokenKind::IDENTIFIER || p.peek_ahead(1) == TokenKind::INIT)
+        {
+            p.advance();
+        }
+        let k = p.peek();
+        let is_accessor = if k == TokenKind::IDENTIFIER {
+            let text = p.peek_token().text.as_str();
+            text == "get" || text == "set"
+        } else {
+            k == TokenKind::INIT
+        };
+        if !is_accessor {
+            break;
+        }
+        p.advance();
+        // accessor params: `get()` / `set(v)` / `set(value: Int64)` — the
+        // type annotation is optional, so use a lenient param list
+        if p.at(TokenKind::LPAREN) {
+            p.advance();
+            while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+                if p.peek().is_name_like() || p.peek() == TokenKind::WILDCARD {
+                    p.advance();
+                    if p.eat(TokenKind::COLON) {
+                        let _ = parse_type(p);
+                    }
+                } else {
+                    break;
+                }
+                if !p.eat(TokenKind::COMMA) {
+                    break;
+                }
+            }
+            let _ = p.expect(TokenKind::RPAREN);
+        }
+        if p.at(TokenKind::LCURL) {
+            let _ = parse_block_expr(p);
+        }
+    }
+    let _ = p.expect(TokenKind::RCURL);
 }
 
 fn parse_class_body(p: &mut Parser) -> Vec<Decl> {

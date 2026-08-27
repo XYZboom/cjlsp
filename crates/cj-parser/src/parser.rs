@@ -83,6 +83,30 @@ impl<'a> Parser<'a> {
         self.tokens.last().expect("END sentinel")
     }
 
+    /// Peek the first non-trivia token that is not an access modifier
+    /// (skipping `public`/`private`/`protected`/`internal`). Used to decide
+    /// whether a modifier is a prefix of an `import` declaration without
+    /// consuming it (the modifier may belong to the next declaration).
+    fn peek_past_import_modifiers(&self) -> TokenKind {
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            let k = self.tokens[i].kind;
+            if k == TokenKind::COMMENT || k == TokenKind::NL {
+                i += 1;
+                continue;
+            }
+            if matches!(
+                k,
+                TokenKind::PUBLIC | TokenKind::PRIVATE | TokenKind::PROTECTED | TokenKind::INTERNAL
+            ) {
+                i += 1;
+                continue;
+            }
+            return k;
+        }
+        TokenKind::END
+    }
+
     /// Consume and return the next non-trivia token.
     pub fn advance(&mut self) -> Token {
         let tok = self.peek_token().clone();
@@ -125,6 +149,23 @@ impl<'a> Parser<'a> {
             );
             tok
         }
+    }
+
+    /// Kind of the raw token at absolute index `i` (may be trivia). Returns
+    /// `END` past the end of the stream. Used by lookahead scanners that must
+    /// walk the raw token stream (e.g. generic-args / lambda detection).
+    pub(crate) fn raw_kind_at(&self, i: usize) -> TokenKind {
+        self.tokens.get(i).map(|t| t.kind).unwrap_or(TokenKind::END)
+    }
+
+    /// Absolute index of the next unconsumed token in the raw stream.
+    pub(crate) fn cursor(&self) -> usize {
+        self.pos
+    }
+
+    /// Total number of raw tokens (including trivia and END sentinel).
+    pub(crate) fn token_len(&self) -> usize {
+        self.tokens.len()
     }
 
     /// True if the next non-trivia token is `kind`.
@@ -384,10 +425,28 @@ impl<'a> Parser<'a> {
             let _ = pkg_tok;
         }
 
-        // imports (repeatable, terminated by a decl keyword)
-        while self.at(TokenKind::IMPORT) {
-            if let Some(imp) = self.parse_import() {
-                imports.push(imp);
+        // imports (repeatable, terminated by a decl keyword). The spec's
+        // importModifier is optional and defaults to private, so `internal
+        // import pkg.*` / `public import pkg.*` are legal — peek past access
+        // modifiers (without consuming them, in case the next decl starts with
+        // a modifier like `public class`) and only consume them when import
+        // really follows.
+        loop {
+            if self.peek_past_import_modifiers() == TokenKind::IMPORT {
+                while matches!(
+                    self.peek(),
+                    TokenKind::PUBLIC
+                        | TokenKind::PRIVATE
+                        | TokenKind::PROTECTED
+                        | TokenKind::INTERNAL
+                ) {
+                    self.advance();
+                }
+                if let Some(imp) = self.parse_import() {
+                    imports.push(imp);
+                }
+            } else {
+                break;
             }
         }
 
