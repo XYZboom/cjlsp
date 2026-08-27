@@ -32,7 +32,9 @@ from datetime import datetime
 
 BASE = "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp"
 LSP_TEST = os.path.join(BASE, "lsp_test.py")
-CFG = os.path.join(BASE, "lsp_config.txt")
+# Allow a worktree-local config override (parallel workers race on the shared
+# lsp_config.txt — point CFG at a private copy via CJLSP_CONFIG env).
+CFG = os.environ.get("CJLSP_CONFIG", os.path.join(BASE, "lsp_config.txt"))
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # cj-lang repo
 BASELINE_OUT = os.path.join(REPO, "tools", "feature_baseline.txt")
 RESULTS_ROOT = os.path.join(BASE, ".batch_results")
