@@ -42,6 +42,8 @@ pub fn detect_overload_conflicts(file: &File) -> Vec<Diag> {
                 end_col: *col,
                 here: None,
                 notes: Vec::new(),
+                tags: Vec::new(),
+                fix: None,
             });
         }
     }

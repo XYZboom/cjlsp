@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn parse_if_while() {
-        let (file, diags) = parse("func f() { if (x) { 1 } else { 2 } while (y) { 3 } }");
+        let (_file, diags) = parse("func f() { if (x) { 1 } else { 2 } while (y) { 3 } }");
         assert!(diags.is_empty(), "diags: {:?}", diags);
     }
 
