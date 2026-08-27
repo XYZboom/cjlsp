@@ -198,6 +198,10 @@ impl<'a> Lexer<'a> {
             b'`' => self.scan_backquoted(begin),
             b'\'' | b'"' => self.scan_rune_or_string(begin, c),
             b'#' => self.scan_hash(begin),
+            // Leading-dot float: `.` followed by a digit is a number
+            // (official ScanNumberOrDotPrefixSymbol). Anything else (.. / ... /
+            // member access) stays a symbol.
+            b'.' if self.peek2().is_some_and(|c| c.is_ascii_digit()) => self.scan_number(begin),
             _ => self.scan_symbol(begin),
         }
     }
@@ -288,147 +292,322 @@ impl<'a> Lexer<'a> {
         Token::new(TokenKind::IDENTIFIER, text.to_string(), begin, end)
     }
 
-    // ---- number literals ----
+// ---- number literals ----
 
     fn scan_number(&mut self, begin: Position) -> Token {
         let start = self.pos;
-        // Detect radix prefix
-        if self.peek() == Some(b'0') {
-            let p2 = self.peek2();
-            let base = match p2 {
-                Some(b'x') | Some(b'X') => Some(16),
-                Some(b'o') | Some(b'O') => Some(8),
-                Some(b'b') | Some(b'B') => Some(2),
-                _ => None,
-            };
-            if let Some(b) = base {
-                self.bump(); // 0
-                self.bump(); // x/o/b
-                let digits_start = self.pos;
-                while let Some(c) = self.peek() {
-                    let ok = match b {
-                        16 => c.is_ascii_hexdigit() || c == b'_',
-                        8 => (b'0'..=b'7').contains(&c) || c == b'_',
-                        2 => c == b'0' || c == b'1' || c == b'_',
-                        _ => false,
-                    };
-                    if ok {
-                        self.bump();
-                    } else {
-                        break;
-                    }
-                }
-                if self.pos == digits_start {
-                    self.errors.push(LexError {
-                        message: "expected digit after radix prefix".into(),
-                        pos: begin,
-                        is_warning: false,
-                    });
-                    let text = &self.src[start..self.pos];
-                    let end = self.cur_pos();
-                    return Token::new(TokenKind::ILLEGAL, text.to_string(), begin, end);
-                }
-                // hex float: 0x1.fp1 — requires BOTH a '.' followed by a hex digit
-                // AND a 'p' exponent to be a float. `0x1.foo` must roll back to `0x1`
-                // + `.` + `foo` (official: isFloat stays false without exponent,
-                // `!isFloat && hasDot` triggers rollback to DOT).
-                if b == 16 && self.peek() == Some(b'.') {
-                    let after_dot = self.peek2();
-                    if after_dot.is_some_and(|c| c.is_ascii_hexdigit()) {
-                        // Tentatively consume `.<hexdigits>`.
-                        let dot_pos = self.pos;
-                        self.bump(); // '.'
-                        while self
-                            .peek()
-                            .is_some_and(|c| c.is_ascii_hexdigit() || c == b'_')
-                        {
+        // Mirrors official `success`: once a diagnostic is emitted on this
+        // number, later secondary diagnostics are suppressed (ProcessDigits /
+        // ProcessNumberFloatSuffix gate on `success`).
+        let mut failed = false;
+        let mut is_float = false;
+        let mut token_kind = TokenKind::INTEGER_LITERAL;
+        let start_at_dot = self.peek() == Some(b'.');
+
+        // 1. Integer part (skipped for leading-dot floats like `.5`).
+        if !start_at_dot {
+            // Radix prefix (0x/0o/0b)
+            if self.peek() == Some(b'0') {
+                let p2 = self.peek2();
+                let base = match p2 {
+                    Some(b'x') | Some(b'X') => Some(16),
+                    Some(b'o') | Some(b'O') => Some(8),
+                    Some(b'b') | Some(b'B') => Some(2),
+                    _ => None,
+                };
+                if let Some(b) = base {
+                    self.bump(); // 0
+                    self.bump(); // x/o/b
+                    let digits_start = self.pos;
+                    while let Some(c) = self.peek() {
+                        let ok = match b {
+                            16 => c.is_ascii_hexdigit() || c == b'_',
+                            8 => (b'0'..=b'7').contains(&c) || c == b'_',
+                            2 => c == b'0' || c == b'1' || c == b'_',
+                            _ => false,
+                        };
+                        if ok {
                             self.bump();
+                        } else {
+                            break;
                         }
-                        // exponent p/P required for hex float
-                        if self.peek().is_some_and(|c| c == b'p' || c == b'P') {
-                            self.bump();
-                            if self.peek().is_some_and(|c| c == b'+' || c == b'-') {
+                    }
+                    if self.pos == digits_start {
+                        self.errors.push(LexError {
+                            message: "expected digit after radix prefix".into(),
+                            pos: begin,
+                            is_warning: false,
+                        });
+                        let text = &self.src[start..self.pos];
+                        let end = self.cur_pos();
+                        return Token::new(TokenKind::ILLEGAL, text.to_string(), begin, end);
+                    }
+                    // hex float: 0x1.fp1 — requires BOTH a '.' followed by a hex
+                    // digit AND a 'p' exponent to be a float. `0x1.foo` must roll
+                    // back to `0x1` + `.` + `foo` (official: isFloat stays false
+                    // without exponent, `!isFloat && hasDot` triggers rollback).
+                    if b == 16 && self.peek() == Some(b'.') {
+                        let after_dot = self.peek2();
+                        if after_dot.is_some_and(|c| c.is_ascii_hexdigit()) {
+                            // Tentatively consume `.<hexdigits>`.
+                            let dot_pos = self.pos;
+                            self.bump(); // '.'
+                            while self
+                                .peek()
+                                .is_some_and(|c| c.is_ascii_hexdigit() || c == b'_')
+                            {
                                 self.bump();
                             }
-                            while self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'_') {
+                            // exponent p/P required for hex float
+                            if self.peek().is_some_and(|c| c == b'p' || c == b'P') {
                                 self.bump();
+                                if self.peek().is_some_and(|c| c == b'+' || c == b'-') {
+                                    self.bump();
+                                }
+                                while self
+                                    .peek()
+                                    .is_some_and(|c| c.is_ascii_digit() || c == b'_')
+                                {
+                                    self.bump();
+                                }
+                                let text = &self.src[start..self.pos];
+                                let end = self.cur_pos();
+                                return Token::new(
+                                    TokenKind::FLOAT_LITERAL,
+                                    text.to_string(),
+                                    begin,
+                                    end,
+                                );
                             }
+                            // No exponent: official rolls back to DOT (token =
+                            // integer part only; `.xxx` lexed separately).
+                            let consumed = self.pos - dot_pos; // bytes consumed since '.'
+                            self.pos = dot_pos;
+                            self.col = self.col.saturating_sub(consumed as u32).max(1);
                             let text = &self.src[start..self.pos];
                             let end = self.cur_pos();
                             return Token::new(
-                                TokenKind::FLOAT_LITERAL,
+                                TokenKind::INTEGER_LITERAL,
                                 text.to_string(),
                                 begin,
                                 end,
                             );
                         }
-                        // No exponent: official rolls back to DOT (token = integer
-                        // part only; `.xxx` lexed separately).
-                        let consumed = self.pos - dot_pos; // bytes consumed since '.'
-                        self.pos = dot_pos;
-                        self.col = self.col.saturating_sub(consumed as u32).max(1);
-                        let text = &self.src[start..self.pos];
-                        let end = self.cur_pos();
-                        return Token::new(
-                            TokenKind::INTEGER_LITERAL,
-                            text.to_string(),
-                            begin,
-                            end,
-                        );
+                    }
+                    // Radix integers may carry an integer suffix (0xffu8) or a
+                    // stray unknown suffix (0xffzog) — official
+                    // ProcessIntegerSuffix / ProcessNumberFloatSuffix handle
+                    // both; absorb and diagnose.
+                    self.scan_number_suffix(false, &mut token_kind, &mut failed);
+                    let text = &self.src[start..self.pos];
+                    let end = self.cur_pos();
+                    return Token::new(token_kind, text.to_string(), begin, end);
+                }
+            }
+
+            // Decimal integer part (official ProcessDigits for DEC_BASE):
+            // digits/underscores; a hex digit in a decimal literal is an
+            // "unexpected digit"; `i`/`u` start an integer-type suffix; `e`/`E`
+            // and `p`/`P` break out for the exponent stage below.
+            loop {
+                match self.peek() {
+                    Some(b'0'..=b'9') | Some(b'_') => {
+                        self.bump();
+                    }
+                    Some(c)
+                        if c.is_ascii_alphabetic()
+                            && !matches!(c, b'e' | b'E' | b'f' | b'F' | b'p' | b'P') =>
+                    {
+                        if (b'a'..=b'f').contains(&c) || (b'A'..=b'F').contains(&c) {
+                            // Hex digit in a decimal literal: official
+                            // ProcessXdigit reports "unexpected digit '<c>'".
+                            if !failed {
+                                let pos = self.cur_pos();
+                                self.errors.push(LexError {
+                                    message: format!(
+                                        "unexpected digit '{}' in decimal, decimal may \
+                                         only contain digit within 0~9",
+                                        c as char
+                                    ),
+                                    pos,
+                                    is_warning: false,
+                                });
+                                failed = true;
+                            }
+                            self.bump();
+                        } else {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+        }
+
+        // 2. Fractional part: `.` followed by a digit is a float.
+        if self.peek() == Some(b'.') && self.peek2().is_some_and(|c| c.is_ascii_digit()) {
+            is_float = true;
+            token_kind = TokenKind::FLOAT_LITERAL;
+            self.bump(); // '.'
+            while self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'_') {
+                self.bump();
+            }
+        } else if self.peek() == Some(b'.') && !start_at_dot {
+            // `1.foo` / `1.` — integer then member access/range: official
+            // returns the integer token early (no fractional/suffix scan).
+            let text = &self.src[start..self.pos];
+            let end = self.cur_pos();
+            return Token::new(token_kind, text.to_string(), begin, end);
+        }
+
+        // 3. Exponent part: `e`/`E` is valid in decimal; `p`/`P` in decimal is
+        // "unexpected exponent part 'p__' in decimal" (official
+        // DiagUnexpectedExponentPart) but still switches the token to a float
+        // and consumes the exponent. `e` is only treated as an exponent when
+        // digits follow (matches the historical lexer behavior for `1e`).
+        if let Some(c) = self.peek() {
+            let exp = c.to_ascii_lowercase();
+            if exp == b'e' || exp == b'p' {
+                let can_exp = match self.peek2() {
+                    Some(b'+') | Some(b'-') => self.peek3().is_some_and(|c| c.is_ascii_digit()),
+                    Some(c2) => c2.is_ascii_digit(),
+                    None => false,
+                };
+                if can_exp || exp == b'p' {
+                    if exp == b'p' && !failed {
+                        let pos = self.cur_pos();
+                        self.errors.push(LexError {
+                            message: "unexpected exponent part 'p__' in decimal".into(),
+                            pos,
+                            is_warning: false,
+                        });
+                        failed = true;
+                    }
+                    is_float = true;
+                    token_kind = TokenKind::FLOAT_LITERAL;
+                    self.bump(); // e/p
+                    if self.peek().is_some_and(|c| c == b'+' || c == b'-') {
+                        self.bump();
+                    }
+                    while self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'_') {
+                        self.bump();
                     }
                 }
-                let text = &self.src[start..self.pos];
-                let end = self.cur_pos();
-                return Token::new(TokenKind::INTEGER_LITERAL, text.to_string(), begin, end);
             }
         }
 
-        // Decimal integer or float
-        let mut is_float = false;
-        while self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'_') {
-            self.bump();
-        }
-        if self.peek() == Some(b'.') {
-            // Only treat as float if followed by a digit (else `1.foo` = int 1 + member access)
-            let nxt = self.peek2();
-            if nxt.is_some_and(|c| c.is_ascii_digit()) {
-                is_float = true;
-                self.bump();
-                while self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'_') {
-                    self.bump();
-                }
-            }
-        }
-        // exponent
-        if self.peek().is_some_and(|c| c == b'e' || c == b'E') {
-            // Only if followed by digit or sign+digit
-            let nxt = self.peek2();
-            let can_exp = match nxt {
-                Some(b'+') | Some(b'-') => self.peek3().is_some_and(|c| c.is_ascii_digit()),
-                Some(c) => c.is_ascii_digit(),
-                None => false,
-            };
-            if can_exp {
-                is_float = true;
-                self.bump(); // e
-                if self.peek().is_some_and(|c| c == b'+' || c == b'-') {
-                    self.bump();
-                }
-                while self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'_') {
-                    self.bump();
-                }
-            }
-        }
+        // 4. Suffix scan (official ProcessNumberFloatSuffix): always absorb a
+        // trailing identifier-ish run into the token; diagnose only if no prior
+        // error was reported on this number.
+        self.scan_number_suffix(is_float, &mut token_kind, &mut failed);
+
         let text = &self.src[start..self.pos];
         let end = self.cur_pos();
-        let kind = if is_float {
-            TokenKind::FLOAT_LITERAL
-        } else {
-            TokenKind::INTEGER_LITERAL
-        };
-        Token::new(kind, text.to_string(), begin, end)
+        Token::new(token_kind, text.to_string(), begin, end)
     }
 
+    /// Absorb a trailing identifier-ish run after a number and diagnose an
+    /// invalid suffix (official ProcessNumberFloatSuffix / ProcessIntegerSuffix).
+    /// The run is ALWAYS consumed into the token; diagnostics are gated by
+    /// `failed` (official `success`).
+    ///
+    ///   `1f32`/`1.5f64`            -> valid float suffix
+    ///   `1foo`/`1.5bar`            -> illegal float number suffix 'foo'
+    ///   `1u8`/`1i64` (non-float)   -> valid integer suffix
+    ///   `1iagnosticsTest`          -> illegal integer suffix 'iagnosticsTest'
+    ///   `1var0052`                 -> unknown suffix 'var0052'
+    fn scan_number_suffix(&mut self, is_float: bool, token_kind: &mut TokenKind, failed: &mut bool) {
+        let sstart = self.cur_pos();
+        // f: float type suffix (official ProcessFloatSuffix).
+        if self.peek() == Some(b'f') {
+            let mut run = String::new();
+            while let Some(c) = self.peek() {
+                if c.is_ascii_alphanumeric() {
+                    run.push(c as char);
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+            if matches!(run.as_str(), "f16" | "f32" | "f64") {
+                *token_kind = TokenKind::FLOAT_LITERAL;
+            } else {
+                // Official ProcessFloatSuffix is not gated by `success`.
+                self.errors.push(LexError {
+                    message: format!(
+                        "illegal float number suffix '{run}', float literal type \
+                         suffix can only be 'f16', 'f32', 'f64'"
+                    ),
+                    pos: sstart,
+                    is_warning: false,
+                });
+                *failed = true;
+                *token_kind = TokenKind::ILLEGAL;
+            }
+            return;
+        }
+        // Generic trailing run (alnum / underscore; stop at a '.' that begins a
+        // member access or a range).
+        if !self.peek().is_some_and(|c| c.is_ascii_alphanumeric() || c == b'_') {
+            return;
+        }
+        let mut run_len = 0usize;
+        while let Some(c) = self.peek() {
+            if c == b'.' {
+                if self.peek2() == Some(b'.')
+                    || self
+                        .peek2()
+                        .is_some_and(|c2| c2.is_ascii_alphabetic() || c2 == b'_')
+                {
+                    break;
+                }
+                self.bump();
+                run_len += 1;
+            } else if c.is_ascii_alphanumeric() || c == b'_' {
+                self.bump();
+                run_len += 1;
+            } else {
+                break;
+            }
+        }
+        if run_len == 0 {
+            return;
+        }
+        let run = &self.src[sstart.offset..self.pos];
+        // An integer-type suffix (`i8`/`u64`...) is only valid on a non-float
+        // integer literal; otherwise it is an illegal/unknown suffix. Official
+        // ProcessIntegerSuffix is NOT gated by `success` — the illegal-integer
+        // diag fires even after a prior error on this number (e.g. the
+        // unexpected-digit in `1diagnosticsTest`).
+        if !is_float {
+            if let Some(rest) = run.strip_prefix(['i', 'u']) {
+                if matches!(rest, "8" | "16" | "32" | "64") {
+                    return; // valid integer suffix
+                }
+                self.errors.push(LexError {
+                    message: format!(
+                        "illegal integer suffix '{run}', integer literal type \
+                         suffix can only be 'u8', 'u16', 'u32', 'u64', 'i8', 'i16', 'i32', 'i64'"
+                    ),
+                    pos: sstart,
+                    is_warning: false,
+                });
+                *failed = true;
+                *token_kind = TokenKind::ILLEGAL;
+                return;
+            }
+        }
+        // Unknown suffix (official lex_unknown_suffix IS gated by `success`).
+        if *failed {
+            return;
+        }
+        self.errors.push(LexError {
+            message: format!("unknown suffix '{run}' for number literal"),
+            pos: sstart,
+            is_warning: false,
+        });
+        *failed = true;
+    }
     // ---- rune / byte / string literals ----
 
     /// Unified entry for rune/byte/string literals.
@@ -1120,5 +1299,68 @@ mod tests {
         let src = "\"\"\"line1\nline2\"\"\"";
         let t = lex_all(src);
         assert_eq!(t[0].kind, TokenKind::MULTILINE_STRING);
+    }
+}
+
+#[cfg(test)]
+mod t15_probe {
+    use super::*;
+
+    fn kinds(src: &str) -> Vec<TokenKind> {
+        let mut lx = Lexer::new(src);
+        lx.tokenize()
+            .into_iter()
+            .filter(|t| t.kind != TokenKind::END && t.kind != TokenKind::NL) 
+            .map(|t| t.kind)
+            .collect()
+    }
+
+    fn lex_errors(src: &str) -> Vec<(String, u32, u32)> {
+        let mut lx = Lexer::new(src);
+        let toks = lx.tokenize();
+        let _ = toks;
+        lx.errors.iter().map(|e| (e.message.clone(), e.pos.line, e.pos.column)).collect()
+    }
+
+    #[test]
+    fn probe_012_unknown_suffix() {
+        // let 1var0052 = 'x'
+        let toks = kinds("let 1var0052 = 'x'");
+        assert_eq!(toks, vec![TokenKind::LET, TokenKind::INTEGER_LITERAL, TokenKind::ASSIGN, TokenKind::RUNE_LITERAL]);
+        let errs = lex_errors("let 1var0052 = 'x'");
+        assert_eq!(errs, vec![("unknown suffix 'var0052' for number literal".to_string(), 1, 6)]);
+    }
+
+    #[test]
+    fn probe_007_illegal_suffix() {
+        let errs = lex_errors("package 1diagnosticsTest.pkg_error");
+        assert_eq!(errs[0].0, "unexpected digit 'd' in decimal, decimal may only contain digit within 0~9");
+        assert_eq!(errs[0].1, 1); assert_eq!(errs[0].2, 10);
+        assert_eq!(errs[1].0, "illegal integer suffix 'iagnosticsTest', integer literal type suffix can only be 'u8', 'u16', 'u32', 'u64', 'i8', 'i16', 'i32', 'i64'");
+        assert_eq!(errs[1].1, 1); assert_eq!(errs[1].2, 11);
+        // token should be a single ILLEGAL
+        let toks = kinds("package 1diagnosticsTest.pkg_error");
+        assert_eq!(toks[1], TokenKind::ILLEGAL);
+    }
+
+    #[test]
+    fn probe_008_exponent() {
+        let errs = lex_errors("package diagnosticsTest.1pkg_error");
+        assert_eq!(errs[0].0, "unexpected exponent part 'p__' in decimal");
+        assert_eq!(errs[0].1, 1); assert_eq!(errs[0].2, 26);
+        let toks = kinds("package diagnosticsTest.1pkg_error");
+        assert_eq!(toks[1], TokenKind::IDENTIFIER);
+        assert_eq!(toks[2], TokenKind::FLOAT_LITERAL);
+    }
+
+    #[test]
+    fn probe_valid_suffixes_still_work() {
+        assert_eq!(kinds("1u8"), vec![TokenKind::INTEGER_LITERAL]);
+        assert_eq!(kinds("0xffu8"), vec![TokenKind::INTEGER_LITERAL]);
+        assert_eq!(kinds("1.5f32"), vec![TokenKind::FLOAT_LITERAL]);
+        assert_eq!(kinds("1.5e3"), vec![TokenKind::FLOAT_LITERAL]);
+        assert_eq!(kinds("1.foo"), vec![TokenKind::INTEGER_LITERAL, TokenKind::DOT, TokenKind::IDENTIFIER]);
+        assert_eq!(kinds("1..2"), vec![TokenKind::INTEGER_LITERAL, TokenKind::RANGEOP, TokenKind::INTEGER_LITERAL]);
+        assert_eq!(kinds(".5"), vec![TokenKind::FLOAT_LITERAL]);
     }
 }

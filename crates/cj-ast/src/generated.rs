@@ -264,6 +264,8 @@ pub enum Pattern {
         name_pos: CodePos,
         /// mut modifier
         is_mutable: bool,
+        /// optional type annotation (e.g. `let x: Int64 = ...`)
+        ty: Option<Type>,
         pos: CodePos,
     },
     /// CONST_PATTERN

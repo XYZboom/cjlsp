@@ -5,6 +5,7 @@
 // assignment/coalescing/exponent is right-associative.
 
 use super::Parser;
+use crate::ty::parse_type;
 use cj_ast::{AssignOp, BinOp, Expr, LitKind, Pattern, UnOp};
 use cj_lexer::TokenKind;
 
@@ -387,7 +388,14 @@ fn parse_atom(p: &mut Parser) -> Expr {
         TokenKind::LET | TokenKind::VAR => {
             // `let pattern = expr` — LetPatternDestructor (a statement-like expr)
             p.advance();
-            let pattern = parse_pattern(p);
+            let mut pattern = parse_pattern(p);
+            // Typed pattern: `let x: Int64 = expr` — attach the annotation to a
+            // simple Var pattern so the typechecker sees the declared type (020).
+            if p.eat(TokenKind::COLON) {
+                if let cj_ast::Pattern::Var { ty, .. } = &mut pattern {
+                    *ty = Some(parse_type(p));
+                }
+            }
             let init = if p.eat(TokenKind::ASSIGN) {
                 parse_expr_prec(p, 1)
             } else {
@@ -678,6 +686,7 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
                     name: tok.text.clone(),
                     name_pos: pos_of(&tok),
                     is_mutable: false,
+                    ty: None,
                     pos: pos_of(&tok),
                 }
             }
