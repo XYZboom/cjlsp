@@ -285,7 +285,7 @@ fn parse_atom(p: &mut Parser) -> Expr {
                     // nested macro call: parse `@Foo(...)` inline
                     p.advance(); // @
                     let name_tok = p.advance();
-                    let mpos = pos_of(&t);
+                    let mut mpos = pos_of(&t);
                     let mname = name_tok.text.clone();
                     let mut margs: Vec<cj_ast::Tokenish> = Vec::new();
                     if p.eat(TokenKind::LPAREN) {
@@ -295,8 +295,17 @@ fn parse_atom(p: &mut Parser) -> Expr {
                                 text: a.text.clone(),
                                 pos: pos_of(&a),
                             });
+                            mpos.end_line = a.end.line;
+                            mpos.end_col = a.end.column;
+                            mpos.end_offset = a.end.offset;
                         }
-                        p.expect(TokenKind::RPAREN);
+                        // extend the call span through the closing `)`
+                        let rp = p.expect(TokenKind::RPAREN);
+                        if rp.kind == TokenKind::RPAREN {
+                            mpos.end_line = rp.end.line;
+                            mpos.end_col = rp.end.column;
+                            mpos.end_offset = rp.end.offset;
+                        }
                     }
                     parts.push(Expr::MacroExpand {
                         name: mname,
@@ -325,7 +334,7 @@ fn parse_atom(p: &mut Parser) -> Expr {
             }
             p.advance();
             let name = name_tok.text.clone();
-            let pos = pos_of(&tok);
+            let mut pos = pos_of(&tok);
             let mut args: Vec<cj_ast::Tokenish> = Vec::new();
             if p.eat(TokenKind::LPAREN) {
                 // macro args are tokens until matching RPAREN
@@ -335,8 +344,17 @@ fn parse_atom(p: &mut Parser) -> Expr {
                         text: a.text.clone(),
                         pos: pos_of(&a),
                     });
+                    pos.end_line = a.end.line;
+                    pos.end_col = a.end.column;
+                    pos.end_offset = a.end.offset;
                 }
-                p.expect(TokenKind::RPAREN);
+                // extend the call span through the closing `)`
+                let rp = p.expect(TokenKind::RPAREN);
+                if rp.kind == TokenKind::RPAREN {
+                    pos.end_line = rp.end.line;
+                    pos.end_col = rp.end.column;
+                    pos.end_offset = rp.end.offset;
+                }
             }
             Expr::MacroExpand { name, args, pos }
         }

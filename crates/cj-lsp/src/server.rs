@@ -467,7 +467,7 @@ fn analyze_source(
     // Macro expansion (spec Ch.14): builtin + cached .so via SDK; diagnostics
     // carry the expansion preview (report position + generated code).
     let mut macro_cache = cj_sema::macro_cache::MacroCache::new();
-    let (_, macro_diags) = cj_sema::expander::expand_file_with_cache(
+    let (expansions, macro_diags) = cj_sema::expander::expand_file_with_cache(
         &file,
         path_or_unknown(project_root),
         &mut macro_cache,
@@ -491,6 +491,24 @@ fn analyze_source(
     // modifier scan (the parser drops modifier tokens).
     let sema_checks = cj_sema::checks::check_semantics(&file, &pkg, Some(src));
 
+    // Collect all diagnostics, then attach macro-expansion preview notes to
+    // any whose position falls inside an expansion's source span (code that
+    // came from the expansion — official cjc shows "the code after the macro
+    // is expanded as follows" for these).
+    let mut all_diags: Vec<cj_diag::Diag> = Vec::new();
+    all_diags.extend(parser.diags.iter().cloned());
+    all_diags.extend(sema_result.diags.iter().cloned());
+    all_diags.extend(resolve_diags.iter().cloned());
+    all_diags.extend(dep_diags.iter().cloned());
+    all_diags.extend(unused_diags.iter().cloned());
+    all_diags.extend(call_diags.iter().cloned());
+    all_diags.extend(lit_diags.iter().cloned());
+    all_diags.extend(package_diags.iter().cloned());
+    all_diags.extend(overload_diags.iter().cloned());
+    all_diags.extend(sema_checks.iter().cloned());
+    all_diags.extend(macro_diags.iter().cloned());
+    attach_expansion_notes(&mut all_diags, &expansions);
+
     // Convert (line, col) 1-based -> LSP 0-based positions.
     let mut out = Vec::new();
     let mut push = |d: &cj_diag::Diag| {
@@ -506,6 +524,10 @@ fn analyze_source(
         } else {
             d.col + 1
         };
+        // LSP `relatedInformation` entries for the macro-expansion preview
+        // note. Only emitted when the diag actually carries that note (the
+        // official diagnostic key set stays unchanged for all other cases).
+        let related = expansion_related_info(d, uri);
         // Unused-declaration diagnostics carry `tags: [Unnecessary]` plus a
         // `quickfix.removeUnusedSymbol` code action deleting the declaration.
         // The official key set for these is `code/codeActions/data/message/
@@ -534,7 +556,7 @@ fn analyze_source(
                 }
                 None => (Value::Null, Value::Null),
             };
-            out.push(json!({
+            let mut obj = json!({
                 "code": 0,
                 "codeActions": ca,
                 "data": data,
@@ -546,9 +568,13 @@ fn analyze_source(
                 "severity": severity,
                 "source": "Cangjie",
                 "tags": if d.tags.is_empty() { Value::Null } else { json!(d.tags) },
-            }));
+            });
+            if let Some(ri) = related {
+                obj["relatedInformation"] = ri;
+            }
+            out.push(obj);
         } else {
-            out.push(json!({
+            let mut obj = json!({
                 "category": null,
                 "code": null,
                 "codeActions": null,
@@ -560,23 +586,14 @@ fn analyze_source(
                 "message": lsp_diag_message(d),
                 "source": "Cangjie",
                 "data": {"codeActions": null}
-            }));
+            });
+            if let Some(ri) = related {
+                obj["relatedInformation"] = ri;
+            }
+            out.push(obj);
         }
     };
-    for d in parser
-        .diags
-        .iter()
-        .chain(sema_result.diags.iter())
-        .chain(resolve_diags.iter())
-        .chain(dep_diags.iter())
-        .chain(unused_diags.iter())
-        .chain(call_diags.iter())
-        .chain(lit_diags.iter())
-        .chain(package_diags.iter())
-        .chain(overload_diags.iter())
-        .chain(sema_checks.iter())
-        .chain(macro_diags.iter())
-    {
+    for d in &all_diags {
         push(d);
     }
     out
@@ -597,6 +614,61 @@ fn lsp_diag_message(d: &cj_diag::Diag) -> String {
         }
     }
     d.message.clone()
+}
+
+/// Official macro-expansion note header (mirrors cjc DiagnosticEngine.h
+/// `MACROCALL_CODE` = "the code after the macro is expanded as follows").
+const MACRO_EXPANSION_NOTE: &str = "the code after the macro is expanded as follows";
+
+/// Attach the macro-expansion preview note to every diagnostic whose position
+/// falls inside an expansion's source span (code that came from the
+/// expansion). The note matches the official cjc format:
+///
+///   note: the code after the macro is expanded as follows
+///       /* 6.1 */print(x)
+///
+/// The `/* <line>.1 */` marker is the expansion's call line (the official
+/// compiler labels generated code with the call-site position).
+fn attach_expansion_notes(
+    diags: &mut [cj_diag::Diag],
+    expansions: &[cj_sema::expander::Expansion],
+) {
+    for d in diags.iter_mut() {
+        if d.notes.iter().any(|n| n == MACRO_EXPANSION_NOTE) {
+            continue;
+        }
+        let Some(exp) = expansions.iter().find(|e| e.contains(d.line, d.col)) else {
+            continue;
+        };
+        d.notes.push(MACRO_EXPANSION_NOTE.to_string());
+        d.notes
+            .push(format!("/* {}.1 */{}", exp.call_line, exp.expanded));
+    }
+}
+
+/// LSP `relatedInformation` entries for the macro-expansion preview note.
+/// Returns `None` (so the `relatedInformation` key is omitted entirely) unless
+/// the diagnostic carries that note — the official diagnostic key set stays
+/// unchanged for every other case.
+fn expansion_related_info(d: &cj_diag::Diag, uri: &str) -> Option<Value> {
+    if !d.notes.iter().any(|n| n == MACRO_EXPANSION_NOTE) {
+        return None;
+    }
+    let end_col = if d.end_col > d.col {
+        d.end_col
+    } else {
+        d.col + 1
+    };
+    let range = json!({
+        "start": {"line": d.line.saturating_sub(1), "character": d.col.saturating_sub(1)},
+        "end": {"line": d.end_line.saturating_sub(1), "character": end_col.saturating_sub(1)}
+    });
+    let infos: Vec<Value> = d
+        .notes
+        .iter()
+        .map(|n| json!({ "location": { "uri": uri, "range": range.clone() }, "message": n }))
+        .collect();
+    Some(Value::Array(infos))
 }
 
 /// Whether `kind` is a declaration modifier that can precede the decl keyword
@@ -827,5 +899,74 @@ fn compute_remove_range(
             );
             Some((s, e))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cj_diag::Diag;
+    use cj_sema::expander::Expansion;
+
+    fn expansion(line: u32, col: u32, end_line: u32, end_col: u32, text: &str) -> Expansion {
+        Expansion {
+            call_line: line,
+            call_col: col,
+            call_end_line: end_line,
+            call_end_col: end_col,
+            expanded: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn attaches_note_to_in_span_diag() {
+        // A diag on the `)` of `@Wrap(42)` (line 2, cols 9..=17) is inside the
+        // expansion span and must receive the official expansion-preview note.
+        let exp = expansion(2, 9, 2, 18, "print ( 42");
+        let d = Diag::error(2, 17, "expected declaration, found '!'");
+        let mut diags = vec![d];
+        attach_expansion_notes(&mut diags, &[exp]);
+        assert_eq!(
+            diags[0].notes,
+            vec![
+                "the code after the macro is expanded as follows".to_string(),
+                "/* 2.1 */print ( 42".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn skips_out_of_span_diag() {
+        // A diag before the call, on another line, or after the call's span
+        // must NOT get the macro note (it is not about expanded code).
+        let exp = expansion(2, 9, 2, 18, "print ( 42");
+        let before = Diag::error(2, 8, "x");
+        let other_line = Diag::error(3, 1, "y");
+        let after = Diag::error(2, 19, "z");
+        let mut diags = vec![before, other_line, after];
+        attach_expansion_notes(&mut diags, &[exp]);
+        for d in &diags {
+            assert!(!d.notes.iter().any(|n| n == MACRO_EXPANSION_NOTE));
+        }
+    }
+
+    #[test]
+    fn related_info_only_for_macro_note() {
+        let mut plain = Diag::error(1, 1, "m");
+        plain
+            .notes
+            .push("only declarations or macro expressions can be used in the top-level".into());
+        assert_eq!(expansion_related_info(&plain, "file:///a.cj"), None);
+
+        let mut noted = Diag::error(2, 17, "expected declaration, found '!'");
+        noted
+            .notes
+            .push("the code after the macro is expanded as follows".into());
+        noted.notes.push("/* 2.1 */print ( 42".into());
+        let ri = expansion_related_info(&noted, "file:///a.cj").expect("note present");
+        let arr = ri.as_array().expect("array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[1]["message"], "/* 2.1 */print ( 42");
+        assert_eq!(arr[0]["location"]["uri"], "file:///a.cj");
     }
 }

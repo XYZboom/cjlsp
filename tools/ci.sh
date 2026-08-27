@@ -88,6 +88,10 @@ SUMMARY+=("lsp-cov|$COV_RC")
 # 5. Macro expansion E2E (unresolved macro reported).
 step "macro E2E (unresolved macro)" python3 tools/test_macro_e2e.py
 
+# 5b. Macro expansion preview note E2E (T14: diagnostics inside an expansion
+#     span carry "the code after the macro is expanded as follows").
+step "macro preview note E2E" python3 tools/test_macro_preview.py
+
 # 6. SCAN Parser alignment (default: the LLT Parser suite with SCAN blocks).
 SCAN_DIR="${SCAN_DIR:-/root/Code/cangjie/cangjie_test/testsuites/LLT/compiler/Parser}"
 if [ -n "$SCAN_DIR" ]; then
