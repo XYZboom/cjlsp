@@ -89,7 +89,11 @@ pub fn check_package(file: &File, expected: Option<&str>) -> Vec<Diag> {
         }
     }
 
-    // 4. Circular dependency (from this file's package graph).
+    // 4. Import-conflict warning: two imports that both select the same
+    //    declaration name (e.g. `import std.ast.Body` twice) conflict.
+    diags.extend(check_import_conflicts(file));
+
+    // 5. Circular dependency (from this file's package graph).
     //
     // Build edges: own → import-package for each import that resolves.
     // Single-file: a cycle exists iff own imports itself (self-import).
@@ -112,6 +116,60 @@ pub fn check_package(file: &File, expected: Option<&str>) -> Vec<Diag> {
     }
 
     diags
+}
+
+/// Detect two imports that both select the same declaration name in one file.
+/// Official 009: `import std.ast.Body` twice -> warning at the second member.
+fn check_import_conflicts(file: &File) -> Vec<Diag> {
+    let mut diags = Vec::new();
+    let mut seen: std::collections::HashMap<String, ()> = std::collections::HashMap::new();
+    for imp in &file.imports {
+        for (member, pos) in import_members(imp) {
+            if seen.insert(member.clone(), ()).is_some() {
+                diags.push(Diag::warning(
+                    pos.line,
+                    pos.col,
+                    format!(
+                        "imported decl '{}' is conflicted with other import, \
+                         this warning can be suppressed by setting the \
+                         compiler option `-Woff package-import`",
+                        member
+                    ),
+                ));
+            }
+        }
+    }
+    diags
+}
+
+/// The declaration names an import brings into scope, with their positions.
+/// `import a.b.X` -> holds X (anchored at X's own position);
+/// `import a.b: A, B` -> A, B (anchored at the name span);
+/// globs bring unknown names — skipped.
+fn import_members(imp: &ImportSpec) -> Vec<(String, cj_ast::CodePos)> {
+    let mut out = Vec::new();
+    if imp.glob {
+        return out;
+    }
+    if imp.path.len() >= 2 {
+        let member = imp.path.last().expect("non-empty");
+        // The member name starts `len` columns before the exclusive end of the
+        // package-name span (which runs up to the member's last column + 1).
+        let start_col = imp.name_pos.end_col.saturating_sub(member.len() as u32);
+        let pos = cj_ast::CodePos::new(
+            imp.name_pos.end_line,
+            start_col,
+            0,
+            imp.name_pos.end_line,
+            imp.name_pos.end_col,
+            0,
+        );
+        out.push((member.clone(), pos));
+    }
+    for s in &imp.selected {
+        out.push((s.clone(), imp.name_pos));
+    }
+    out
 }
 
 /// Display text for an import (e.g. `testpackage.*`, `std.ast.Body`).

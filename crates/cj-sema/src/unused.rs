@@ -376,7 +376,94 @@ pub fn detect_unused(file: &File) -> Vec<Diag> {
         collect_unused_params(d, None, &mut diags);
     }
 
+    // --- Pass 5: unused local variables inside function bodies. ---
+    // `let x = ...` / `var x = ...` statements bind names in a function scope;
+    // the official suite reports them too (020: `let x:Rune`, 027: `var x`).
+    for d in &file.decls {
+        let dname = decl_name_of(d);
+        let is_unresolved = dname.as_ref().is_some_and(|n| unresolved.contains(n));
+        let mut locals: Vec<DeclInfo> = Vec::new();
+        collect_local_decls(d, &mut locals);
+        for info in &locals {
+            if is_unresolved {
+                continue;
+            }
+            let used_local = used.names.contains(&info.name) || used.members.contains(&info.name);
+            if used_local {
+                continue;
+            }
+            diags.push(unused_diag(
+                info.line,
+                info.col,
+                format!("Variable '{}' is declared but never used", info.name),
+            ));
+        }
+    }
+
     diags
+}
+
+/// Collect local variable declarations (`let x = ...` inside a function body),
+/// recursively through function/class bodies and nested blocks.
+fn collect_local_decls(d: &Decl, out: &mut Vec<DeclInfo>) {
+    match d {
+        Decl::Func {
+            body: Body::Block(stmts),
+            ..
+        }
+        | Decl::Main {
+            body: Body::Block(stmts),
+            ..
+        } => {
+            for s in stmts {
+                collect_local_decls_expr(s, out);
+            }
+        }
+        Decl::Class { members, .. }
+        | Decl::Interface { members, .. }
+        | Decl::Struct { members, .. }
+        | Decl::Extend { members, .. } => {
+            for m in members {
+                collect_local_decls(m, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Walk an expression tree for local `let`/`var` bindings (Var patterns).
+fn collect_local_decls_expr(e: &Expr, out: &mut Vec<DeclInfo>) {
+    if let Expr::LetPatternDestructor { patterns, .. } = e {
+        for p in patterns {
+            if let Pattern::Var { name, name_pos, .. } = p {
+                out.push(DeclInfo {
+                    name: name.clone(),
+                    kind: DeclKind::Var,
+                    line: name_pos.line,
+                    col: name_pos.col,
+                    is_type_ctor: false,
+                });
+            }
+        }
+    }
+    match e {
+        Expr::Block { stmts, .. } => {
+            for s in stmts {
+                collect_local_decls_expr(s, out);
+            }
+        }
+        Expr::If { then, els, .. } => {
+            collect_local_decls_expr(then, out);
+            if let Some(e) = els {
+                collect_local_decls_expr(e, out);
+            }
+        }
+        Expr::While { body, .. } | Expr::DoWhile { body, .. } => {
+            collect_local_decls_expr(body, out)
+        }
+        Expr::ForIn { body, .. } => collect_local_decls_expr(body, out),
+        _ => {}
+    }
 }
 
 /// Report parameters not referenced inside their own function body

@@ -156,7 +156,16 @@ impl LspServer {
         let project_root = resolve_project_root(&cwd, path);
         let expected = self.expected_package_name(uri);
         let diagnostics = if text.is_empty() {
-            analyze_file(path, project_root.as_deref(), expected.as_deref())
+            // The didOpen uri is a *virtual* path that usually does not exist
+            // on disk (content travels in `text`). Only fall back to disk when
+            // it actually has content; an empty file (no package decl) must
+            // still produce package-name diagnostics (diag_001).
+            match fs::read_to_string(path) {
+                Ok(s) if !s.is_empty() => {
+                    analyze_source(&s, project_root.as_deref(), expected.as_deref())
+                }
+                _ => analyze_source("", project_root.as_deref(), expected.as_deref()),
+            }
         } else {
             analyze_source(text, project_root.as_deref(), expected.as_deref())
         };
@@ -284,14 +293,6 @@ fn collect_same_package_sigs(root: &Path, package: Option<&str>) -> HashMap<Stri
     sigs
 }
 
-/// Run the full frontend pipeline on a file and return LSP-format diagnostics.
-fn analyze_file(path: &PathBuf, project_root: Option<&Path>, expected: Option<&str>) -> Vec<Value> {
-    match fs::read_to_string(path) {
-        Ok(s) => analyze_source(&s, project_root, expected),
-        Err(_) => Vec::new(),
-    }
-}
-
 /// Convert an LSP 0-based (line, character) position to a byte offset in
 /// `src`. `character` counts Unicode code points (matches the lexer's column
 /// semantics). Out-of-range positions clamp to the nearest valid offset.
@@ -372,6 +373,11 @@ fn analyze_source(src: &str, project_root: Option<&Path>, expected: Option<&str>
     let call_diags = cj_sema::typecheck::check_calls(&file, &func_sigs);
     let package_diags = cj_sema::package::check_package(&file, expected);
     let overload_diags = cj_sema::overload::detect_overload_conflicts(&file);
+    // Targeted semantic checks (var-init ordering, undeclared types,
+    // super/finalizer rules, override params, optional-param-in-abstract,
+    // bare type-name expressions). `src` is only used for the finalizer
+    // modifier scan (the parser drops modifier tokens).
+    let sema_checks = cj_sema::checks::check_semantics(&file, &pkg, Some(src));
 
     // Convert (line, col) 1-based -> LSP 0-based positions.
     let mut out = Vec::new();
@@ -413,6 +419,7 @@ fn analyze_source(src: &str, project_root: Option<&Path>, expected: Option<&str>
         .chain(lit_diags.iter())
         .chain(package_diags.iter())
         .chain(overload_diags.iter())
+        .chain(sema_checks.iter())
     {
         push(d);
     }

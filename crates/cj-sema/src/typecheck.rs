@@ -233,7 +233,7 @@ fn check_call(
     // Arity: too few arguments -> official "missing arguments for parameter
     // list '(T1, T2)' in call" reported at the call's '(' position.
     if args.len() < sig.params.len() {
-        let list: Vec<String> = sig.params.iter().map(type_display).collect();
+        let list: Vec<String> = sig.params.iter().map(|p| type_display(&p.ty)).collect();
         diags.push(Diag::error(
             call_pos.line,
             call_pos.col,
@@ -242,6 +242,26 @@ fn check_call(
                 list.join(", ")
             ),
         ));
+    }
+
+    // Named parameters (`b!: T`) must be passed with their name prefix;
+    // a positional argument for a named parameter reports the prefix error.
+    // The parser leaves FuncArg.pos unset, so anchor at the argument value.
+    for (i, arg) in args.iter().enumerate() {
+        let Some(psig) = sig.params.get(i) else {
+            break;
+        };
+        if psig.is_named && arg.name.is_none() {
+            let arg_pos = expr_pos(arg);
+            diags.push(Diag::error(
+                arg_pos.line,
+                arg_pos.col,
+                format!(
+                    "missing argument prefix '{}:' for named parameter",
+                    psig.name
+                ),
+            ));
+        }
     }
 
     // Per-argument literal checks (official reports these at the literal).
@@ -256,7 +276,7 @@ fn check_call(
         let Some((lit_ty, lit_pos)) = lit else {
             continue;
         };
-        let declared = type_display(pty);
+        let declared = type_display(&pty.ty);
         match (lit_ty, declared.as_str()) {
             // Rune/String literal into a non-string param: mismatched types.
             (LitType::Char | LitType::Str, d) if d != "Struct-String" => {
@@ -296,6 +316,14 @@ fn check_call(
             // suite reports nothing at this layer — leave for later phases.
             _ => {}
         }
+    }
+}
+
+/// Position of a call argument (the parser leaves FuncArg.pos unset).
+fn expr_pos(arg: &cj_ast::FuncArg) -> cj_ast::CodePos {
+    match &arg.value {
+        Expr::Lit { pos, .. } | Expr::Name { pos, .. } => *pos,
+        _ => arg.pos,
     }
 }
 
@@ -536,6 +564,34 @@ mod tests {
         assert!(diags.iter().any(|d| d
             .message
             .contains("missing arguments for parameter list '(Int64, Float64)' in call")));
+    }
+
+    #[test]
+    fn named_param_without_prefix() {
+        // `b!` is a named parameter: a positional arg must carry the prefix.
+        let (file, _) = parse_source("func caller() { target(1, 2) }\n");
+        let funcs = sigs_of("func target(a: Int32, b!: Int32) {}\n");
+        let diags = check_calls(&file, &funcs);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("missing argument prefix 'b:'")),
+            "{diags:?}"
+        );
+        // anchored at the offending argument (the literal 2, line 1 col 27)
+        assert!(
+            diags.iter().any(|d| d.line == 1 && d.col == 27),
+            "{diags:?}"
+        );
+        // a named arg with a prefix is fine
+        let (file2, _) = parse_source("func caller() { target(1, b: 2) }\n");
+        let diags2 = check_calls(&file2, &funcs);
+        assert!(
+            !diags2
+                .iter()
+                .any(|d| d.message.contains("missing argument prefix")),
+            "{diags2:?}"
+        );
     }
 
     #[test]

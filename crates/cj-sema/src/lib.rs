@@ -16,6 +16,7 @@ use cj_ast::{CodePos, Decl, File};
 use cj_diag::Diag;
 use std::collections::HashMap;
 
+pub mod checks;
 pub mod dep_graph;
 pub mod expander;
 pub mod overload;
@@ -65,11 +66,22 @@ pub struct Symbol {
     pub pos: CodePos,
 }
 
-/// A function's signature: name + parameter types (for cross-file call checks).
+/// A single function parameter signature (for cross-file call checks).
+#[derive(Debug, Clone)]
+pub struct ParamSig {
+    pub name: String,
+    /// named-call parameter (`a!: T` — must be passed with a name prefix)
+    pub is_named: bool,
+    pub ty: cj_ast::Type,
+}
+
+/// A function's signature: name + parameter signature + return type
+/// (for cross-file call checks).
 #[derive(Debug, Clone, Default)]
 pub struct FuncSig {
     pub name: String,
-    pub params: Vec<cj_ast::Type>,
+    pub params: Vec<ParamSig>,
+    pub ret: Option<cj_ast::Type>,
     pub pos: CodePos,
 }
 
@@ -152,12 +164,24 @@ impl Collector {
         for d in &file.decls {
             // Record top-level function signatures for cross-file call checks.
             if let Decl::Func {
-                name, params, pos, ..
+                name,
+                params,
+                ret,
+                pos,
+                ..
             } = d
             {
                 func_sigs.entry(name.clone()).or_insert_with(|| FuncSig {
                     name: name.clone(),
-                    params: params.iter().map(|p| p.ty.clone()).collect(),
+                    params: params
+                        .iter()
+                        .map(|p| ParamSig {
+                            name: p.name.clone(),
+                            is_named: p.is_named,
+                            ty: p.ty.clone(),
+                        })
+                        .collect(),
+                    ret: ret.clone(),
                     pos: *pos,
                 });
             }
@@ -178,7 +202,9 @@ impl Collector {
             return;
         };
         let name = decl_name(d).unwrap_or_default();
-        let pos = decl_pos(d);
+        // Report redefinition at the *name* (not the decl start keyword) —
+        // official reports `let zzzz` at the variable/function name position.
+        let pos = decl_name_pos(d).unwrap_or_else(|| decl_pos(d));
         let sym = Symbol {
             name: name.clone(),
             kind,
@@ -197,6 +223,24 @@ impl Collector {
                 .with_span(pos.end_line, pos.end_col)
                 .with_note(format!("'{}' is previously declared here", prev.name));
                 self.diags.push(diag);
+            }
+        }
+        // Function parameters share the function's own scope: duplicate
+        // parameter names are redefinitions too (official func_error cases).
+        if let Decl::Func { params, .. } = d {
+            let mut seen: std::collections::HashMap<&str, &cj_ast::Param> =
+                std::collections::HashMap::new();
+            for p in params {
+                if let Some(prev) = seen.insert(p.name.as_str(), p) {
+                    let d = Diag::error(
+                        p.pos.line,
+                        p.pos.col,
+                        format!("redefinition of declaration '{}'", p.name),
+                    )
+                    .with_span(p.pos.end_line, p.pos.end_col)
+                    .with_note(format!("'{}' is previously declared here", prev.name));
+                    self.diags.push(d);
+                }
             }
         }
         // recurse into members
@@ -296,6 +340,21 @@ fn decl_pos(d: &Decl) -> CodePos {
     }
 }
 
+/// Extract the position of a declaration's *name* token (where the official
+/// compiler anchors redefinition diagnostics): `let zzzz` -> `zzzz`, not `let`.
+fn decl_name_pos(d: &Decl) -> Option<CodePos> {
+    use Decl::*;
+    match d {
+        Func { name_pos, .. }
+        | Class { name_pos, .. }
+        | Interface { name_pos, .. }
+        | Enum { name_pos, .. }
+        | Struct { name_pos, .. }
+        | Var { name_pos, .. } => Some(*name_pos),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +369,29 @@ mod tests {
         assert!(r.diags[0]
             .message
             .contains("redefinition of declaration 'x'"));
+        // Official anchors at the *name* (line 2 col 5), not the `let` keyword.
+        assert_eq!(r.diags[0].line, 2);
+        assert_eq!(r.diags[0].col, 5);
+    }
+
+    #[test]
+    fn duplicate_param_redefinition() {
+        let (file, _) = parse_source("func f(a: Int8, a: Bool) {}\n");
+        let c = Collector::new();
+        let r = c.collect_file(&file);
+        assert!(
+            r.diags
+                .iter()
+                .any(|d| d.message.contains("redefinition of declaration 'a'")),
+            "{:?}",
+            r.diags
+        );
+        // anchored at the second `a` (line 1 col 17)
+        assert!(
+            r.diags.iter().any(|d| d.line == 1 && d.col == 17),
+            "{:?}",
+            r.diags
+        );
     }
 
     #[test]
