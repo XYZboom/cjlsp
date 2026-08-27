@@ -40,7 +40,7 @@ impl DeclKind {
 }
 
 /// Collect identifiers referenced by an expression tree into `out`.
-fn collect_refs(e: &Expr, out: &mut HashSet<String>) {
+pub(crate) fn collect_refs(e: &Expr, out: &mut HashSet<String>) {
     match e {
         Expr::Name { name, .. } => {
             out.insert(name.clone());
@@ -257,7 +257,7 @@ fn is_builtin(name: &str) -> bool {
 }
 
 /// Collect all identifier references in a declaration (for the used set).
-fn collect_decl_refs(d: &Decl, used: &mut HashSet<String>) {
+pub(crate) fn collect_decl_refs(d: &Decl, used: &mut HashSet<String>) {
     match d {
         Decl::Func {
             body: Body::Block(stmts),

@@ -2,7 +2,6 @@
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 
 /// LSP server: tracks open documents and computes diagnostics via the
@@ -11,6 +10,9 @@ pub struct LspServer {
     /// uri -> (path on disk, latest text from didOpen/didChange)
     open_docs: HashMap<String, (PathBuf, String)>,
     shutdown_received: bool,
+    /// rootUri from `initialize` — used to derive the expected package name
+    /// of each open file (module name + directory chain under src/).
+    root_uri: String,
 }
 
 impl LspServer {
@@ -18,6 +20,7 @@ impl LspServer {
         LspServer {
             open_docs: HashMap::new(),
             shutdown_received: false,
+            root_uri: String::new(),
         }
     }
 
@@ -32,11 +35,16 @@ impl LspServer {
     }
 
     /// Handle a request (method with id); return the response to send.
-    pub fn dispatch(&mut self, method: &str, _params: Value) -> Value {
+    pub fn dispatch(&mut self, method: &str, params: Value) -> Value {
         let id_placeholder = Value::Null; // filled by caller
         let _ = id_placeholder;
         match method {
             "initialize" => {
+                // Remember rootUri so package-name checks can derive the
+                // expected package name for each opened file.
+                if let Some(ru) = params.get("rootUri").and_then(|v| v.as_str()) {
+                    self.root_uri = ru.to_string();
+                }
                 // Respond with server capabilities + info. The test harness
                 // ignores `category/code/jsonrpc`, but capabilities shape
                 // matters for feature tests later.
@@ -103,12 +111,19 @@ impl LspServer {
         if uri.is_empty() {
             return Vec::new();
         }
-        // Apply content changes (full text in contentChanges[0].text for
-        // full-sync mode; incremental is refined later).
+        // Apply content changes. The suite sends incremental changes
+        // (range + text for the edited span); other clients may send the full
+        // text (no range). Both are handled.
         if let Some((_, text)) = self.open_docs.get_mut(&uri) {
-            if let Some(chg) = params["contentChanges"].get(0) {
-                if let Some(t) = chg["text"].as_str() {
-                    *text = t.to_string();
+            if let Some(changes) = params["contentChanges"].as_array() {
+                for chg in changes {
+                    if let Some(t) = chg["text"].as_str() {
+                        if let Some(range) = chg.get("range") {
+                            apply_incremental_change(text, range, t);
+                        } else {
+                            *text = t.to_string();
+                        }
+                    }
                 }
             }
         }
@@ -125,16 +140,14 @@ impl LspServer {
     }
 
     /// Compute diagnostics for a document and emit publishDiagnostics.
-    /// Prefers the in-memory text from didOpen/didChange; falls back to disk.
+    /// Uses the in-memory text from didOpen/didChange (the didOpen uri is a
+    /// virtual path that may not exist on disk — content travels in `text`).
     fn publish_diagnostics(&mut self, uri: &str) -> Vec<Value> {
-        let Some((path, text)) = self.open_docs.get(uri) else {
+        let Some((_, text)) = self.open_docs.get(uri) else {
             return Vec::new();
         };
-        let diagnostics = if text.is_empty() {
-            analyze_file(path)
-        } else {
-            analyze_source(text)
-        };
+        let expected = self.expected_package_name(uri);
+        let diagnostics = analyze_source(text, expected.as_deref());
         let msg = json!({
             "jsonrpc": "2.0",
             "method": "textDocument/publishDiagnostics",
@@ -145,23 +158,107 @@ impl LspServer {
         });
         vec![msg]
     }
+
+    /// Derive the expected package name of a file from its uri + rootUri.
+    ///
+    /// Rule (official cjlsp behavior): expected = <module name> + "." + the
+    /// directory chain of the file relative to <root>/src/ (skipping src/).
+    /// Files directly under src/ use just the module name.
+    fn expected_package_name(&self, uri: &str) -> Option<String> {
+        // Normalize both sides: drop a "file://" scheme prefix and any leading
+        // slashes so they compare cleanly (the harness sends "file:////abs/..."
+        // — with an extra slash before the root).
+        let root = self
+            .root_uri
+            .strip_prefix("file://")
+            .unwrap_or(&self.root_uri)
+            .trim_start_matches('/');
+        let u = uri
+            .strip_prefix("file://")
+            .unwrap_or(uri)
+            .trim_start_matches('/');
+        let rel = u
+            .strip_prefix(root.trim_end_matches('/'))?
+            .trim_start_matches('/');
+        if rel.is_empty() {
+            return None;
+        }
+        let comps: Vec<&str> = rel.split(['/', '\\']).collect();
+        let src_idx = comps.iter().position(|c| *c == "src")?;
+        // directories after src/, before the file name
+        let dirs = &comps[src_idx + 1..];
+        let dirs = &dirs[..dirs.len().saturating_sub(1)];
+        let module = root
+            .rsplit(['/', '\\'])
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("cnj");
+        if dirs.is_empty() {
+            return Some(module.to_string());
+        }
+        let mut pkg = module.to_string();
+        for d in dirs {
+            pkg.push('.');
+            pkg.push_str(d);
+        }
+        Some(pkg)
+    }
 }
 
-/// Run the full frontend pipeline on a file and return LSP-format diagnostics.
-fn analyze_file(path: &PathBuf) -> Vec<Value> {
-    match fs::read_to_string(path) {
-        Ok(s) => analyze_source(&s),
-        Err(_) => Vec::new(),
+/// Convert an LSP 0-based (line, character) position to a byte offset in
+/// `src`. `character` counts Unicode code points (matches the lexer's column
+/// semantics). Out-of-range positions clamp to the nearest valid offset.
+fn lsp_pos_to_byte(src: &str, line: u32, character: u32) -> usize {
+    let mut cur_line = 0u32;
+    let mut line_start = 0usize;
+    for (i, b) in src.bytes().enumerate() {
+        if b == b'\n' {
+            if cur_line == line {
+                let col_bytes: usize = src[line_start..i]
+                    .chars()
+                    .take(character as usize)
+                    .map(char::len_utf8)
+                    .sum();
+                return line_start + col_bytes;
+            }
+            cur_line += 1;
+            line_start = i + 1;
+        }
+    }
+    // Last line (no trailing newline).
+    let col_bytes: usize = src[line_start..]
+        .chars()
+        .take(character as usize)
+        .map(char::len_utf8)
+        .sum();
+    line_start + col_bytes
+}
+
+/// Apply one incremental content change (range + new text) to `text`.
+fn apply_incremental_change(text: &mut String, range: &Value, new_text: &str) {
+    let start = &range["start"];
+    let end = &range["end"];
+    let s_line = start["line"].as_u64().unwrap_or(0) as u32;
+    let s_char = start["character"].as_u64().unwrap_or(0) as u32;
+    let e_line = end["line"].as_u64().unwrap_or(0) as u32;
+    let e_char = end["character"].as_u64().unwrap_or(0) as u32;
+    let s = lsp_pos_to_byte(text, s_line, s_char);
+    let e = lsp_pos_to_byte(text, e_line, e_char);
+    if s <= e && e <= text.len() {
+        text.replace_range(s..e, new_text);
     }
 }
 
 /// Run the full frontend pipeline on source text and return LSP-format
 /// diagnostics (1-based diag positions -> 0-based LSP ranges).
-fn analyze_source(src: &str) -> Vec<Value> {
+///
+/// `expected` — the package name derived from the file's URI (pass `None`
+/// when it cannot be inferred); drives package-level checks.
+fn analyze_source(src: &str, expected: Option<&str>) -> Vec<Value> {
     let mut parser = cj_parser::Parser::new(src, cj_lexer::Lexer::new(src).tokenize());
     let file = parser.run();
 
-    // Sema: collect + resolve + dep graph.
+    // Sema: collect + resolve + dep graph + package/import checks.
     let collector = cj_sema::Collector::new();
     let sema_result = collector.collect_file(&file);
     let mut pkg = cj_sema::PackageTable::default();
@@ -172,6 +269,7 @@ fn analyze_source(src: &str) -> Vec<Value> {
     let dep_graph = cj_sema::dep_graph::DepGraph::build(&[&file]);
     let dep_diags = dep_graph.detect_cycles();
     let unused_diags = cj_sema::unused::detect_unused(&file);
+    let package_diags = cj_sema::package::check_package(&file, expected);
 
     // Convert (line, col) 1-based -> LSP 0-based positions.
     let mut out = Vec::new();
@@ -209,6 +307,7 @@ fn analyze_source(src: &str) -> Vec<Value> {
         .chain(resolve_diags.iter())
         .chain(dep_diags.iter())
         .chain(unused_diags.iter())
+        .chain(package_diags.iter())
     {
         push(d);
     }

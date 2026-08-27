@@ -326,14 +326,16 @@ impl<'a> Parser<'a> {
     /// Parse a whole file: optional `package`, imports, then top-level decls.
     pub fn parse_file(&mut self) -> File {
         let mut package = None;
+        let mut package_pos = None;
         let mut imports = Vec::new();
         let mut decls = Vec::new();
 
         // package decl
         if self.at(TokenKind::PACKAGE) {
             let pkg_tok = self.advance();
-            let name = self.parse_package_name();
+            let (name, name_pos) = self.parse_package_name();
             package = Some(name);
+            package_pos = Some(name_pos);
             let _ = pkg_tok;
         }
 
@@ -371,6 +373,7 @@ impl<'a> Parser<'a> {
         let pos = CodePos::default();
         File {
             package,
+            package_pos,
             imports,
             decls,
             pos,
@@ -395,34 +398,58 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_package_name(&mut self) -> String {
+    fn parse_package_name(&mut self) -> (String, CodePos) {
         let mut parts = Vec::new();
+        let mut first = None;
+        let mut last_end = None;
         while self.peek() == TokenKind::IDENTIFIER || self.peek() == TokenKind::PACKAGE_IDENTIFIER {
-            parts.push(self.advance().text);
+            let t = self.advance();
+            if first.is_none() {
+                first = Some(t.begin);
+            }
+            last_end = Some(t.end);
+            parts.push(t.text);
             if !self.eat(TokenKind::DOT) {
                 break;
             }
         }
-        parts.join(".")
+        let name = parts.join(".");
+        let pos = match (first, last_end) {
+            (Some(b), Some(e)) => {
+                CodePos::new(b.line, b.column, b.offset, e.line, e.column, e.offset)
+            }
+            // No name identifiers found (e.g. `package` followed by a literal):
+            // anchor at the current token, which sits where the name was expected.
+            _ => self.cur_pos(),
+        };
+        (name, pos)
     }
 
     fn parse_import(&mut self) -> Option<ImportSpec> {
-        let start = self.cur_pos();
-        self.expect(TokenKind::IMPORT);
+        let import_tok = self.expect(TokenKind::IMPORT);
         let mut path = Vec::new();
         let mut glob = false;
         let mut selected = Vec::new();
+        // package-name span: first path segment begin .. last path segment end
+        let mut name_begin = None;
+        let mut name_end = None;
+        let mut last_tok_end = import_tok.end;
 
         // org / module / ... :  or .*
         loop {
-            match self.peek() {
-                TokenKind::IDENTIFIER | TokenKind::PACKAGE_IDENTIFIER => {
-                    path.push(self.advance().text);
+            let t = self.peek_token();
+            if t.kind == TokenKind::IDENTIFIER || t.kind == TokenKind::PACKAGE_IDENTIFIER {
+                if name_begin.is_none() {
+                    name_begin = Some(t.begin);
                 }
-                TokenKind::MUL => {
-                    // `*` handled below; break if it's after a dot
-                }
-                _ => break,
+                let seg = self.advance();
+                name_end = Some(seg.end);
+                last_tok_end = seg.end;
+                path.push(seg.text);
+            } else if t.kind == TokenKind::MUL {
+                // `*` handled below; break if it's after a dot
+            } else {
+                break;
             }
             if self.eat(TokenKind::DOT) {
                 continue;
@@ -431,23 +458,40 @@ impl<'a> Parser<'a> {
         }
         // `import a.b.*`
         if self.at(TokenKind::MUL) {
-            self.advance();
+            let star = self.advance();
+            last_tok_end = star.end;
             glob = true;
         } else if self.eat(TokenKind::COLON) {
             // `import a.b: X, Y`
             while self.peek() == TokenKind::IDENTIFIER {
-                selected.push(self.advance().text);
+                let s = self.advance();
+                last_tok_end = s.end;
+                selected.push(s.text);
                 if !self.eat(TokenKind::COMMA) {
                     break;
                 }
             }
         }
-        let _ = start;
+        let pos = CodePos::new(
+            import_tok.begin.line,
+            import_tok.begin.column,
+            import_tok.begin.offset,
+            last_tok_end.line,
+            last_tok_end.column,
+            last_tok_end.offset,
+        );
+        let name_pos = match (name_begin, name_end) {
+            (Some(b), Some(e)) => {
+                CodePos::new(b.line, b.column, b.offset, e.line, e.column, e.offset)
+            }
+            _ => pos,
+        };
         Some(ImportSpec {
             path,
             glob,
             selected,
-            pos: CodePos::default(),
+            pos,
+            name_pos,
         })
     }
 }

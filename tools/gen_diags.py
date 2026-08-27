@@ -27,7 +27,21 @@ import os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 # tools/ is inside cj-lang/, official sources are one level up under /root/Code/cangjie/
 CANGJIE_DIR = os.path.dirname(HERE)
-REPO = os.path.dirname(CANGJIE_DIR)
+
+
+def find_repo(start: str) -> str:
+    """Walk up from `start` until a dir containing the official compiler repo
+    (cangjie_compiler/include/cangjie) is found. Works from the main tree and
+    from git worktrees (where `..` lands on .worktrees/)."""
+    cur = os.path.abspath(start)
+    for _ in range(8):
+        if os.path.isdir(os.path.join(cur, "cangjie_compiler", "include", "cangjie")):
+            return cur
+        cur = os.path.dirname(cur)
+    return os.path.dirname(CANGJIE_DIR)
+
+
+REPO = find_repo(CANGJIE_DIR)
 DIAG_DIR = os.path.join(REPO, "cangjie_compiler", "include", "cangjie", "Basic", "DiagRefactor")
 
 FILES = [
@@ -35,6 +49,8 @@ FILES = [
     "DiagnosticLexer.def",
     "DiagnosticSema.def",
     "DiagnosticChir.def",
+    "DiagnosticPackage.def",
+    "DiagnosticModule.def",
 ]
 
 # ERROR(id, "msg", "here", {"note"})

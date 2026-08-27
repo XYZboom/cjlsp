@@ -13,7 +13,10 @@ import subprocess
 import sys
 
 BASE = "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp"
-LSPSERVER = "/root/Code/cangjie/cj-lang/target/debug/LSPServer"
+# Resolve the binary relative to this script so the checker runs against the
+# workspace it lives in (main tree or a git worktree with its own target/).
+HS = os.path.dirname(os.path.abspath(__file__))
+LSPSERVER = os.path.join(HS, "..", "target", "debug", "LSPServer")
 CWD = os.path.join(BASE, "sourcecode/cangjieTest")
 
 
@@ -107,8 +110,28 @@ def main():
             {"jsonrpc": "2.0", "id": "0", "method": "initialize", "params": {"processId": None, "rootUri": os.path.join(BASE, "diagnosticsTest"), "capabilities": {}}},
             {"jsonrpc": "2.0", "method": "initialized", "params": {}},
             {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": abs_uri, "languageId": "Cangjie", "version": 1, "text": text}}},
-            {"jsonrpc": "2.0", "id": 10, "method": "shutdown", "params": {}},
         ]
+        # Replay any incremental didChange notifications from the Req# block
+        # (e.g. diagnostics_002 removes a comment to activate a self-import).
+        if "Req#" in content:
+            req_block = content.split("Req#")[1].split("Rev#")[0]
+            for line in req_block.strip().split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if obj.get("method") == "textDocument/didChange":
+                    p = obj.get("params")
+                    if isinstance(p, dict) and "textDocument" in p:
+                        td = dict(p.get("textDocument") or {})
+                        td["uri"] = abs_uri
+                        p = dict(p)
+                        p["textDocument"] = td
+                        reqs.append({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": p})
+        reqs.append({"jsonrpc": "2.0", "id": 10, "method": "shutdown", "params": {}})
         try:
             frames = run_server(reqs)
         except Exception as e:
