@@ -1,20 +1,20 @@
 ==============================================================================
 cj-lang LLT frontend regression baseline (T19)
-generated: 2026-08-28 06:30:50
+generated: 2026-08-28 06:56:23
 frontend:  /root/Code/cangjie/cj-lang/target/release/cj-frontend
-commit:    45b190d
+commit:    2436a65
 llt dir:   /root/Code/cangjie/cangjie_test/testsuites/LLT/compiler
 scope:     LLT/compiler/{Frontend,Lexer,Parser,Sema,Diagnose} (5351 .cj files)
 mode:      cj-frontend --dump-ast
 ==============================================================================
 
-total=5351  success=4024  fail=1323  crash=4  success-rate=75.2%
+total=5351  success=4040  fail=1307  crash=4  success-rate=75.5%
 
 [by directory]
   Frontend      22  success=   20  fail=    2  crash=  0
   Lexer         28  success=   22  fail=    6  crash=  0
-  Parser       576  success=  315  fail=  259  crash=  2
-  Sema        3863  success= 3188  fail=  674  crash=  1
+  Parser       576  success=  317  fail=  257  crash=  2
+  Sema        3863  success= 3202  fail=  660  crash=  1
   Diagnose     862  success=  479  fail=  382  crash=  1
 
 [crash clusters]
@@ -83,22 +83,22 @@ total=5351  success=4024  fail=1323  crash=4  success-rate=75.2%
     34  error: expected expression after keyword 'public', found %s   e.g. Parser/ar/parse_support_keyword_context/expr/try.cj
     30  error: expected parameter name, found '_'   e.g. Parser/ar/parser_support_wildcard/negative/func_param/named_wildcard_parameter.cj
     27  error: expected expression after '=>', found %s   e.g. Sema/ErrMsgs/lambda_0.cj
-    24  error: expected declaration, found ','   e.g. Parser/class/class1.cj
     23  error: expected expression after ':', found %s   e.g. Parser/expr/end/lambdaparamlist.cj
-    21  error: expected 'r_paren', found ':'   e.g. Parser/expr/ifexpr.cj
+    23  error: expected 'r_paren', found ':'   e.g. Parser/expr/ifexpr.cj
+    22  error: expected declaration, found ','   e.g. Parser/class/class1.cj
     21  error: expected expression after 'handle', found %s   e.g. Sema/effect/command_class_not_available.cj
     20  error: expected expression after 'multiline_raw_string', found %s   e.g. Lexer/Unicode/Diagnostic/emoji_in_multistring.cj
     20  error: expected declaration, found ']'   e.g. Parser/annotation/atexcl/bad_atexcl_builtin_annotation.cj
-    20  error: expected expression after ',', found %s   e.g. Parser/expr/tuplelit2.cj
     19  error: expected enum case name, found '...'   e.g. Sema/generics/instance_by_enum_ellipsis.cj
     18  error: expected declaration, found '.'   e.g. Parser/ar/parse_support_keyword_context/decl/function.cj
+    17  error: expected expression after ',', found %s   e.g. Parser/expr/tuplelit2.cj
     17  error: expected declaration, found '<'   e.g. Parser/others/parser_fuzz_03.cj
     16  error: expected expression after '~>', found %s   e.g. Sema/ErrMsgs/composition_0.cj
     16  error: expected 'l_curl', found '<:'   e.g. Sema/Extend/default_implement/default_implement_05.cj
     15  error: expected 'double_arrow', found '|'   e.g. Parser/expr/match_or_pattern1.cj
+    14  error: expected 'case', found ';'   e.g. Parser/expr/match.cj
     14  error: expected 'r_paren', found '_'   e.g. Sema/ErrMsgs/try_0.cj
     14  error: expected 'r_paren', found '<-'   e.g. Sema/if-let-expr/enhancedcondition/o2/const.cj
-    13  error: expected 'case', found ';'   e.g. Parser/expr/match.cj
 
 [crash files]
   Diagnose/parse_test/parse_expected_no_modifier/enum_constructor.cj  | <timeout>
