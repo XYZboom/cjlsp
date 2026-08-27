@@ -268,8 +268,8 @@ fn source_line_text(source: &str, line: u32) -> String {
     source.lines().nth(line as usize).unwrap_or("").to_string()
 }
 
-/// Minimal type display for var details (avoids leaking internal names).
-fn display_type(t: &cj_ast::Type) -> String {
+/// Minimal type display (shared with hover).
+pub(crate) fn display_type(t: &cj_ast::Type) -> String {
     match t {
         cj_ast::Type::Ref { name, .. } | cj_ast::Type::Qualified { name, .. } => name.clone(),
         cj_ast::Type::Primitive { kind, .. } => format!("{kind:?}"),

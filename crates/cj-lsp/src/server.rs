@@ -44,6 +44,7 @@ impl LspServer {
         let _ = id_placeholder;
         match method {
             "textDocument/completion" => self.handle_completion(&params),
+            "textDocument/hover" => self.handle_hover(&params),
             "initialize" => {
                 // Remember rootUri so package-name checks can derive the
                 // expected package name for each opened file.
@@ -107,6 +108,26 @@ impl LspServer {
         let file = parser.run();
 
         crate::completion::complete_at(&file, source, line, character, None)
+    }
+
+    /// Handle textDocument/hover: return declaration info at the cursor.
+    fn handle_hover(&mut self, params: &Value) -> Value {
+        let uri = params["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
+        let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
+
+        let Some((_, source)) = self.open_docs.get(&uri) else {
+            return Value::Null;
+        };
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+
+        let file_name = uri.rsplit('/').next().unwrap_or("").to_string();
+        let pkg = file.package.as_deref();
+        crate::hover::hover_at(&file, pkg, &file_name, line, character)
     }
 
     fn uri_to_path(uri: &str) -> Option<PathBuf> {

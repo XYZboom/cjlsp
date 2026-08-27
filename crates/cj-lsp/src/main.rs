@@ -10,6 +10,7 @@ use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
 mod completion;
+mod hover;
 mod server;
 use server::LspServer;
 
