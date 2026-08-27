@@ -772,49 +772,67 @@ fn parse_class_body(p: &mut Parser) -> Vec<Decl> {
 fn parse_enum_cases(p: &mut Parser) -> Vec<EnumCase> {
     let mut out = Vec::new();
     let _ = p.expect(TokenKind::LCURL);
-    while !p.at(TokenKind::RCURL) && !p.at(TokenKind::END) {
-        p.eat(TokenKind::BITOR); // optional leading |
-        let name_tok = p.peek_token().clone();
-        // Enum member declarations (func/prop/init/...) come AFTER the cases,
-        // separated by newlines (no `|`). A modifier keyword or member-decl
-        // keyword here means the case list is over — parse the rest as
-        // members (discarded; Decl::Enum has no members slot).
-        if is_enum_member_start(name_tok.kind) {
+    p.eat(TokenKind::BITOR); // optional leading `|` (official: skip the first BITOR)
+    loop {
+        // `...` — non-exhaustive enum marker; must be the last case (official
+        // ParseEnumBody consumes it and breaks out of the case loop).
+        if p.at(TokenKind::ELLIPSIS) {
+            p.advance();
             break;
         }
-        if !name_tok.kind.is_name_like() {
+        if p.at(TokenKind::RCURL) || p.at(TokenKind::END) {
+            break;
+        }
+        let name_tok = p.peek_token().clone();
+        // A contextual keyword (public/private/open/...) is a case NAME when
+        // not followed by an identifier (`| public(Int64)`, `public | private`)
+        // — official `SeeingKeywordAndOperater`. Followed by an identifier it
+        // is a (forbidden) modifier: `| private a (Int32)` is case `a` plus
+        // `expected no modifier before enum constructor, found 'private'`.
+        if is_contextual_keyword(name_tok.kind) && p.peek_ahead(1) == TokenKind::IDENTIFIER {
+            let mod_tok = p.advance();
+            let mname = crate::modifier_display(&mod_tok);
+            p.error_id(
+                &mod_tok,
+                cj_diag::DiagId::PARSE_EXPECTED_NO_MODIFIER,
+                &["enum constructor", &mname],
+            );
+            let name_tok = p.peek_token().clone();
+            let name = p.advance().text;
+            let payloads = parse_enum_case_payload(p);
+            out.push(EnumCase {
+                name,
+                payloads,
+                pos: pos_of(&name_tok),
+            });
+        } else if name_tok.kind == TokenKind::IDENTIFIER || is_contextual_keyword(name_tok.kind) {
+            let name = p.advance().text;
+            let payloads = parse_enum_case_payload(p);
+            out.push(EnumCase {
+                name,
+                payloads,
+                pos: pos_of(&name_tok),
+            });
+        } else {
+            // Not a case start (member-decl keyword such as `func`, or
+            // garbage). Report and swallow up to the next `|` (mirrors
+            // official DiagExpectedIdentifierEnumDecl + TryConsumeUntilAny),
+            // so the case loop always makes progress.
             let found = crate::token_display_text(&name_tok);
             p.error_id(
                 &name_tok,
                 cj_diag::DiagId::PARSE_EXPECTED_NAME,
                 &["enum", "case name", &found],
             );
-            p.advance();
+            while !p.at(TokenKind::BITOR) && !p.at(TokenKind::RCURL) && !p.at(TokenKind::END) {
+                p.advance();
+            }
+            p.eat(TokenKind::BITOR);
             continue;
         }
-        let name = p.advance().text;
-        // payload: `| A(Int64, Bool)`
-        let payloads = if p.at(TokenKind::LPAREN) {
-            p.advance();
-            let mut pl = Vec::new();
-            while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
-                pl.push(parse_type(p));
-                if !p.eat(TokenKind::COMMA) {
-                    break;
-                }
-            }
-            let _ = p.expect(TokenKind::RPAREN);
-            pl
-        } else {
-            Vec::new()
-        };
-        out.push(EnumCase {
-            name,
-            payloads,
-            pos: pos_of(&name_tok),
-        });
-        // separator: | or , or newline
-        if !(p.at(TokenKind::BITOR) || p.at(TokenKind::COMMA)) && p.at(TokenKind::RCURL) {
+        // separator: `|` or `,` continues the case list; otherwise the
+        // member-decl loop below takes over (official: `while (Skip(BITOR))`).
+        if !p.eat(TokenKind::BITOR) && !p.eat(TokenKind::COMMA) {
             break;
         }
     }
@@ -823,33 +841,56 @@ fn parse_enum_cases(p: &mut Parser) -> Vec<EnumCase> {
         if p.eat(TokenKind::SEMI) {
             continue;
         }
-        let _ = parse_decl(p, true);
+        if parse_decl(p, true).is_some() {
+            continue;
+        }
+        // No-progress guard: `parse_decl` returned None without consuming —
+        // report and advance one token so the loop always makes progress
+        // (mirrors parse_class_body recovery). Without this, tokens like `|`
+        // or `...` in a trailing member position spin forever.
+        let t = p.peek_token().clone();
+        let found = crate::token_display_text(&t);
+        p.error_id(&t, cj_diag::DiagId::PARSE_EXPECTED_DECL, &[&found]);
+        p.advance();
     }
     let _ = p.expect(TokenKind::RCURL);
     out
 }
 
-/// True if `k` can begin an enum member declaration (after the case list).
-fn is_enum_member_start(k: TokenKind) -> bool {
+/// Payload types of an enum case: `| A(Int64, Bool)`.
+fn parse_enum_case_payload(p: &mut Parser) -> Vec<Type> {
+    if !p.at(TokenKind::LPAREN) {
+        return Vec::new();
+    }
+    p.advance();
+    let mut pl = Vec::new();
+    while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+        pl.push(parse_type(p));
+        if !p.eat(TokenKind::COMMA) {
+            break;
+        }
+    }
+    let _ = p.expect(TokenKind::RPAREN);
+    pl
+}
+
+/// Contextual keywords usable as identifiers (official `GetContextualKeyword`,
+/// Lexer.cpp): they may appear as enum case names (`| public(Int64)`).
+fn is_contextual_keyword(k: TokenKind) -> bool {
     matches!(
         k,
-        TokenKind::FUNC
-            | TokenKind::PROP
-            | TokenKind::INIT
-            | TokenKind::MACRO
-            | TokenKind::PUBLIC
+        TokenKind::PUBLIC
             | TokenKind::PRIVATE
-            | TokenKind::PROTECTED
             | TokenKind::INTERNAL
-            | TokenKind::STATIC
-            | TokenKind::MUT
-            | TokenKind::CONST
+            | TokenKind::PROTECTED
+            | TokenKind::OVERRIDE
+            | TokenKind::REDEF
             | TokenKind::ABSTRACT
             | TokenKind::SEALED
             | TokenKind::OPEN
-            | TokenKind::OVERRIDE
-            | TokenKind::REDEF
-            | TokenKind::UNSAFE
+            | TokenKind::COMMON
+            | TokenKind::SPECIFIC
+            | TokenKind::FEATURES
     )
 }
 
