@@ -310,6 +310,111 @@ fn lt_is_generic_args(p: &Parser) -> bool {
                     return true;
                 }
             }
+            // Compound tokens that start with `>`: `>>` (two closers),
+            // `>=` (one closer + `=`), `>>=` (two closers + `=`).
+            TokenKind::RSHIFT => {
+                if depth < 2 {
+                    return false;
+                }
+                depth -= 2;
+                if depth == 0 {
+                    // check the token after the second `>`
+                    while i < p.token_len() {
+                        let n = p.raw_kind_at(i);
+                        i += 1;
+                        if n == TokenKind::COMMENT || n == TokenKind::NL {
+                            continue;
+                        }
+                        return matches!(
+                            n,
+                            TokenKind::LPAREN
+                                | TokenKind::DOT
+                                | TokenKind::LT
+                                | TokenKind::RPAREN
+                                | TokenKind::RSQUARE
+                                | TokenKind::RCURL
+                                | TokenKind::SEMI
+                                | TokenKind::COMMA
+                                | TokenKind::COLON
+                                | TokenKind::DOUBLE_COLON
+                                | TokenKind::END
+                                | TokenKind::ASSIGN
+                                | TokenKind::QUEST
+                                | TokenKind::DOUBLE_ARROW
+                                | TokenKind::NL
+                        );
+                    }
+                    return true;
+                }
+            }
+            TokenKind::GE => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    while i < p.token_len() {
+                        let n = p.raw_kind_at(i);
+                        i += 1;
+                        if n == TokenKind::COMMENT || n == TokenKind::NL {
+                            continue;
+                        }
+                        return matches!(
+                            n,
+                            TokenKind::LPAREN
+                                | TokenKind::DOT
+                                | TokenKind::LT
+                                | TokenKind::RPAREN
+                                | TokenKind::RSQUARE
+                                | TokenKind::RCURL
+                                | TokenKind::SEMI
+                                | TokenKind::COMMA
+                                | TokenKind::COLON
+                                | TokenKind::DOUBLE_COLON
+                                | TokenKind::END
+                                | TokenKind::ASSIGN
+                                | TokenKind::QUEST
+                                | TokenKind::DOUBLE_ARROW
+                                | TokenKind::NL
+                        );
+                    }
+                    return true;
+                }
+            }
+            TokenKind::RSHIFT_ASSIGN => {
+                if depth < 2 {
+                    return false;
+                }
+                depth -= 2;
+                if depth == 0 {
+                    while i < p.token_len() {
+                        let n = p.raw_kind_at(i);
+                        i += 1;
+                        if n == TokenKind::COMMENT || n == TokenKind::NL {
+                            continue;
+                        }
+                        return matches!(
+                            n,
+                            TokenKind::LPAREN
+                                | TokenKind::DOT
+                                | TokenKind::LT
+                                | TokenKind::RPAREN
+                                | TokenKind::RSQUARE
+                                | TokenKind::RCURL
+                                | TokenKind::SEMI
+                                | TokenKind::COMMA
+                                | TokenKind::COLON
+                                | TokenKind::DOUBLE_COLON
+                                | TokenKind::END
+                                | TokenKind::ASSIGN
+                                | TokenKind::QUEST
+                                | TokenKind::DOUBLE_ARROW
+                                | TokenKind::NL
+                        );
+                    }
+                    return true;
+                }
+            }
             TokenKind::END => return false,
             _ => {}
         }
@@ -551,8 +656,13 @@ fn parse_atom(p: &mut Parser) -> Expr {
         TokenKind::LET | TokenKind::VAR | TokenKind::CONST => {
             // `let pattern = expr` / `const pattern = expr` — LetPatternDestructor
             // (a statement-like expr); const is an immutable local
+            let is_mut = tok.kind == TokenKind::VAR;
             p.advance();
             let mut pattern = parse_pattern(p);
+            // `var (a, b) = ...` makes every binding mutable; `let`/`const` don't.
+            if is_mut {
+                set_pattern_mutable(&mut pattern);
+            }
             // Typed pattern: `let x: Int64 = expr` — attach the annotation to a
             // simple Var pattern so the typechecker sees the declared type (020).
             if p.eat(TokenKind::COLON) {
@@ -966,6 +1076,26 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
                 Pattern::Invalid(pos_of(&tok))
             }
         }
+    }
+}
+
+/// Recursively mark every binding in a pattern as mutable. Used to propagate
+/// the `var` keyword onto the pattern of `var (a, b) = ...` / `var x = ...`
+/// (the AST's Pattern::Var.is_mutable records `var`, not the destructor's).
+fn set_pattern_mutable(pat: &mut Pattern) {
+    match pat {
+        Pattern::Var { is_mutable, .. } => *is_mutable = true,
+        Pattern::Tuple { elements, .. } => {
+            for e in elements {
+                set_pattern_mutable(e);
+            }
+        }
+        Pattern::Enum { args, .. } => {
+            for a in args {
+                set_pattern_mutable(a);
+            }
+        }
+        _ => {}
     }
 }
 
