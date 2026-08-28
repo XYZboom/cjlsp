@@ -330,12 +330,23 @@ impl LspServer {
 
 /// Resolve the real project root directory for a uri-derived path.
 ///
-/// The harness rewrites the opened uri to a path that does NOT exist on disk
+/// A directory containing `cjpm.toml` is the root of a cjpm package: when
+/// the opened file's real on-disk location sits inside one, that root takes
+/// precedence (works regardless of the server's working directory).
+///
+/// Otherwise (non-cjpm projects, or the diagnostics harness whose rewritten
+/// uri does not exist on disk), fall back to the harness contract: the
+/// harness rewrites the opened uri to a path that does NOT exist on disk
 /// (`.../cjlsp/diagnosticsTest/src/func_error/diag_001.cj`), while the real
 /// sources live under the server's cwd (`.../cjlsp/sourcecode/cangjieTest/`
 /// + `diagnosticsTest/...`). We find the project root by trying every suffix
 ///   of the uri path resolved against cwd and returning the first that exists.
 fn resolve_project_root(cwd: &Path, uri_path: &Path) -> Option<PathBuf> {
+    // 1. cjpm project: nearest ancestor with cjpm.toml beats cwd inference.
+    if let Some(root) = crate::cjpm::find_project_root(uri_path) {
+        return Some(root);
+    }
+    // 2. Legacy: virtual harness uri resolved against the server cwd.
     let comps: Vec<&std::ffi::OsStr> = uri_path
         .components()
         .filter_map(|c| match c {
@@ -358,36 +369,44 @@ fn resolve_project_root(cwd: &Path, uri_path: &Path) -> Option<PathBuf> {
 /// Collect function signatures from all same-package `.cj` sources under the
 /// project root (used for cross-file call type checking). Returns a map of
 /// name -> FuncSig; the opened file's own sigs are merged separately.
+///
+/// Scan scope follows cjpm: a package's source dirs (`src-dir` / source-sets)
+/// plus the src dirs of local-path dependencies; a root without cjpm.toml is
+/// scanned wholesale (legacy).
 fn collect_same_package_sigs(root: &Path, package: Option<&str>) -> HashMap<String, FuncSig> {
     let mut sigs = HashMap::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else if p.extension().is_some_and(|e| e == "cj") {
-                let Ok(src) = fs::read_to_string(&p) else {
-                    continue;
-                };
-                let mut parser =
-                    cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
-                let f = parser.run();
-                // Only same-package siblings are visible (spec Ch.03). A file
-                // without a package decl is treated as package-less.
-                let same_pkg = match (package, f.package.as_deref()) {
-                    (Some(a), Some(b)) => a == b,
-                    _ => true,
-                };
-                if !same_pkg {
-                    continue;
-                }
-                let r = cj_sema::Collector::new().collect_file(&f);
-                for (name, sig) in r.func_sigs {
-                    sigs.entry(name).or_insert(sig);
+    let visible = crate::cjpm::visible_packages(root);
+    for dir in crate::cjpm::scan_dirs(root) {
+        let mut stack = vec![dir];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|e| e == "cj") {
+                    let Ok(src) = fs::read_to_string(&p) else {
+                        continue;
+                    };
+                    let mut parser =
+                        cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
+                    let f = parser.run();
+                    // Same-package siblings are visible (spec Ch.03), plus any
+                    // local dependency package. A file without a package decl
+                    // is treated as package-less.
+                    let same_pkg = match (package, f.package.as_deref()) {
+                        (Some(a), Some(b)) => a == b || visible.contains(b),
+                        _ => true,
+                    };
+                    if !same_pkg {
+                        continue;
+                    }
+                    let r = cj_sema::Collector::new().collect_file(&f);
+                    for (name, sig) in r.func_sigs {
+                        sigs.entry(name).or_insert(sig);
+                    }
                 }
             }
         }
@@ -398,39 +417,47 @@ fn collect_same_package_sigs(root: &Path, package: Option<&str>) -> HashMap<Stri
 /// Collect top-level decl candidates from same-package sibling .cj files
 /// under the project root (cross-file completion). Excludes `path` itself.
 /// Returns the candidates (labels/kinds/details) for completion to merge.
+///
+/// Scan scope follows cjpm: a package's source dirs (`src-dir` / source-sets)
+/// plus the src dirs of local-path dependencies; a root without cjpm.toml is
+/// scanned wholesale (legacy).
 fn collect_same_package_candidates(
     root: &Path,
     package: Option<&str>,
     self_path: &str,
 ) -> Vec<crate::completion::Candidate> {
     let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else if p.extension().is_some_and(|e| e == "cj")
-                && !p.to_string_lossy().ends_with(self_path)
-            {
-                let Ok(src) = fs::read_to_string(&p) else {
-                    continue;
-                };
-                let mut parser =
-                    cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
-                let f = parser.run();
-                // Only same-package siblings are visible (spec Ch.03).
-                let same_pkg = match (package, f.package.as_deref()) {
-                    (Some(a), Some(b)) => a == b,
-                    _ => true,
-                };
-                if !same_pkg {
-                    continue;
+    let visible = crate::cjpm::visible_packages(root);
+    for dir in crate::cjpm::scan_dirs(root) {
+        let mut stack = vec![dir];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|e| e == "cj")
+                    && !p.to_string_lossy().ends_with(self_path)
+                {
+                    let Ok(src) = fs::read_to_string(&p) else {
+                        continue;
+                    };
+                    let mut parser =
+                        cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
+                    let f = parser.run();
+                    // Same-package siblings are visible (spec Ch.03), plus any
+                    // local dependency package.
+                    let same_pkg = match (package, f.package.as_deref()) {
+                        (Some(a), Some(b)) => a == b || visible.contains(b),
+                        _ => true,
+                    };
+                    if !same_pkg {
+                        continue;
+                    }
+                    out.extend(crate::completion::sibling_candidates(&f));
                 }
-                out.extend(crate::completion::sibling_candidates(&f));
             }
         }
     }
@@ -1065,5 +1092,102 @@ mod tests {
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[1]["message"], "/* 2.1 */print ( 42");
         assert_eq!(arr[0]["location"]["uri"], "file:///a.cj");
+    }
+
+    /// T36: a directory containing cjpm.toml is the project root (beats
+    /// cwd inference), and the cross-file scan scope follows the package's
+    /// src-dir — siblings under src/ are visible, stray files OUTSIDE src
+    /// (e.g. target/) are not.
+    #[test]
+    fn cjpm_root_and_src_scan_scope() {
+        let base = std::env::temp_dir().join(format!("cjpm_e2e_{}", std::process::id()));
+        fs::create_dir_all(base.join("src/mypkg/sub")).unwrap();
+        fs::create_dir_all(base.join("target")).unwrap();
+        fs::write(
+            base.join("cjpm.toml"),
+            "[package]\nname = \"demo\"\nsrc-dir = \"src\"\n\n[dependencies]\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("src/mypkg/a.cj"),
+            "package demo.mypkg\n\nclass A {}\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("src/mypkg/sub/b.cj"),
+            "package demo.mypkg\n\nfunc from_sub(): Int64 { return 2 }\n",
+        )
+        .unwrap();
+        // Stray .cj OUTSIDE src/: a whole-tree scan would wrongly include it.
+        fs::write(
+            base.join("target/stray.cj"),
+            "package demo.mypkg\n\nclass Stray {}\n",
+        )
+        .unwrap();
+
+        let opened = base.join("src/mypkg/a.cj");
+        let cwd = std::env::current_dir().unwrap_or_default();
+
+        // 1. cjpm root: nearest cjpm.toml ancestor wins over cwd inference.
+        let root = resolve_project_root(&cwd, &opened).expect("project root");
+        assert_eq!(root, base);
+
+        // 2. Scan scope = src-dir only: the src/sub sibling is a candidate
+        // (bare + call-snippet variants), the target/ stray decl is NOT.
+        let cands =
+            collect_same_package_candidates(&root, Some("demo.mypkg"), &opened.to_string_lossy());
+        let labels: Vec<&str> = cands.iter().map(|c| c.label.as_str()).collect();
+        assert!(
+            labels.iter().any(|l| *l == "from_sub"),
+            "src/sub sibling visible"
+        );
+        assert!(
+            !labels.iter().any(|l| *l == "Stray"),
+            "stray target/ decl excluded"
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// T36: local path-backed [dependencies] are same-project modules whose
+    /// decls are visible cross-file even though their package differs.
+    #[test]
+    fn cjpm_local_dependency_visible() {
+        let base = std::env::temp_dir().join(format!("cjpm_dep_e2e_{}", std::process::id()));
+        fs::create_dir_all(base.join("src")).unwrap();
+        fs::create_dir_all(base.join("lib/src")).unwrap();
+        fs::write(
+            base.join("cjpm.toml"),
+            "[dependencies]\nlib = {path=\"./lib\"}\n\n[package]\nname = \"app\"\nsrc-dir = \"src\"\n",
+        )
+        .unwrap();
+        fs::write(base.join("src/main.cj"), "package app\n\nfunc main() {}\n").unwrap();
+        // The dependency is its own cjpm package ("lib" from its own toml).
+        fs::write(
+            base.join("lib/cjpm.toml"),
+            "[package]\nname = \"lib\"\nsrc-dir = \"src\"\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("lib/src/helper.cj"),
+            "package lib\n\nfunc lib_helper(): Int64 { return 7 }\n",
+        )
+        .unwrap();
+
+        let opened = base.join("src/main.cj");
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let root = resolve_project_root(&cwd, &opened).expect("project root");
+        let cands = collect_same_package_candidates(&root, Some("app"), &opened.to_string_lossy());
+        let labels: Vec<&str> = cands.iter().map(|c| c.label.as_str()).collect();
+        // lib_helper from the local dependency package is visible cross-file,
+        // despite its package ("lib") differing from the opened file's.
+        assert!(
+            labels.iter().any(|l| *l == "lib_helper"),
+            "local dependency decl visible cross-file"
+        );
+        // The opened file itself is excluded.
+        assert!(!labels.iter().any(|l| *l == "main"));
+
+        let _ = fs::remove_dir_all(&base);
     }
 }
