@@ -1,0 +1,14 @@
+# Frontend performance baseline (T27, criterion)
+# Sample: tests/samples/large.cj (95,639 bytes / 1,018 lines, real LLT file)
+# Run:  cargo bench -p cj-lsp   (criterion)
+# Date: 2026-08-28
+
+lexer/tokenize_real     time:   [1.5136 ms 1.5267 ms 1.5424 ms]
+parser/parse_real       time:   [4.2662 ms 4.3058 ms 4.3417 ms]
+pipeline/tokenize_parse time:   [4.9553 ms 4.9989 ms 5.0465 ms]
+
+# Notes
+# - 95KB source full frontend (tokenize+parse) ~5 ms; no perf regression from
+#   the LLT coverage work (61%->80.8%).
+# - Sample: LLT/compiler/CHIR/CHIR-DIS/big_chir.cj (real-world class-heavy file).
+# - Threshold for CI regression alert: >2x above the pipeline baseline.
