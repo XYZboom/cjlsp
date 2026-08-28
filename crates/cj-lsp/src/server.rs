@@ -119,11 +119,11 @@ impl LspServer {
         let mut parser = cj_parser::Parser::new(&source, cj_lexer::Lexer::new(&source).tokenize());
         let file = parser.run();
 
-        self.completion_inner(&file, source, path, &uri, line, character)
+        self.completion_inner(&file, &source, &path, &uri, line, character)
     }
 
     fn completion_inner(
-        &self,
+        &mut self,
         file: &cj_ast::File,
         source: &str,
         path: &std::path::Path,
@@ -137,7 +137,7 @@ impl LspServer {
         // scan cache re-parses only changed/new siblings (mtime diff), not
         // the whole package, on every request.
         let cwd = std::env::current_dir().unwrap_or_default();
-        let project_root = resolve_project_root(&cwd, &path);
+        let project_root = resolve_project_root(&cwd, path);
         let siblings = project_root.as_deref().map(|r| {
             let cache = self.scan_cache.entry(r.to_path_buf()).or_default();
             collect_same_package_candidates(
@@ -149,13 +149,8 @@ impl LspServer {
         });
 
         crate::completion::complete_at(
-<<<<<<< HEAD
-            &file,
-            &source,
-=======
             file,
             source,
->>>>>>> wt/t35-completion60
             line,
             character,
             siblings.as_deref(),
@@ -523,7 +518,7 @@ fn parse_sibling_file(p: &Path, mtime: SystemTime) -> Option<CachedSibling> {
     let mut parser = cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
     let f = parser.run();
     let package = f.package.clone();
-    let candidates = crate::completion::sibling_candidates(&f);
+    let candidates = crate::completion::sibling_candidates(&f, &src);
     let r = cj_sema::Collector::new().collect_file(&f);
     Some(CachedSibling {
         mtime,
@@ -555,42 +550,7 @@ fn collect_same_package_candidates(
     package: Option<&str>,
     self_path: &str,
 ) -> Vec<crate::completion::Candidate> {
-<<<<<<< HEAD
     refresh_sibling_cache(cache, root, package, Some(self_path)).candidates
-=======
-    let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else if p.extension().is_some_and(|e| e == "cj")
-                && !p.to_string_lossy().ends_with(self_path)
-            {
-                let Ok(src) = fs::read_to_string(&p) else {
-                    continue;
-                };
-                let mut parser =
-                    cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
-                let f = parser.run();
-                // Only same-package siblings are visible (spec Ch.03).
-                let same_pkg = match (package, f.package.as_deref()) {
-                    (Some(a), Some(b)) => a == b,
-                    _ => true,
-                };
-                if !same_pkg {
-                    continue;
-                }
-                out.extend(crate::completion::sibling_candidates(&f, &src));
-            }
-        }
-    }
-    out
->>>>>>> wt/t35-completion60
 }
 
 /// Convert an LSP 0-based (line, character) position to a byte offset in
@@ -1404,7 +1364,12 @@ mod tests {
         let cwd = std::env::current_dir().unwrap_or_default();
         let root = resolve_project_root(&cwd, &opened).expect("project root");
         let mut cache: HashMap<PathBuf, CachedSibling> = HashMap::new();
-        let cands = collect_same_package_candidates(&mut cache, &root, Some("app"), &opened.to_string_lossy());
+        let cands = collect_same_package_candidates(
+            &mut cache,
+            &root,
+            Some("app"),
+            &opened.to_string_lossy(),
+        );
         let labels: Vec<&str> = cands.iter().map(|c| c.label.as_str()).collect();
         // lib_helper from the local dependency package is visible cross-file,
         // despite its package ("lib") differing from the opened file's.
