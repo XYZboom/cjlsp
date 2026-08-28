@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
+mod cjpm;
 mod completion;
 mod hover;
 mod references;

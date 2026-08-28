@@ -373,6 +373,11 @@ impl LspServer {
 /// + `diagnosticsTest/...`). We find the project root by trying every suffix
 ///   of the uri path resolved against cwd and returning the first that exists.
 fn resolve_project_root(cwd: &Path, uri_path: &Path) -> Option<PathBuf> {
+    // 1. cjpm project: nearest ancestor with cjpm.toml beats cwd inference.
+    if let Some(root) = crate::cjpm::find_project_root(uri_path) {
+        return Some(root);
+    }
+    // 2. Legacy: virtual harness uri resolved against the server cwd.
     let comps: Vec<&std::ffi::OsStr> = uri_path
         .components()
         .filter_map(|c| match c {
@@ -387,11 +392,6 @@ fn resolve_project_root(cwd: &Path, uri_path: &Path) -> Option<PathBuf> {
         }
         if cwd.join(&tail).exists() {
             let root = cwd.join(comps[i]);
-            // The first existing suffix's leading component can be the FILE
-            // itself when cwd already sits inside the file's directory (the
-            // measured 1.9ms illusion: the "project root" resolved to a file,
-            // read_dir silently failed and the cross-file scan never ran).
-            // Only a real directory is a usable project root.
             if root.is_dir() {
                 return Some(root);
             }
@@ -437,18 +437,20 @@ fn refresh_sibling_cache(
 ) -> SiblingData {
     // 1. Cheap directory walk: (path, mtime) for every .cj file under root.
     let mut disk: HashMap<PathBuf, SystemTime> = HashMap::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else if p.extension().is_some_and(|e| e == "cj") {
-                if let Ok(m) = entry.metadata().and_then(|m| m.modified()) {
-                    disk.insert(p, m);
+    for start in crate::cjpm::scan_dirs(root) {
+        let mut stack = vec![start];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|e| e == "cj") {
+                    if let Ok(m) = entry.metadata().and_then(|m| m.modified()) {
+                        disk.insert(p, m);
+                    }
                 }
             }
         }
@@ -470,12 +472,15 @@ fn refresh_sibling_cache(
     }
     cache.retain(|p, _| disk.contains_key(p));
 
-    // 3. Merge same-package payloads (excluding the opened file for candidates).
+    // 3. Merge same-package payloads (excluding the opened file for
+    // candidates). Decls from local cjpm dependencies are also visible
+    // (their packages appear in visible_packages).
+    let visible = crate::cjpm::visible_packages(root);
     let mut candidates = Vec::new();
     let mut func_sigs = HashMap::new();
     for (p, c) in cache.iter() {
         let same_pkg = match (package, c.package.as_deref()) {
-            (Some(a), Some(b)) => a == b,
+            (Some(a), Some(b)) => a == b || visible.contains(b),
             _ => true,
         };
         if !same_pkg {
@@ -1262,5 +1267,101 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn cjpm_root_and_src_scan_scope() {
+        let base = std::env::temp_dir().join(format!("cjpm_e2e_{}", std::process::id()));
+        fs::create_dir_all(base.join("src/mypkg/sub")).unwrap();
+        fs::create_dir_all(base.join("target")).unwrap();
+        fs::write(
+            base.join("cjpm.toml"),
+            "[package]\nname = \"demo\"\nsrc-dir = \"src\"\n\n[dependencies]\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("src/mypkg/a.cj"),
+            "package demo.mypkg\n\nclass A {}\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("src/mypkg/sub/b.cj"),
+            "package demo.mypkg\n\nfunc from_sub(): Int64 { return 2 }\n",
+        )
+        .unwrap();
+        // Stray .cj OUTSIDE src/: a whole-tree scan would wrongly include it.
+        fs::write(
+            base.join("target/stray.cj"),
+            "package demo.mypkg\n\nclass Stray {}\n",
+        )
+        .unwrap();
+
+        let opened = base.join("src/mypkg/a.cj");
+        let cwd = std::env::current_dir().unwrap_or_default();
+
+        // 1. cjpm root: nearest cjpm.toml ancestor wins over cwd inference.
+        let root = resolve_project_root(&cwd, &opened).expect("project root");
+        assert_eq!(root, base);
+
+        // 2. Scan scope = src-dir only: the src/sub sibling is a candidate
+        // (bare + call-snippet variants), the target/ stray decl is NOT.
+        let mut cache: HashMap<PathBuf, CachedSibling> = HashMap::new();
+        let cands = collect_same_package_candidates(
+            &mut cache,
+            &root,
+            Some("demo.mypkg"),
+            &opened.to_string_lossy(),
+        );
+        let labels: Vec<&str> = cands.iter().map(|c| c.label.as_str()).collect();
+        assert!(
+            labels.iter().any(|l| *l == "from_sub"),
+            "src/sub sibling visible"
+        );
+        assert!(
+            !labels.iter().any(|l| *l == "Stray"),
+            "stray target/ decl excluded"
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cjpm_local_dependency_visible() {
+        let base = std::env::temp_dir().join(format!("cjpm_dep_e2e_{}", std::process::id()));
+        fs::create_dir_all(base.join("src")).unwrap();
+        fs::create_dir_all(base.join("lib/src")).unwrap();
+        fs::write(
+            base.join("cjpm.toml"),
+            "[dependencies]\nlib = {path=\"./lib\"}\n\n[package]\nname = \"app\"\nsrc-dir = \"src\"\n",
+        )
+        .unwrap();
+        fs::write(base.join("src/main.cj"), "package app\n\nfunc main() {}\n").unwrap();
+        // The dependency is its own cjpm package ("lib" from its own toml).
+        fs::write(
+            base.join("lib/cjpm.toml"),
+            "[package]\nname = \"lib\"\nsrc-dir = \"src\"\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("lib/src/helper.cj"),
+            "package lib\n\nfunc lib_helper(): Int64 { return 7 }\n",
+        )
+        .unwrap();
+
+        let opened = base.join("src/main.cj");
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let root = resolve_project_root(&cwd, &opened).expect("project root");
+        let mut cache: HashMap<PathBuf, CachedSibling> = HashMap::new();
+        let cands = collect_same_package_candidates(&mut cache, &root, Some("app"), &opened.to_string_lossy());
+        let labels: Vec<&str> = cands.iter().map(|c| c.label.as_str()).collect();
+        // lib_helper from the local dependency package is visible cross-file,
+        // despite its package ("lib") differing from the opened file's.
+        assert!(
+            labels.iter().any(|l| *l == "lib_helper"),
+            "local dependency decl visible cross-file"
+        );
+        // The opened file itself is excluded.
+        assert!(!labels.iter().any(|l| *l == "main"));
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

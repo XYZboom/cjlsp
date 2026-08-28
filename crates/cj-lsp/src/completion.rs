@@ -967,7 +967,7 @@ fn vis_prefix(
 
 #[derive(Clone)]
 pub(crate) struct Candidate {
-    label: String,
+    pub(crate) label: String,
     kind: u32,
     detail: String,
     insert_text: String,
