@@ -1626,6 +1626,17 @@ impl<'a> Index<'a> {
         // member access `recv.word`
         if let Some(recv) = self.receiver_before(line, character) {
             if let Some(recv_ty) = self.receiver_type(&recv, line, character) {
+                // pipeline `arg |> recv.word` passes `arg` as the call's sole
+                // argument — resolve the overload (own + inherited) that
+                // accepts it (e.g. `m3 |> m2.h1` where m3: Rune picks the
+                // inherited `I1.h1(a: Rune)` over the own `h1(a: Int64)`).
+                if let Some(arg_ty) = self.pipeline_arg(&recv, line, character) {
+                    if let Some(hi) =
+                        self.member_lookup_for_pipeline(&recv_ty, word, &[Some(arg_ty)])
+                    {
+                        return Some(hi);
+                    }
+                }
                 if let Some(hi) = self.member_lookup(&recv_ty, word) {
                     return Some(hi);
                 }
@@ -1763,6 +1774,78 @@ impl<'a> Index<'a> {
             }
         }
         best
+    }
+
+    /// Collect indices of every member named `name` on `container` — its own
+    /// members plus, recursively, members inherited from its parents (the
+    /// `parents` table maps a type name to its declared parent type names).
+    fn member_candidates(&self, container: &str, name: &str, out: &mut Vec<usize>) {
+        let base = container.split('<').next().unwrap_or(container);
+        if let Some(idxs) = self.members.get(base) {
+            for &i in idxs {
+                if self.all[i].name == name {
+                    out.push(i);
+                }
+            }
+        }
+        if let Some(ps) = self.parents.get(base) {
+            for p in ps {
+                self.member_candidates(p, name, out);
+            }
+        }
+    }
+
+    /// Pick the member overload (own + inherited, via [`Self::member_candidates`])
+    /// whose parameters best accept the given argument types. Own members win
+    /// ties because they are collected first.
+    fn member_lookup_for_pipeline(
+        &self,
+        container: &str,
+        name: &str,
+        args: &[Option<String>],
+    ) -> Option<&Hoverable> {
+        let mut cands = Vec::new();
+        self.member_candidates(container, name, &mut cands);
+        let mut best: Option<&Hoverable> = None;
+        let mut best_score = i32::MIN;
+        for i in cands {
+            let h = &self.all[i];
+            let score = match_score(&h.param_tys, args);
+            if best.is_none() || score > best_score {
+                best = Some(h);
+                best_score = score;
+            }
+        }
+        best
+    }
+
+    /// When the member access `recv.word` is the right-hand side of a
+    /// pipeline `arg |> recv.word`, the pipeline passes `arg` as the call's
+    /// single argument (`recv.word(arg)`). Return `arg`'s resolved type.
+    fn pipeline_arg(&self, recv: &str, line: u32, character: u32) -> Option<String> {
+        let l = self.source_line(line + 1);
+        let col = character as usize;
+        if col > l.len() {
+            return None;
+        }
+        let before = &l[..col];
+        let idx = before.rfind('.')?;
+        let head = &before[..idx];
+        // the pipeline operator must feed directly into this receiver (only
+        // whitespace between `|>` and the receiver word), otherwise the `|>`
+        // belongs to a different subexpression.
+        let p = head.rfind("|>")?;
+        if head[p + 2..].trim() != recv {
+            return None;
+        }
+        let left = &head[..p];
+        let arg = left
+            .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .find(|s| !s.is_empty())?;
+        // the pipeline argument is a value → its declared/inferred type
+        self.lookup_local(arg, line, character)
+            .or_else(|| self.lookup_top_value(arg))
+            .and_then(|h| h.ty.clone())
     }
 
     /// Pick the best function overload (by arg types) from the by_name hits.
