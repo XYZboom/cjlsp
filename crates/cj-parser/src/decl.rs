@@ -20,6 +20,14 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
     loop {
         match p.peek() {
             TokenKind::PUBLIC => {
+                // Repeated `public` used as a member/constructor NAME
+                // (contextual keyword as identifier, spec Ch.04): e.g.
+                // `public public(public: Int64, ...)` — the second `public`
+                // is the constructor name. `is_public` already set means the
+                // first modifier was consumed; a following LPAREN names it.
+                if is_public && p.peek_ahead(1) == TokenKind::LPAREN {
+                    break;
+                }
                 is_public = true;
                 mods.push(p.advance());
             }
@@ -630,13 +638,21 @@ fn parse_param_list(p: &mut Parser) -> Vec<Param> {
         // param annotations: `func f(@APILevel[11] v: Int64)`
         while eat_annotation(p) {}
         // constructor params may carry access modifiers + let/var:
-        // `public let domain: CString`
-        while let TokenKind::PUBLIC
-        | TokenKind::PRIVATE
-        | TokenKind::PROTECTED
-        | TokenKind::INTERNAL
-        | TokenKind::LET
-        | TokenKind::VAR = p.peek()
+        // `public let domain: CString`. A modifier followed by `:` or `!`
+        // is actually the PARAMETER NAME (contextual keyword as identifier,
+        // spec Ch.04), e.g. `public(public : Int64, private !: Int64)`.
+        while (matches!(
+            p.peek(),
+            TokenKind::PUBLIC
+                | TokenKind::PRIVATE
+                | TokenKind::PROTECTED
+                | TokenKind::INTERNAL
+                | TokenKind::LET
+                | TokenKind::VAR
+        )) && !(matches!(
+            p.peek(),
+            TokenKind::PUBLIC | TokenKind::PRIVATE | TokenKind::PROTECTED | TokenKind::INTERNAL
+        ) && matches!(p.peek_ahead(1), TokenKind::COLON | TokenKind::NOT))
         {
             p.advance();
         }

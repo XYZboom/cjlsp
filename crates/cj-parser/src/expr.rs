@@ -788,6 +788,14 @@ fn parse_atom(p: &mut Parser) -> Expr {
             }
         }
         TokenKind::LET | TokenKind::VAR | TokenKind::CONST => {
+            // `const func f(...) { ... }` — a const local function, not a var.
+            // Const-ness is recorded in decl.rs; forward to the local-func
+            // branch (matches official ParseDecl's const-func handling).
+            if tok.kind == TokenKind::CONST && p.peek_ahead(1) == TokenKind::FUNC {
+                let t = p.peek_token().clone();
+                let _ = crate::decl::parse_decl(p, false);
+                return Expr::Invalid(pos_of(&t));
+            }
             // `let pattern = expr` / `const pattern = expr` — LetPatternDestructor
             // (a statement-like expr); const is an immutable local
             let is_mut = tok.kind == TokenKind::VAR;
