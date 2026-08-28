@@ -1287,13 +1287,13 @@ mod tests {
 
         // First refresh parses every sibling: both files cached, alpha sig
         // visible from a.cj (b.cj has no funcs).
-        let d1 = refresh_sibling_cache(&mut cache, &root, Some("p"), None);
+        let d1 = refresh_sibling_cache(&mut cache, &root, Some("p"), &[], None);
         assert!(d1.func_sigs.contains_key("alpha"));
         assert!(cache.contains_key(&a) && cache.contains_key(&b));
         let d1_count = d1.candidates.len();
 
         // Unchanged mtime -> cache hit, identical output (no re-parse).
-        let d2 = refresh_sibling_cache(&mut cache, &root, Some("p"), None);
+        let d2 = refresh_sibling_cache(&mut cache, &root, Some("p"), &[], None);
         assert!(d2.func_sigs.contains_key("alpha"));
         assert_eq!(d2.candidates.len(), d1_count);
 
@@ -1301,13 +1301,13 @@ mod tests {
         // signature appears and the cached candidates update.
         std::thread::sleep(std::time::Duration::from_millis(20));
         fs::write(&b, "package p\nfunc gamma(): Int64 { return 2 }\n").unwrap();
-        let d3 = refresh_sibling_cache(&mut cache, &root, Some("p"), None);
+        let d3 = refresh_sibling_cache(&mut cache, &root, Some("p"), &[], None);
         assert!(d3.func_sigs.contains_key("gamma"), "changed file re-parsed");
         assert!(!d3.func_sigs.contains_key("beta"));
 
         // Delete a.cj -> its cache entry drops and alpha disappears.
         fs::remove_file(&a).unwrap();
-        let d4 = refresh_sibling_cache(&mut cache, &root, Some("p"), None);
+        let d4 = refresh_sibling_cache(&mut cache, &root, Some("p"), &[], None);
         assert!(!cache.contains_key(&a), "deleted file dropped from cache");
         assert!(!d4.func_sigs.contains_key("alpha"));
         assert!(d4.candidates.len() < d1_count);
@@ -1326,15 +1326,15 @@ mod tests {
         let mut cache: HashMap<PathBuf, CachedSibling> = HashMap::new();
         let root = dir.clone();
 
-        let base = refresh_sibling_cache(&mut cache, &root, Some("p"), None)
+        let base = refresh_sibling_cache(&mut cache, &root, Some("p"), &[], None)
             .candidates
             .len();
         // The opened file a.cj is excluded from completion candidates (its
         // decls come from the live buffer) — but its func sigs are still
         // collected for the cross-file call checks.
         let a_str = a.to_string_lossy().to_string();
-        let excl = refresh_sibling_cache(&mut cache, &root, Some("p"), Some(&a_str));
-        assert!(excl.candidates.len() < base && excl.candidates.len() > 0);
+        let excl = refresh_sibling_cache(&mut cache, &root, Some("p"), &[], Some(&a_str));
+        assert!(excl.candidates.len() < base && !excl.candidates.is_empty());
         assert!(
             excl.func_sigs.contains_key("alpha"),
             "self sigs still merged"
@@ -1383,17 +1383,12 @@ mod tests {
             &mut cache,
             &root,
             Some("demo.mypkg"),
+            &[],
             &opened.to_string_lossy(),
         );
         let labels: Vec<&str> = cands.iter().map(|c| c.label.as_str()).collect();
-        assert!(
-            labels.iter().any(|l| *l == "from_sub"),
-            "src/sub sibling visible"
-        );
-        assert!(
-            !labels.iter().any(|l| *l == "Stray"),
-            "stray target/ decl excluded"
-        );
+        assert!(labels.contains(&"from_sub"), "src/sub sibling visible");
+        assert!(!labels.contains(&"Stray"), "stray target/ decl excluded");
 
         let _ = fs::remove_dir_all(&base);
     }
@@ -1429,17 +1424,18 @@ mod tests {
             &mut cache,
             &root,
             Some("app"),
+            &[],
             &opened.to_string_lossy(),
         );
         let labels: Vec<&str> = cands.iter().map(|c| c.label.as_str()).collect();
         // lib_helper from the local dependency package is visible cross-file,
         // despite its package ("lib") differing from the opened file's.
         assert!(
-            labels.iter().any(|l| *l == "lib_helper"),
+            labels.contains(&"lib_helper"),
             "local dependency decl visible cross-file"
         );
         // The opened file itself is excluded.
-        assert!(!labels.iter().any(|l| *l == "main"));
+        assert!(!labels.contains(&"main"));
 
         let _ = fs::remove_dir_all(&base);
     }

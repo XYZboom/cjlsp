@@ -260,33 +260,80 @@ fn ensure_runtime() -> Result<&'static Runtime, String> {
     }
 }
 
-fn init_runtime() -> Result<Runtime, String> {
-    let lib_dir = macro_cache::sdk_root().join("runtime/lib/linux_x86_64_cjnative");
+/// Runtime library subdirectory under `<sdk>/runtime/lib` — the SDK uses a
+/// per-platform dir (`linux_x86_64_cjnative` / `windows_x86_64_cjnative`).
+#[cfg(target_os = "linux")]
+fn runtime_lib_subdir() -> &'static str {
+    "linux_x86_64_cjnative"
+}
+#[cfg(target_os = "windows")]
+fn runtime_lib_subdir() -> &'static str {
+    "windows_x86_64_cjnative"
+}
 
-    // The macro .so carries DT_NEEDED entries like `libcangjie-std-ast.so`
-    // (the std libs have NO SONAME, so the loader matches NEEDED by filename
-    // search, not by our preloaded full path). The official launcher solves
-    // this with LD_LIBRARY_PATH (envsetup.sh); mirror that here so dlopen of
-    // the macro .so resolves its dependencies regardless of the caller's env.
-    if let Ok(existing) = std::env::var("LD_LIBRARY_PATH") {
-        std::env::set_var(
-            "LD_LIBRARY_PATH",
-            format!("{}:{}", lib_dir.display(), existing),
-        );
-    } else {
-        std::env::set_var("LD_LIBRARY_PATH", lib_dir.display().to_string());
+/// Shared-library extension for the runtime/std libs on this platform
+/// (matches the SDK layout: `.so` on Linux, `.dll` on Windows).
+#[cfg(target_os = "linux")]
+fn lib_ext() -> &'static str {
+    "so"
+}
+#[cfg(target_os = "windows")]
+fn lib_ext() -> &'static str {
+    "dll"
+}
+
+/// Make `<sdk>/runtime/lib/<plat>_x86_64_cjnative` discoverable by the loader
+/// so a macro library's dependencies (DT_NEEDED on Linux / import table on
+/// Windows) resolve by name:
+///   * Linux   — prepend to LD_LIBRARY_PATH. The macro .so's DT_NEEDED entries
+///     (`libcangjie-std-ast.so` etc.) have no SONAME, so the loader matches
+///     them by filename search through that var; glibc snapshots it at process
+///     start, so we set it here exactly as the official envsetup.sh does.
+///   * Windows — prepend to PATH. LoadLibraryW resolves a .dll's imported
+///     DLLs through the standard search order, which includes PATH.
+fn ensure_lib_dir_on_loader_path(lib_dir: &Path) {
+    #[cfg(target_os = "linux")]
+    {
+        let existing = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+        let merged = if existing.is_empty() {
+            lib_dir.display().to_string()
+        } else {
+            format!("{}:{}", lib_dir.display(), existing)
+        };
+        std::env::set_var("LD_LIBRARY_PATH", merged);
     }
+    #[cfg(target_os = "windows")]
+    {
+        let existing = std::env::var("PATH").unwrap_or_default();
+        let merged = if existing.is_empty() {
+            lib_dir.display().to_string()
+        } else {
+            format!("{};{}", lib_dir.display(), existing)
+        };
+        std::env::set_var("PATH", merged);
+    }
+}
+
+fn init_runtime() -> Result<Runtime, String> {
+    let lib_dir = macro_cache::sdk_root()
+        .join("runtime/lib")
+        .join(runtime_lib_subdir());
+    let ext = lib_ext();
+
+    ensure_lib_dir_on_loader_path(&lib_dir);
+
     let preload = [
-        "libboundscheck.so",
-        "libcangjie-runtime.so",
-        "libcangjie-std-core.so",
-        "libcangjie-std-collection.so",
-        "libcangjie-std-ast.so",
-        "libcangjie-std-sort.so",
+        "libboundscheck",
+        "libcangjie-runtime",
+        "libcangjie-std-core",
+        "libcangjie-std-collection",
+        "libcangjie-std-ast",
+        "libcangjie-std-sort",
     ];
     let mut std_libs = Vec::new();
-    for name in preload {
-        let p = lib_dir.join(name);
+    for base in preload {
+        let name = format!("{base}.{ext}");
+        let p = lib_dir.join(&name);
         if p.exists() {
             let lib =
                 unsafe { imp::open(&p) }.map_err(|e| format!("dlopen {}: {e}", p.display()))?;
@@ -294,7 +341,7 @@ fn init_runtime() -> Result<Runtime, String> {
         }
     }
 
-    let runtime_path = lib_dir.join("libcangjie-runtime.so");
+    let runtime_path = lib_dir.join(format!("libcangjie-runtime.{ext}"));
     let runtime_lib = unsafe { imp::open(&runtime_path) }
         .map_err(|e| format!("dlopen runtime {}: {e}", runtime_path.display()))?;
 
@@ -322,16 +369,20 @@ fn init_runtime() -> Result<Runtime, String> {
         // Best-effort std package inits in dependency order (std.core →
         // std.collection → std.ast) so static std state is ready. Matches the
         // normal Cangjie startup; failures are ignored — expansion falls back.
+        // Same mangled package-init symbols on both platforms (verified against
+        // the SDK exports: core → _CGPatirHv, collection → _CGPacirHv, ast →
+        // _CGPaxirHv); only the std-lib filename extension differs.
         let std_pkgs: [(&str, &str); 3] = [
-            ("libcangjie-std-core.so", "_CGPatirHv"),
-            ("libcangjie-std-collection.so", "_CGPacirHv"),
-            ("libcangjie-std-ast.so", "_CGPaxirHv"),
+            ("libcangjie-std-core", "_CGPatirHv"),
+            ("libcangjie-std-collection", "_CGPacirHv"),
+            ("libcangjie-std-ast", "_CGPaxirHv"),
         ];
-        for (file, sym) in std_pkgs {
+        for (base, sym) in std_pkgs {
+            let file = format!("{base}.{ext}");
             let Some(lib) = rt
                 ._std_libs
                 .iter()
-                .find(|(p, _)| p.file_name().map(|f| f == file).unwrap_or(false))
+                .find(|(p, _)| p.file_name().map(|f| f == file.as_str()).unwrap_or(false))
             else {
                 continue;
             };
@@ -662,9 +713,7 @@ mod tests {
         use std::fs;
         use std::process::Command;
         let _ = fs::create_dir_all(dir.join("src/p"));
-        let cjpm_toml = format!(
-            "[dependencies]\n\n[package]\n  cjc-version = \"1.1.3\"\n  name = \"pkg\"\n  output-type = \"executable\"\n  src-dir = \"src\"\n  version = \"1.0.0\"\n  package-configuration = {{}}\n"
-        );
+        let cjpm_toml = "[dependencies]\n\n[package]\n  cjc-version = \"1.1.3\"\n  name = \"pkg\"\n  output-type = \"executable\"\n  src-dir = \"src\"\n  version = \"1.0.0\"\n  package-configuration = {}\n";
         fs::write(dir.join("cjpm.toml"), cjpm_toml).map_err(|e| e.to_string())?;
         fs::write(
             dir.join("src/p/p.cj"),
@@ -739,10 +788,7 @@ mod tests {
                 return;
             }
         };
-        let res = (|| -> Result<Vec<Tokenish>, String> {
-            let so = so.clone();
-            expand_macro_call(&so, "Wrap", "pkg.p", &[tok("42")])
-        })();
+        let res = expand_macro_call(&so, "Wrap", "pkg.p", &[tok("42")]);
         let _ = std::fs::remove_dir_all(&dir);
         match res {
             Ok(tokens) => {

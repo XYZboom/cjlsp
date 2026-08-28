@@ -39,6 +39,19 @@ pub(crate) fn sdk_root() -> PathBuf {
     PathBuf::from("/root/Code/cangjie/sdk/cangjie")
 }
 
+/// Macro-library extension cjpm produces on this platform — the official
+/// compiler's LIB_SUFFIX (MacroCall.h): `.so` on Linux, `.dll` on Windows,
+/// `.dylib` on macOS. cjpm emits `lib-macro_<fullPkgName>.<ext>` regardless
+/// of platform (GetMacroFuncName / FindMacroDefPkg in MacroCallResolve.cpp).
+#[cfg(target_os = "linux")]
+fn macro_lib_ext() -> &'static str {
+    "so"
+}
+#[cfg(target_os = "windows")]
+fn macro_lib_ext() -> &'static str {
+    "dll"
+}
+
 /// sha256 hex of a string (used for cache keys).
 fn sha256_hex(s: &str) -> String {
     use std::fmt::Write;
@@ -83,11 +96,12 @@ impl MacroCache {
         }
     }
 
-    /// Compile a macro package and cache the resulting .so keyed by source hash.
-    /// Returns the .so path to dlopen plus the macro package's full name (e.g.
-    /// `macro_calling.define` — derived from the `lib-macro_<pkg>.so` filename,
-    /// needed to form the `macroCall_c_<name>_<pkg>` symbol). Reuses cached
-    /// artifacts when the source is unchanged, otherwise invokes cjpm build.
+    /// Compile a macro package and cache the resulting shared library keyed
+    /// by source hash. Returns the .so/.dll path to load plus the macro
+    /// package's full name (e.g. `macro_calling.define` — derived from the
+    /// `lib-macro_<pkg>.<ext>` filename, needed to form the
+    /// `macroCall_c_<name>_<pkg>` symbol). Reuses cached artifacts when the
+    /// source is unchanged, otherwise invokes cjpm build.
     pub fn compile_macro_package(&mut self, pkg_dir: &Path) -> std::io::Result<(PathBuf, String)> {
         // The original build artifact gives us the macro package full name.
         let (_orig_so, pkg_name) = find_macro_so_and_pkg(pkg_dir)?;
@@ -96,9 +110,9 @@ impl MacroCache {
 
         let cache_dir = sdk_root().join("..").join(".macro-cache");
         fs::create_dir_all(&cache_dir)?;
-        let cache_so = cache_dir.join(format!("lib-macro-{src_hash}.so"));
+        let cache_so = cache_dir.join(format!("lib-macro-{src_hash}.{}", macro_lib_ext()));
 
-        // 1. Cross-session artifact: reuse the cached .so without rebuilding.
+        // 1. Cross-session artifact: reuse the cached library without rebuilding.
         if cache_so.exists() {
             self.compiled.insert(src_hash, cache_so.clone());
             return Ok((cache_so, pkg_name));
@@ -110,23 +124,12 @@ impl MacroCache {
             }
         }
 
-        // Compile: run cjpm in the package dir (source envsetup first).
+        // Compile: run the SDK's cjpm in the package dir (env setup per
+        // platform — see build_macro_package).
         let root = sdk_root();
-        let envsetup = root.join("envsetup.sh");
-        if !envsetup.exists() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("SDK envsetup.sh not found at {}", envsetup.display()),
-            ));
-        }
-        let shell_cmd = format!("source {} && cjpm build 2>&1", envsetup.display());
-        let _ = Command::new("bash")
-            .arg("-c")
-            .arg(&shell_cmd)
-            .current_dir(pkg_dir)
-            .output()?;
+        build_macro_package(pkg_dir, &root)?;
 
-        // cjpm emits target/release/<pkg>/lib-*.so — locate it.
+        // cjpm emits target/release/<pkg>/lib-macro_*.<ext> — locate it.
         let (so, pkg_name) = find_macro_so_and_pkg(pkg_dir)?;
         // Copy into cache under content-hash name.
         let _ = fs::copy(&so, &cache_so);
@@ -165,6 +168,69 @@ impl MacroCache {
     }
 }
 
+/// Build a macro package with the official SDK's cjpm. Returns the location
+/// of the produced shared library (`.so` on Linux, `.dll` on Windows).
+#[cfg(target_os = "linux")]
+fn build_macro_package(pkg_dir: &Path, root: &Path) -> std::io::Result<()> {
+    let envsetup = root.join("envsetup.sh");
+    if !envsetup.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("SDK envsetup.sh not found at {}", envsetup.display()),
+        ));
+    }
+    let shell_cmd = format!("source {} && cjpm build 2>&1", envsetup.display());
+    let _ = Command::new("bash")
+        .arg("-c")
+        .arg(&shell_cmd)
+        .current_dir(pkg_dir)
+        .output()?;
+    Ok(())
+}
+
+/// Build a macro package with the official SDK's cjpm.exe on Windows. The SDK
+/// env setup (envsetup.bat) sets CANGJIE_HOME and prepends the SDK bin dirs to
+/// PATH; we mirror that on the child process (PATH doubles as the DLL search
+/// path on Windows). The macro package is still produced as
+/// `target/release/<pkg>/lib-macro_<fullPkgName>.dll`, exporting the same
+/// `macroCall_c_<Name>_<Pkg>` symbols — the byte contract is platform-agnostic.
+///
+/// NOTE: cross-compile-verified only (this repo builds for x86_64-pc-windows-gnu);
+/// runtime verification requires a Windows box with the Cangjie Windows SDK.
+/// Any failure here just falls back to quote-template expansion (never fatal).
+#[cfg(target_os = "windows")]
+fn build_macro_package(pkg_dir: &Path, root: &Path) -> std::io::Result<()> {
+    let cjpm = [root.join("tools/bin/cjpm.exe"), root.join("bin/cjpm.exe")]
+        .into_iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Windows SDK cjpm.exe not found under {}", root.display()),
+            )
+        })?;
+    let lib_dir = root.join("runtime/lib/windows_x86_64_cjnative");
+    let mut path = format!(
+        "{};{};{}",
+        root.join("bin").display(),
+        root.join("tools/bin").display(),
+        lib_dir.display()
+    );
+    if let Ok(existing) = std::env::var("PATH") {
+        if !existing.is_empty() {
+            path.push(';');
+            path.push_str(&existing);
+        }
+    }
+    let _ = Command::new(&cjpm)
+        .arg("build")
+        .current_dir(pkg_dir)
+        .env("CANGJIE_HOME", root)
+        .env("PATH", path)
+        .output()?;
+    Ok(())
+}
+
 /// Hash all .cj sources under a package dir (deterministic, sorted paths).
 fn hash_package_sources(pkg_dir: &Path) -> std::io::Result<String> {
     let mut files: Vec<PathBuf> = Vec::new();
@@ -194,16 +260,18 @@ fn collect_cj_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Locate the macro .so cjpm produced under a package dir.
+/// Locate the macro shared library cjpm produced under a package dir
+/// (`lib-macro_*.so` on Linux, `lib-macro_*.dll` on Windows).
 pub(crate) fn find_macro_so(pkg_dir: &Path) -> std::io::Result<PathBuf> {
     let target = pkg_dir.join("target").join("release");
+    let ext = format!(".{}", macro_lib_ext());
     for entry in fs::read_dir(target)? {
         let path = entry?.path();
         if path.is_dir() {
             for f in fs::read_dir(&path)? {
                 let p = f?.path();
                 let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name.starts_with("lib-macro_") && name.ends_with(".so") {
+                if name.starts_with("lib-macro_") && name.ends_with(&ext) {
                     return Ok(p);
                 }
             }
@@ -211,20 +279,22 @@ pub(crate) fn find_macro_so(pkg_dir: &Path) -> std::io::Result<PathBuf> {
     }
     Err(std::io::Error::new(
         std::io::ErrorKind::NotFound,
-        format!("no macro .so under {}", pkg_dir.display()),
+        format!("no macro {} under {}", macro_lib_ext(), pkg_dir.display()),
     ))
 }
 
-/// Locate the macro .so and derive the macro package's full name from its
-/// filename. cjpm emits `lib-macro_<module>.<pkg>.so`, so the pkg name is the
-/// filename with the `lib-macro_` prefix and `.so` suffix stripped. That name is
-/// what the exported symbol embeds (`macroCall_c_<Macro>_<pkg>` with `.`→`_`).
+/// Locate the macro shared library and derive the macro package's full name
+/// from its filename. cjpm emits `lib-macro_<module>.<pkg>.<ext>`, so the pkg
+/// name is the filename with the `lib-macro_` prefix and `.<ext>` suffix
+/// stripped. That name is what the exported symbol embeds
+/// (`macroCall_c_<Macro>_<pkg>` with `.`→`_`). Identical on Linux and Windows.
 fn find_macro_so_and_pkg(pkg_dir: &Path) -> std::io::Result<(PathBuf, String)> {
     let so = find_macro_so(pkg_dir)?;
     let name = so.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let ext = format!(".{}", macro_lib_ext());
     let pkg = name
         .strip_prefix("lib-macro_")
-        .and_then(|n| n.strip_suffix(".so"))
+        .and_then(|n| n.strip_suffix(&ext))
         .map(str::to_string)
         .ok_or_else(|| {
             std::io::Error::new(

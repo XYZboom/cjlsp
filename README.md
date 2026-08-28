@@ -56,6 +56,8 @@ cargo build --release --target x86_64-pc-windows-gnu -p cj-lsp -p cj-frontend
 > 说明：`cj-lsp` 与 `cj-frontend` 两个 crate 拉入全部依赖（含宏动态加载
 > `cj-sema/dylib.rs` 的 `cfg(windows)` 实现），因此交叉编译即覆盖全工作区。
 > 如需整工作区校验，可换 `cargo build --target x86_64-pc-windows-gnu`。
+> Windows 宏包的编译与 LSP 动态加载（LoadLibraryW/GetProcAddress）细节见
+> [docs/windows-macros.md](docs/windows-macros.md)。
 
 ### 产物
 
