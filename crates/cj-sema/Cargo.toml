@@ -13,3 +13,8 @@ cj-parser = { path = "../cj-parser" }
 libc = "0.2"
 libloading = "0.8"
 rayon = "1"
+
+# Windows dynamic macro loading (dylib.rs imp module): LoadLibraryW +
+# GetProcAddress on kernel32. Linux uses libloading::os::unix instead.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }

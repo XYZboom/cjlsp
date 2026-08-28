@@ -152,6 +152,7 @@ dependencies = [
  "libc",
  "libloading",
  "rayon",
+ "windows-sys",
 ]
 
 [[package]]
