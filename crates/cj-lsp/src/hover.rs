@@ -240,6 +240,7 @@ impl<'a> Index<'a> {
                 ret,
                 body,
                 pos,
+                ..
             } => {
                 let mods =
                     self.effective_mods(pos, *is_public, container, member, body, *is_abstract);
@@ -527,6 +528,7 @@ impl<'a> Index<'a> {
                 ty,
                 init,
                 pos,
+                ..
             } => {
                 let mods =
                     self.effective_mods(pos, *is_public, container, member, &Body::Empty, false);

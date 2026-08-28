@@ -30,20 +30,11 @@ pub enum PrimitiveKind {
 
 /// Literal kind (official `LitConstKind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LitKind {
-    Integer,
-    RuneByte,
-    Float,
-    Rune,
-    String,
-    JString,
-    Bool,
-    Unit,
-    None,
-}
+pub enum LitKind { Integer, RuneByte, Float, Rune, String, JString, Bool, Unit, None }
 
 /// Binary operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<<<<<<< HEAD
 pub enum BinOp {
     Add,
     Sub,
@@ -70,122 +61,70 @@ pub enum BinOp {
     Range,
     ClosedRange,
 }
+=======
+pub enum BinOp { Add, Sub, Mul, Div, Mod, Exp, And, Or, BitAnd, BitOr, BitXor,
+    LShift, RShift, Eq, Ne, Lt, Gt, Le, Ge, Coalesce, Pipe, Range, ClosedRange }
+>>>>>>> wt/t26-completion45
 
 /// Unary operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnOp {
-    Neg,
-    Pos,
-    Not,
-    BitNot,
-}
+pub enum UnOp { Neg, Pos, Not, BitNot }
 
 /// Assignment operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AssignOp {
-    Assign,
-    AddAssign,
-    SubAssign,
-    MulAssign,
-    DivAssign,
-    ModAssign,
-    ExpAssign,
-    AndAssign,
-    OrAssign,
-    BitAndAssign,
-    BitOrAssign,
-    BitXorAssign,
-    LShiftAssign,
-    RShiftAssign,
-}
+pub enum AssignOp { Assign, AddAssign, SubAssign, MulAssign, DivAssign, ModAssign,
+    ExpAssign, AndAssign, OrAssign, BitAndAssign, BitOrAssign, BitXorAssign,
+    LShiftAssign, RShiftAssign }
 
 /// Generic type parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeParam {
-    pub name: String,
-    pub bounds: Vec<Type>,
-    pub pos: CodePos,
-}
+pub struct TypeParam { pub name: String, pub bounds: Vec<Type>, pub pos: CodePos }
 
 /// Function/method parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Param {
-    pub name: String,
-    pub is_named: bool,
-    pub ty: Type,
-    pub default: Option<Expr>,
-    pub pos: CodePos,
-}
+pub struct Param { pub name: String, pub is_named: bool, pub ty: Type,
+    pub default: Option<Expr>, pub pos: CodePos }
 
 /// Function body.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Body {
-    Block(Vec<Expr>),
-    Empty,
-}
+pub enum Body { Block(Vec<Expr>), Empty }
 
 /// Call argument.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FuncArg {
-    pub name: Option<String>,
-    pub value: Expr,
-    pub pos: CodePos,
-}
+pub struct FuncArg { pub name: Option<String>, pub value: Expr, pub pos: CodePos }
 
 /// Interpolation part: literal text or embedded expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InterpPart {
-    Text(String),
-    Expr(Box<Expr>),
-}
+pub enum InterpPart { Text(String), Expr(Box<Expr>) }
 
 /// Catch clause.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CatchClause {
-    pub name: Option<String>,
-    pub ty: Option<Type>,
-    pub body: Expr,
-    pub pos: CodePos,
-}
+pub struct CatchClause { pub name: Option<String>, pub ty: Option<Type>,
+    pub body: Expr, pub pos: CodePos }
 
 /// Match case.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MatchCase {
-    pub pattern: Pattern,
-    pub guard: Option<Expr>,
-    pub body: Expr,
-    pub pos: CodePos,
-}
+pub struct MatchCase { pub pattern: Pattern, pub guard: Option<Expr>,
+    pub body: Expr, pub pos: CodePos }
 
 /// Enum case.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnumCase {
-    pub name: String,
-    pub payloads: Vec<Type>,
-    pub pos: CodePos,
-}
+pub struct EnumCase { pub name: String, pub payloads: Vec<Type>, pub pos: CodePos }
 
 /// Import spec.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImportSpec {
-    pub path: Vec<String>,
-    pub glob: bool,
-    pub selected: Vec<String>,
-    pub pos: CodePos,
+pub struct ImportSpec { pub path: Vec<String>, pub glob: bool,
+    pub selected: Vec<String>, pub pos: CodePos,
     /// Span of the imported package name (first..last path segment).
-    pub name_pos: CodePos,
-}
+    pub name_pos: CodePos }
 
 /// File (package + imports + decls).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct File {
-    pub package: Option<String>,
+pub struct File { pub package: Option<String>,
     /// Position of the declared package name (start of first segment).
     pub package_pos: Option<CodePos>,
     pub imports: Vec<ImportSpec>,
-    pub decls: Vec<Decl>,
-    pub pos: CodePos,
-}
+    pub decls: Vec<Decl>, pub pos: CodePos }
 
 /// Type node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -677,6 +616,8 @@ pub enum Decl {
         name_pos: CodePos,
         /// public modifier
         is_public: bool,
+        /// static modifier
+        is_static: bool,
         /// abstract modifier
         is_abstract: bool,
         /// generic parameters
@@ -815,6 +756,8 @@ pub enum Decl {
         is_mutable: bool,
         /// public modifier
         is_public: bool,
+        /// static modifier
+        is_static: bool,
         /// declared type
         ty: Option<Type>,
         /// initializer
@@ -883,7 +826,5 @@ pub enum Decl {
 
 /// Placeholder for macro arguments (token-level; refined with macro support).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Tokenish {
-    pub text: String,
-    pub pos: CodePos,
-}
+pub struct Tokenish { pub text: String, pub pos: CodePos }
+
