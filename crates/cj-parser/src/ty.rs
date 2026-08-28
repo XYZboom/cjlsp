@@ -28,6 +28,8 @@ pub fn is_type_start(kind: TokenKind) -> bool {
             | TokenKind::VARRAY
             | TokenKind::IDENTIFIER
             | TokenKind::THISTYPE
+            | TokenKind::QUEST
+            | TokenKind::COALESCING
             | TokenKind::LPAREN
     )
 }
@@ -58,6 +60,33 @@ pub fn parse_type(p: &mut Parser) -> Type {
             let inner = parse_type(p);
             Type::Option {
                 inner: Box::new(inner),
+                pos: pos_of(&tok),
+            }
+        }
+        // `??T` — lexed as the COALESCING token `??`, but in TYPE position it
+        // is a doubly-nested Option (spec Ch.02: `?Type` == `Option<Type>`,
+        // so `??T` == `Option<Option<T>>`). e.g. `var x: ??T = None`.
+        TokenKind::COALESCING => {
+            p.advance();
+            let inner = parse_type(p);
+            let pos = pos_of(&tok);
+            Type::Option {
+                inner: Box::new(Type::Option {
+                    inner: Box::new(inner),
+                    pos,
+                }),
+                pos,
+            }
+        }
+        // `VArray` used as a GENERIC type (not a bare primitive keyword):
+        // `VArray<Int64, $3>`. VARRAY lexes as a keyword; when followed by
+        // `<` it names the generic builtin, so parse it as a Ref with args.
+        TokenKind::VARRAY if p.at(TokenKind::LT) => {
+            p.advance();
+            let args = parse_generic_args(p);
+            Type::Ref {
+                name: "VArray".to_string(),
+                args,
                 pos: pos_of(&tok),
             }
         }
@@ -106,7 +135,9 @@ pub fn parse_type(p: &mut Parser) -> Type {
                 pos: pos_of(&tok),
             }
         }
-        TokenKind::IDENTIFIER | TokenKind::THISTYPE => {
+        // RefType with optional generic args. A contextual keyword can be a
+        // type name too (`class A <: public {}` — official Seeing + SeeingContextualKeyword).
+        k if k == TokenKind::IDENTIFIER || k == TokenKind::THISTYPE || k.is_name_like() => {
             // RefType with optional generic args
             let name = p.advance().text;
             let args = if p.at(TokenKind::LT) {

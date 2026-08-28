@@ -130,10 +130,11 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let name_tok = p.peek_token().clone();
             let name = match name_tok.kind {
                 k if k.is_name_like() => p.advance().text,
-                // operator overload names: `+`, `==`, `[]`, `()` etc. The
-                // call/index operator names span both delimiters: `operator
-                // func [](...)` / `operator func ()(...)`.
-                k if k.operator_like() => {
+                // operator overload names: `+`, `==`, `[]`, `()`, `!` etc.
+                // The call/index operator names span both delimiters: `operator
+                // func [](...)` / `operator func ()(...)`. `!`/`~` (NOT/BITNOT)
+                // are unary operator overloads (`operator func !()`).
+                k if k.operator_like() || matches!(k, TokenKind::NOT | TokenKind::BITNOT) => {
                     let t = p.advance();
                     let close = match t.kind {
                         TokenKind::LPAREN => Some(TokenKind::RPAREN),
@@ -452,15 +453,26 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
                 }
                 let _ = p.expect(TokenKind::RPAREN);
             } else if p.eat(TokenKind::LSQUARE) {
-                // annotation argument block: `@A[a < b, c >= d]`
-                while !p.at(TokenKind::RSQUARE) && !p.at(TokenKind::END) {
+                // annotation argument block: `@A[a < b, c >= d]` or
+                // `@A[target: [EnumConstructor]]` (nested brackets).
+                let mut depth = 0i32;
+                while !p.at(TokenKind::END) {
+                    let k = p.peek();
+                    if k == TokenKind::LSQUARE {
+                        depth += 1;
+                    } else if k == TokenKind::RSQUARE {
+                        if depth == 0 {
+                            p.advance();
+                            break;
+                        }
+                        depth -= 1;
+                    }
                     let a = p.advance();
                     args.push(cj_ast::Tokenish {
                         text: a.text.clone(),
                         pos: pos_of(&a),
                     });
                 }
-                let _ = p.expect(TokenKind::RSQUARE);
             }
             Some(Decl::MacroExpand {
                 name,
@@ -589,6 +601,8 @@ fn parse_param_list(p: &mut Parser) -> Vec<Param> {
                 p.advance();
             }
         }
+        // param annotations: `func f(@APILevel[11] v: Int64)`
+        while eat_annotation(p) {}
         // constructor params may carry access modifiers + let/var:
         // `public let domain: CString`
         while let TokenKind::PUBLIC
@@ -781,6 +795,45 @@ fn parse_class_body(p: &mut Parser) -> Vec<Decl> {
     out
 }
 
+/// Consume one annotation prefix: `@Name` with an optional argument block
+/// `@Name[...]` / `@Name(...)` (official `SeeingIfAvailable`/ParseAnnotation).
+/// Nested delimiters are tracked so the scan stops at the annotation's OWN
+/// closing delimiter, not an inner one (`@A[target: [EnumConstructor]]`).
+/// Returns true when an annotation was consumed.
+fn eat_annotation(p: &mut Parser) -> bool {
+    if !matches!(p.peek(), TokenKind::AT | TokenKind::AT_EXCL) {
+        return false;
+    }
+    p.advance(); // @ / @!
+    let name_tok = p.peek_token().clone();
+    if name_tok.kind.is_name_like() {
+        p.advance();
+    }
+    let open = match p.peek() {
+        TokenKind::LSQUARE => Some((TokenKind::LSQUARE, TokenKind::RSQUARE)),
+        TokenKind::LPAREN => Some((TokenKind::LPAREN, TokenKind::RPAREN)),
+        _ => None,
+    };
+    if let Some((o, c)) = open {
+        let mut depth = 0i32;
+        p.advance(); // consume the opening delimiter
+        while !p.at(TokenKind::END) {
+            let k = p.peek();
+            if k == o {
+                depth += 1;
+            } else if k == c {
+                if depth == 0 {
+                    p.advance();
+                    break;
+                }
+                depth -= 1;
+            }
+            p.advance();
+        }
+    }
+    true
+}
+
 fn parse_enum_cases(p: &mut Parser) -> Vec<EnumCase> {
     let mut out = Vec::new();
     let _ = p.expect(TokenKind::LCURL);
@@ -791,6 +844,19 @@ fn parse_enum_cases(p: &mut Parser) -> Vec<EnumCase> {
         if p.at(TokenKind::ELLIPSIS) {
             p.advance();
             break;
+        }
+        if p.at(TokenKind::RCURL) || p.at(TokenKind::END) {
+            break;
+        }
+        // annotations on a case: `| @APILevel[11] caseB(Int64)`
+        while eat_annotation(p) {
+            // skip until the case name
+            if p.at(TokenKind::BITOR) {
+                p.advance();
+            }
+            if p.at(TokenKind::RCURL) || p.at(TokenKind::END) {
+                break;
+            }
         }
         if p.at(TokenKind::RCURL) || p.at(TokenKind::END) {
             break;

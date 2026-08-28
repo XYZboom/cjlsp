@@ -207,7 +207,7 @@ fn parse_postfix(p: &mut Parser) -> Expr {
             TokenKind::DOT => {
                 let dot = p.advance();
                 let name_tok = p.peek_token().clone();
-                if name_tok.kind == TokenKind::IDENTIFIER || name_tok.kind.is_identifier_like() {
+                if name_tok.kind.is_name_like() {
                     let name = p.advance().text;
                     // generic args after member name: `a.foo<Int64>(1)`
                     if p.peek() == TokenKind::LT && lt_is_generic_args(p) {
@@ -232,6 +232,12 @@ fn parse_postfix(p: &mut Parser) -> Expr {
             TokenKind::LSQUARE => {
                 let lb = p.advance();
                 let idx = parse_expr_prec(p, 1);
+                // multi-arg index: `a[1, "2"]` — consume extra comma-separated
+                // index expressions (official multi-arg subscript); the AST's
+                // Subscript keeps the first, later args are parsed and dropped.
+                while p.eat(TokenKind::COMMA) {
+                    let _ = parse_expr_prec(p, 1);
+                }
                 let _ = p.expect(TokenKind::RSQUARE);
                 let pos = pos_of(&lb);
                 e = Expr::Subscript {
@@ -896,6 +902,16 @@ fn parse_atom(p: &mut Parser) -> Expr {
             let pos = pos_of(&tok);
             Expr::Invalid(pos)
         }
+        // a contextual keyword used as an expression name: `public(...)`,
+        // `private: 1`, `open` ... (official Seeing + SeeingContextualKeyword).
+        k if k.is_name_like() => {
+            p.advance();
+            Expr::Name {
+                name: tok.text.clone(),
+                type_args: Vec::new(),
+                pos: pos_of(&tok),
+            }
+        }
         _ => {
             // unknown atom — emit error, recover
             let found = crate::token_display_text(&tok);
@@ -1170,8 +1186,10 @@ fn parse_for_in(p: &mut Parser) -> Expr {
 
 fn parse_match(p: &mut Parser) -> Expr {
     let m = p.expect(TokenKind::MATCH);
-    // selectorless match: `match { case ... }` (each case is a bool expr)
-    let scrutinee = if p.at(TokenKind::LCURL) {
+    // selectorless match: `match { case ... }` (each case is a bool expr —
+    // official ParseMatchNoSelector; `_` is the wildcard case).
+    let selectorless = p.at(TokenKind::LCURL);
+    let scrutinee = if selectorless {
         Expr::Lit {
             kind: LitKind::Unit,
             value: String::new(),
@@ -1192,9 +1210,24 @@ fn parse_match(p: &mut Parser) -> Expr {
         // or-patterns: `case p1 | p2 =>` (spec Ch.12) — parse the first
         // pattern then consume `| pN` alternatives (the AST's MatchCase
         // holds a single pattern; alternatives are dropped at parse time).
-        let mut pattern = parse_pattern(p);
+        let mut pattern = if selectorless && !p.at(TokenKind::WILDCARD) {
+            // selectorless match: the "pattern" is a boolean expression
+            // (`case this.a < rhs.a =>`). Store it as a Const pattern so the
+            // expression stays in the AST (official MatchCaseOther.matchExpr).
+            let e = parse_expr_prec(p, 0);
+            Pattern::Const {
+                literal: Some(Box::new(e)),
+                pos: pos_of(&m),
+            }
+        } else {
+            parse_pattern(p)
+        };
         while p.eat(TokenKind::BITOR) {
-            let _ = parse_pattern(p);
+            if selectorless {
+                let _ = parse_expr_prec(p, 0);
+            } else {
+                let _ = parse_pattern(p);
+            }
         }
         // enum pattern with generic/qualified name: `case a<b>.c(x)` —
         // handled inside parse_pattern; nothing extra here.
@@ -1271,6 +1304,11 @@ fn parse_try(p: &mut Parser) -> Expr {
         // `catch (e: Exception)` — parens around the exception binding
         // are optional (`catch e: Exception` also legal).
         let has_paren = p.eat(TokenKind::LPAREN);
+        // `catch (_)`, `catch (_: Exception)` — wildcard binding (LLT positive
+        // cases use `catch (_)` extensively). Consume `_` before the name check.
+        if p.peek() == TokenKind::WILDCARD {
+            p.advance();
+        }
         let name = if p.peek() == TokenKind::IDENTIFIER {
             Some(p.advance().text)
         } else {
@@ -1314,7 +1352,10 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
             p.advance();
             Pattern::Wildcard(pos_of(&tok))
         }
-        TokenKind::IDENTIFIER => {
+        // a contextual keyword can be a pattern VAR name / enum-constructor
+        // name: `var public = 1`, `case public(1) => ...` (official
+        // Seeing + SeeingContextualKeyword).
+        k if k.is_name_like() => {
             p.advance();
             // Qualified / generic enum pattern: `case a<b>.c(x)` (spec
             // Ch.12) or `case Option<Int64>.Some(a)`. Build the full name
