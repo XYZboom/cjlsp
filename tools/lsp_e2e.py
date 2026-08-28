@@ -18,7 +18,7 @@ import sys
 
 SERVER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                       "target", "debug", "LSPServer")
-BASE = "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp"
+BASE = os.environ.get("CANGJIE_TEST_BASE", "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp")
 SRC_FILE = os.path.join(BASE, "sourcecode/cangjieTest/cangjiesource/src/Any/a1.cj")
 CWD = os.path.join(BASE, "sourcecode/cangjieTest/cangjiesource/src")
 URI = "cangjiesource/src/Any/a1.cj"

@@ -16,7 +16,9 @@ from __future__ import annotations
 import re, sys, os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# tools/ is inside cj-lang/, official sources are one level up under /root/Code/cangjie/
+# tools/ is inside cj-lang/; vendored official compiler files live under
+# <repo>/vendor/cangjie-compiler/.
+VENDOR_DIR = os.path.join(os.path.dirname(HERE), "vendor", "cangjie-compiler")
 CANGJIE_DIR = os.path.dirname(HERE)
 
 
@@ -33,15 +35,20 @@ def find_repo(start: str) -> str:
 
 
 REPO = find_repo(CANGJIE_DIR)
-ASTKIND_INC = os.path.join(REPO, "cangjie_compiler", "include", "cangjie", "AST", "ASTKind.inc")
-# Worktree layout: tools/ lives in .worktrees/<name>/, whose parent is NOT the
-# repo root. Fall back to the canonical location of the official sources.
+# Prefer the vendored copy (self-contained, no local absolute path).
+ASTKIND_INC = os.path.join(VENDOR_DIR, "ASTKind.inc")
+# Fall back to a local official checkout if the vendor copy is missing.
 if not os.path.exists(ASTKIND_INC):
-    ASTKIND_INC = os.path.join(
-        REPO, "cangjie", "cangjie_compiler", "include", "cangjie", "AST", "ASTKind.inc"
+    ASTKIND_INC = os.path.join(REPO, "cangjie_compiler", "include", "cangjie", "AST", "ASTKind.inc")
+    if not os.path.exists(ASTKIND_INC):
+        ASTKIND_INC = os.path.join(
+            REPO, "cangjie", "cangjie_compiler", "include", "cangjie", "AST", "ASTKind.inc"
+        )
+if not os.path.exists(ASTKIND_INC):
+    ASTKIND_INC = os.environ.get(
+        "CANGJIE_ASTKIND_INC",
+        "/root/Code/cangjie/cangjie_compiler/include/cangjie/AST/ASTKind.inc",
     )
-if not os.path.exists(ASTKIND_INC):
-    ASTKIND_INC = "/root/Code/cangjie/cangjie_compiler/include/cangjie/AST/ASTKind.inc"
 
 # ---------------------------------------------------------------------------
 # 1. Parse ASTKind.inc

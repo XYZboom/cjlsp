@@ -1,3 +1,4 @@
+import os
 #!/usr/bin/env python3
 """Generate the std-type member tables for completion.rs from official cjlsp
 expected items (cases 090=Array, 087=String, 127/161=Option).
@@ -8,7 +9,7 @@ as `&[(&str, u32, &str, &str, u32, &str)]` rows:
 """
 import json, re, os, sys
 
-BASE = "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp"
+BASE = os.environ.get("CANGJIE_TEST_BASE", "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp")
 
 def expected_items(case):
     name = f"textDocument_completion_{case:03d}.info"

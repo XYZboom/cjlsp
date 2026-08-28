@@ -30,7 +30,7 @@ import tempfile
 import concurrent.futures
 from datetime import datetime
 
-BASE = "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp"
+BASE = os.environ.get("CANGJIE_TEST_BASE", "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp")
 LSP_TEST = os.path.join(BASE, "lsp_test.py")
 # Allow a worktree-local config override (parallel workers race on the shared
 # lsp_config.txt — point CFG at a private copy via CJLSP_CONFIG env).

@@ -1,8 +1,9 @@
+import os
 #!/usr/bin/env python3
 """Debug: for failing cases, show expected vs actual diagnostics side by side."""
 import json, os, re, subprocess, sys
 
-BASE = "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp"
+BASE = os.environ.get("CANGJIE_TEST_BASE", "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp")
 HERE = os.path.dirname(os.path.abspath(__file__))
 LSPSERVER = os.path.join(os.path.dirname(HERE), "target", "debug", "LSPServer")
 CWD = os.path.join(BASE, "sourcecode/cangjieTest")

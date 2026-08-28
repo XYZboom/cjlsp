@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 
-BASE = "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp"
+BASE = os.environ.get("CANGJIE_TEST_BASE", "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp")
 # Resolve the server binary relative to this script so the checker tests the
 # checkout it lives in (main repo or a worktree), not a hardcoded path.
 HERE = os.path.dirname(os.path.abspath(__file__))
