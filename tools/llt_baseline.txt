@@ -1,36 +1,30 @@
 ==============================================================================
 cj-lang LLT frontend regression baseline (T19)
-generated: 2026-08-28 06:56:23
+generated: 2026-08-28 11:12:28
 frontend:  /root/Code/cangjie/cj-lang/target/release/cj-frontend
-commit:    2436a65
+commit:    087111a
 llt dir:   /root/Code/cangjie/cangjie_test/testsuites/LLT/compiler
 scope:     LLT/compiler/{Frontend,Lexer,Parser,Sema,Diagnose} (5351 .cj files)
 mode:      cj-frontend --dump-ast
 ==============================================================================
 
-total=5351  success=4040  fail=1307  crash=4  success-rate=75.5%
+total=5351  success=4322  fail=1029  crash=0  success-rate=80.8%
 
 [by directory]
   Frontend      22  success=   20  fail=    2  crash=  0
-  Lexer         28  success=   22  fail=    6  crash=  0
-  Parser       576  success=  317  fail=  257  crash=  2
-  Sema        3863  success= 3202  fail=  660  crash=  1
-  Diagnose     862  success=  479  fail=  382  crash=  1
+  Lexer         28  success=   23  fail=    5  crash=  0
+  Parser       576  success=  362  fail=  214  crash=  0
+  Sema        3863  success= 3403  fail=  460  crash=  0
+  Diagnose     862  success=  514  fail=  348  crash=  0
 
 [crash clusters]
-    4  <timeout>   e.g. /root/Code/cangjie/cangjie_test/testsuites/LLT/compiler/Diagnose/parse_test/parse_expected_no_modifier/enum_constructor.cj
-  (total 4 crash files)
+  none — zero crash files
 
 [failure samples — first 50 (sorted by path)]
-  Diagnose/AfterMacroExpand/BothHintsInSameMacroDef/EmptyCaseBody/define.cj  | error: expected macro name at 7:7
-  Diagnose/AfterMacroExpand/BothHintsInSameMacroDef/ExpectedLiteral/define.cj  | error: expected macro name at 7:7
-  Diagnose/AfterMacroExpand/ExpectedName/define.cj  | error: expected macro name at 7:7
   Diagnose/AfterMacroExpand/ExpectedName/invoke.cj  | error: expected enum case name, found '@' at 17:5
-  Diagnose/AfterMacroExpand/UnclosedDelimiter/define.cj  | error: expected macro name at 7:7
   Diagnose/Driver/json/driver_source_file_empty.cj  | error: unclosed delimiter: '{' at 10:10
-  Diagnose/JsonFormat/DiagCategory/lex.cj  | error: expected expression after 'multiline_raw_string', found %s at 13:5
+  Diagnose/JsonFormat/DiagCategory/lex.cj  | error: unclosed delimiter: '{' at 12:2
   Diagnose/JsonFormat/DiagCategory/parse.cj  | error: expected identifier or pattern after 'var', found '<EOF>' at 12:1
-  Diagnose/JsonFormat/Format/define.cj  | error: expected macro name at 7:7
   Diagnose/JsonFormat/Format/errorWithHelp.cj  | error: expected identifier or pattern after 'var', found keyword 'this' at 10:5
   Diagnose/JsonFormat/Format/messageAndHints.cj  | error: expected expression after '=>', found %s at 11:11
   Diagnose/JsonFormat/Format/withNotesAndHelps.cj  | error: expected declaration, found literal '0b1_' at 10:1
@@ -39,12 +33,9 @@ total=5351  success=4040  fail=1307  crash=4  success-rate=75.5%
   Diagnose/JsonFormat/Helps/oneHelp.cj  | error: expected declaration, found keyword 'as' at 10:21
   Diagnose/JsonFormat/Hints/hasMainHint.cj  | error: expected class name at 27:3
   Diagnose/JsonFormat/Location/range.cj  | error: expected identifier or pattern after 'var', found '<EOF>' at 13:1
-  Diagnose/JsonFormat/Notes/define.cj  | error: expected macro name at 7:7
   Diagnose/JsonFormat/Notes/noNotes.cj  | error: expected type name after '::', found literal '1' at 9:9
   Diagnose/JsonFormat/Notes/oneNote.cj  | error: expected declaration, found literal '1' at 10:1
   Diagnose/JsonFormat/Notes/onlyMessage.cj  | error: expected declaration, found 'a' at 12:1
-  Diagnose/PlatformRelated/MisDiag/call.cj  | error: expected expression after '=>', found %s at 17:6
-  Diagnose/PlatformRelated/MisDiag/define.cj  | error: expected macro name at 9:7
   Diagnose/conditional/invalid_condition_value/arrayLitExpr.cj  | error: expected declaration, found ']' at 10:42
   Diagnose/conditional/invalid_condition_value/subscriptExpr.cj  | error: expected declaration, found ']' at 11:22
   Diagnose/conditional/invalid_condition_value/varrayExpr.cj  | error: expected declaration, found ')' at 10:59
@@ -54,7 +45,6 @@ total=5351  success=4040  fail=1307  crash=4  success-rate=75.5%
   Diagnose/lex_test/lex_expected_back_quote/case5.cj  | error: expected expression after '', found %s at 14:2
   Diagnose/lex_test/lex_expected_back_quote/lex_illegal_backquote.cj  | error: expected expression after '', found %s at 13:13
   Diagnose/lex_test/lex_expected_character/case6.cj  | error: unclosed delimiter: '{' at 13:2
-  Diagnose/lex_test/lex_expected_character/wildcard.cj  | error: expected expression after '_', found %s at 12:5
   Diagnose/lex_test/lex_expected_character_in_char_literal/case1.cj  | error: expected 'l_curl', found 'end' at 33:1
   Diagnose/lex_test/lex_expected_digit/case1.cj  | error: expected expression after '', found %s at 14:13
   Diagnose/lex_test/lex_expected_digit/case10.cj  | error: expected declaration, found literal '1e' at 13:1
@@ -72,41 +62,42 @@ total=5351  success=4040  fail=1307  crash=4  success-rate=75.5%
   Diagnose/lex_test/lex_expected_identifier/case1.cj  | error: expected expression after '', found %s at 14:2
   Diagnose/lex_test/lex_expected_identifier/case2.cj  | error: expected expression after '', found %s at 14:2
   Diagnose/lex_test/lex_expected_identifier/case3.cj  | error: expected expression after '', found %s at 14:2
+  Diagnose/lex_test/lex_expected_identifier/case4.cj  | error: expected expression after '', found %s at 14:2
+  Diagnose/lex_test/lex_expected_identifier/case6.cj  | error: unclosed delimiter: '{' at 16:13
+  Diagnose/lex_test/lex_expected_identifier/case_back_quote.cj  | error: expected expression after '', found %s at 11:9
+  Diagnose/lex_test/lex_expected_identifier/terminated.cj  | error: expected declaration, found '' at 11:1
+  Diagnose/lex_test/lex_expected_identifier_after_dollar/case1.cj  | error: expected func name, found '$' at 20:3
+  Diagnose/lex_test/lex_expected_identifier_after_dollar/case4.cj  | error: expected pattern, found '}' at 16:17
+  Diagnose/lex_test/lex_expected_identifier_after_dollar/found_wildcard.cj  | error: expected declaration, found '$' at 10:1
+  Diagnose/lex_test/lex_expected_identifier_after_dollar/lex_unexpected_dollar_identifier.cj  | error: expected pattern, found keyword 'var' at 15:5
+  Diagnose/lex_test/lex_expected_left_bracket/case11.cj  | error: expected expression after '', found %s at 16:2
 
 [failure message clusters — top 25 (normalized first diag)]
     59  error: expected expression after '', found %s   e.g. Lexer/Unicode/illegal.cj
-    48  error: expected declaration, found '{'   e.g. Parser/native/block_error_line.cj
-    45  error: expected macro name   e.g. Lexer/Unicode/macro.p.cj
-    41  error: expected expression after '?', found %s   e.g. Parser/ar/parser_support_wildcard/positive/lambda_param/2_trailing_lambda_expr/item_after_quest_1.cj
-    38  error: unclosed delimiter: '{'   e.g. Parser/function/func_body_missing_right_curl_01.cj
-    36  error: expected expression after '_', found %s   e.g. Parser/ar/parser_support_wildcard/negative/expr_kind/range_expr.cj
+    48  error: unclosed delimiter: '{'   e.g. Lexer/Unicode/Diagnostic/emoji_in_multistring.cj
     34  error: expected expression after keyword 'public', found %s   e.g. Parser/ar/parse_support_keyword_context/expr/try.cj
     30  error: expected parameter name, found '_'   e.g. Parser/ar/parser_support_wildcard/negative/func_param/named_wildcard_parameter.cj
-    27  error: expected expression after '=>', found %s   e.g. Sema/ErrMsgs/lambda_0.cj
-    23  error: expected expression after ':', found %s   e.g. Parser/expr/end/lambdaparamlist.cj
-    23  error: expected 'r_paren', found ':'   e.g. Parser/expr/ifexpr.cj
     22  error: expected declaration, found ','   e.g. Parser/class/class1.cj
     21  error: expected expression after 'handle', found %s   e.g. Sema/effect/command_class_not_available.cj
-    20  error: expected expression after 'multiline_raw_string', found %s   e.g. Lexer/Unicode/Diagnostic/emoji_in_multistring.cj
     20  error: expected declaration, found ']'   e.g. Parser/annotation/atexcl/bad_atexcl_builtin_annotation.cj
-    19  error: expected enum case name, found '...'   e.g. Sema/generics/instance_by_enum_ellipsis.cj
     18  error: expected declaration, found '.'   e.g. Parser/ar/parse_support_keyword_context/decl/function.cj
+    18  error: expected declaration, found '<'   e.g. Parser/others/parser_fuzz_03.cj
     17  error: expected expression after ',', found %s   e.g. Parser/expr/tuplelit2.cj
-    17  error: expected declaration, found '<'   e.g. Parser/others/parser_fuzz_03.cj
-    16  error: expected expression after '~>', found %s   e.g. Sema/ErrMsgs/composition_0.cj
     16  error: expected 'l_curl', found '<:'   e.g. Sema/Extend/default_implement/default_implement_05.cj
+    16  error: expected 'r_curl', found '.'   e.g. Sema/call/call_inference_04.cj
+    16  error: expected 'r_paren', found '<-'   e.g. Sema/if-let-expr/enhancedcondition/o2/const.cj
     15  error: expected 'double_arrow', found '|'   e.g. Parser/expr/match_or_pattern1.cj
-    14  error: expected 'case', found ';'   e.g. Parser/expr/match.cj
-    14  error: expected 'r_paren', found '_'   e.g. Sema/ErrMsgs/try_0.cj
-    14  error: expected 'r_paren', found '<-'   e.g. Sema/if-let-expr/enhancedcondition/o2/const.cj
-
-[crash files]
-  Diagnose/parse_test/parse_expected_no_modifier/enum_constructor.cj  | <timeout>
-  Parser/ar/parse_support_keyword_context/decl/enum.cj  | <timeout>
-  Parser/ar/parse_support_keyword_context/pattern/pattern1.cj  | <timeout>
-  Sema/nonExhaustiveEnum/bad/ellipse_after_func.cj  | <timeout>
-
-  NOTE: high-frequency crash pattern(s) above should be filed as a follow-up task to fix cj-frontend — T19 is evaluation-only.
+    15  error: expected 'r_paren', found '_'   e.g. Sema/ErrMsgs/try_0.cj
+    13  error: expected 'double_arrow', found '<'   e.g. Parser/issue/parser_enum_pattern_generic/match_case_enum_pattern_generic_1.cj
+    11  error: expected identifier or pattern after 'var', found '('   e.g. Parser/class/tuple_pattern.cj
+    11  error: expected 'r_paren', found 'end'   e.g. Parser/expr/end/paramlist.cj
+    11  error: expected 'double_arrow', found '.'   e.g. Parser/issue/parser_enum_pattern_generic/match_case_enum_pattern_generic_2.cj
+    11  error: expected declaration, found '{'   e.g. Parser/native/block_error_line.cj
+    10  error: expected declaration, found '('   e.g. Parser/ar/parse_support_keyword_context/decl/class.cj
+    10  error: expected 'l_curl', found 'end'   e.g. Parser/modifiers/unsafe_modifier.cj
+    10  error: expected parameter name, found '@'   e.g. Parser/others/expect_identifier_in_param.cj
+    10  error: expected a type name after ':' in function declaration, found '?'   e.g. Sema/box/box_export/src/config/Configuration.cj
+     9  error: expected 'r_paren', found '='   e.g. Parser/ar/support_tuple_left_value/normal/negative/left_tuple_literal.cj
 
 note: success = exit 0 + no parser diagnostic; fail = exit 0 + diagnostic(s); crash = non-zero exit/timeout.
 note: dump-ast renders every parser diag (incl. warnings) as 'error:' on stderr; fail may include warning-only files.
