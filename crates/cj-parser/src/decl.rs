@@ -200,7 +200,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let is_mut = tok.kind == TokenKind::VAR;
             p.advance();
             let name_tok = p.peek_token().clone();
-            if !name_tok.kind.is_name_like() {
+            if !name_tok.kind.is_name_like() && name_tok.kind != TokenKind::WILDCARD {
                 // Official DiagExpectedIdentifierOrPattern (ParseDecl.cpp): the
                 // found token may be a literal/keyword/etc — emit
                 // `expected identifier or pattern after 'let', found X` and
@@ -303,6 +303,9 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let name_tok = p.expect_ident("enum name");
             let name = name_tok.text.clone();
             let type_params = parse_type_params(p);
+            // `enum E<T> <: I { ... }` — enums can implement interfaces
+            // (spec Ch.07/Ch.09); consume the supertype list like classes.
+            let _parents = parse_parents(p);
             parse_where_clause(p);
             let cases = parse_enum_cases(p);
             Some(Decl::Enum {
@@ -598,7 +601,10 @@ fn parse_param_list(p: &mut Parser) -> Vec<Param> {
             p.advance();
         }
         let name_tok = p.peek_token().clone();
-        if name_tok.kind.is_name_like() {
+        // `_` (WILDCARD) is a valid anonymous parameter name: `func f(_: Int64)`
+        // (spec Ch.05: `parameterName` may be `_`). It also permits the
+        // `_!:` named form which sema rejects — the parser accepts both.
+        if name_tok.kind.is_name_like() || name_tok.kind == TokenKind::WILDCARD {
             p.advance();
             // `name!:` or `name:`
             let is_named = p.eat(TokenKind::NOT);

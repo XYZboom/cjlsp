@@ -1,21 +1,21 @@
 ==============================================================================
 cj-lang LLT frontend regression baseline (T19)
-generated: 2026-08-28 11:12:28
-frontend:  /root/Code/cangjie/cj-lang/target/release/cj-frontend
-commit:    087111a
+generated: 2026-08-28 14:16:37
+frontend:  /root/Code/cangjie/cj-lang/.worktrees/t_2b6815e2/target/release/cj-frontend
+commit:    481bfb5
 llt dir:   /root/Code/cangjie/cangjie_test/testsuites/LLT/compiler
 scope:     LLT/compiler/{Frontend,Lexer,Parser,Sema,Diagnose} (5351 .cj files)
 mode:      cj-frontend --dump-ast
 ==============================================================================
 
-total=5351  success=4322  fail=1029  crash=0  success-rate=80.8%
+total=5351  success=4470  fail=881  crash=0  success-rate=83.5%
 
 [by directory]
   Frontend      22  success=   20  fail=    2  crash=  0
   Lexer         28  success=   23  fail=    5  crash=  0
-  Parser       576  success=  362  fail=  214  crash=  0
-  Sema        3863  success= 3403  fail=  460  crash=  0
-  Diagnose     862  success=  514  fail=  348  crash=  0
+  Parser       576  success=  383  fail=  193  crash=  0
+  Sema        3863  success= 3529  fail=  334  crash=  0
+  Diagnose     862  success=  515  fail=  347  crash=  0
 
 [crash clusters]
   none — zero crash files
@@ -76,28 +76,28 @@ total=5351  success=4322  fail=1029  crash=0  success-rate=80.8%
     59  error: expected expression after '', found %s   e.g. Lexer/Unicode/illegal.cj
     48  error: unclosed delimiter: '{'   e.g. Lexer/Unicode/Diagnostic/emoji_in_multistring.cj
     34  error: expected expression after keyword 'public', found %s   e.g. Parser/ar/parse_support_keyword_context/expr/try.cj
-    30  error: expected parameter name, found '_'   e.g. Parser/ar/parser_support_wildcard/negative/func_param/named_wildcard_parameter.cj
-    22  error: expected declaration, found ','   e.g. Parser/class/class1.cj
     21  error: expected expression after 'handle', found %s   e.g. Sema/effect/command_class_not_available.cj
     20  error: expected declaration, found ']'   e.g. Parser/annotation/atexcl/bad_atexcl_builtin_annotation.cj
     18  error: expected declaration, found '.'   e.g. Parser/ar/parse_support_keyword_context/decl/function.cj
     18  error: expected declaration, found '<'   e.g. Parser/others/parser_fuzz_03.cj
     17  error: expected expression after ',', found %s   e.g. Parser/expr/tuplelit2.cj
-    16  error: expected 'l_curl', found '<:'   e.g. Sema/Extend/default_implement/default_implement_05.cj
-    16  error: expected 'r_curl', found '.'   e.g. Sema/call/call_inference_04.cj
-    16  error: expected 'r_paren', found '<-'   e.g. Sema/if-let-expr/enhancedcondition/o2/const.cj
-    15  error: expected 'double_arrow', found '|'   e.g. Parser/expr/match_or_pattern1.cj
     15  error: expected 'r_paren', found '_'   e.g. Sema/ErrMsgs/try_0.cj
-    13  error: expected 'double_arrow', found '<'   e.g. Parser/issue/parser_enum_pattern_generic/match_case_enum_pattern_generic_1.cj
+    12  error: expected declaration, found '{'   e.g. Parser/native/block_error_line.cj
     11  error: expected identifier or pattern after 'var', found '('   e.g. Parser/class/tuple_pattern.cj
     11  error: expected 'r_paren', found 'end'   e.g. Parser/expr/end/paramlist.cj
-    11  error: expected 'double_arrow', found '.'   e.g. Parser/issue/parser_enum_pattern_generic/match_case_enum_pattern_generic_2.cj
-    11  error: expected declaration, found '{'   e.g. Parser/native/block_error_line.cj
     10  error: expected declaration, found '('   e.g. Parser/ar/parse_support_keyword_context/decl/class.cj
     10  error: expected 'l_curl', found 'end'   e.g. Parser/modifiers/unsafe_modifier.cj
     10  error: expected parameter name, found '@'   e.g. Parser/others/expect_identifier_in_param.cj
     10  error: expected a type name after ':' in function declaration, found '?'   e.g. Sema/box/box_export/src/config/Configuration.cj
      9  error: expected 'r_paren', found '='   e.g. Parser/ar/support_tuple_left_value/normal/negative/left_tuple_literal.cj
+     9  error: expected property name   e.g. Parser/expr/illegal_prop.cj
+     9  error: expected 'upperbound', found '{'   e.g. Parser/others/testcase2.cj
+     9  error: expected declaration, found keyword 'unsafe'   e.g. Parser/unsafe/class01.cj
+     9  error: expected 'r_square', found 'end'   e.g. Diagnose/parse_test/parse_expected_expression/case2.cj
+     8  error: expected expression after ']', found %s   e.g. Parser/ar/parser_support_wildcard/negative/wildcard_quest_newline.cj
+     8  error: expected macro name   e.g. Parser/new_package/new_package_err_10.cj
+     8  error: expected expression after keyword 'synchronized', found %s   e.g. Sema/ErrMsgs/sync_0.cj
+     8  error: expected 'r_curl', found 'as'   e.g. Sema/unusedImport/unusedImport001/unused007.cj
 
 note: success = exit 0 + no parser diagnostic; fail = exit 0 + diagnostic(s); crash = non-zero exit/timeout.
 note: dump-ast renders every parser diag (incl. warnings) as 'error:' on stderr; fail may include warning-only files.

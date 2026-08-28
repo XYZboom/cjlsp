@@ -642,7 +642,13 @@ impl<'a> Parser<'a> {
             last_tok_end = star.end;
             glob = true;
         } else if self.eat(TokenKind::LCURL) {
-            // `import a.b.{X, Y}` — brace-selected imports (spec Ch.03)
+            // `import a.b.{X, Y}` — brace-selected imports (spec Ch.03), or
+            // `import {a.b.C}` — a full dotted path inside braces, where the
+            // leading segments form the package path and the last segment is
+            // the single selected name (`{std.collection.ArrayList}` →
+            // path=[std, collection], selected=[ArrayList]).
+            let mut segs = Vec::new();
+            let mut saw_comma = false;
             while !self.at(TokenKind::RCURL) && !self.at(TokenKind::END) {
                 let t = self.peek_token().clone();
                 if t.kind == TokenKind::IDENTIFIER
@@ -652,7 +658,10 @@ impl<'a> Parser<'a> {
                 {
                     let s = self.advance();
                     last_tok_end = s.end;
-                    selected.push(s.text);
+                    segs.push(s.text);
+                    if !self.eat(TokenKind::DOT) {
+                        break;
+                    }
                 } else {
                     let found = crate::token_display_text(&t);
                     self.error_id(
@@ -662,9 +671,40 @@ impl<'a> Parser<'a> {
                     );
                     break;
                 }
-                if !self.eat(TokenKind::COMMA) {
+            }
+            // more selectors separated by commas: `{X, Y}`
+            while self.eat(TokenKind::COMMA) {
+                saw_comma = true;
+                let t = self.peek_token().clone();
+                if t.kind == TokenKind::IDENTIFIER
+                    || t.kind == TokenKind::PACKAGE_IDENTIFIER
+                    || t.kind == TokenKind::MUL
+                    || t.kind.is_name_like()
+                {
+                    let s = self.advance();
+                    last_tok_end = s.end;
+                    segs.push(s.text);
+                } else {
+                    let found = crate::token_display_text(&t);
+                    self.error_id(
+                        &t,
+                        cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                        &["import", "selector", &found],
+                    );
                     break;
                 }
+            }
+            if saw_comma {
+                // `{X, Y}` — every segment is a selected name.
+                selected.extend(segs);
+            } else if segs.len() >= 2 {
+                // `{a.b.C}` — leading segments are the package path, the
+                // final segment is the single selected name.
+                let last = segs.pop().unwrap();
+                path.extend(segs);
+                selected.push(last);
+            } else if segs.len() == 1 {
+                selected.push(segs.pop().unwrap());
             }
             let rc = self.expect(TokenKind::RCURL);
             if rc.kind == TokenKind::RCURL {
