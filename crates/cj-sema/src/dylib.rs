@@ -1,4 +1,4 @@
-// cj-sema: dlopen-based macro expansion via the official Cangjie runtime.
+// cj-sema: dynamic-library macro expansion via the official Cangjie runtime.
 //
 // Spec Ch.14 user macros are pre-compiled by the SDK (cjpm) into shared
 // libraries that export a C wrapper per macro: `macroCall_c_<Name>_<Pkg>`
@@ -6,8 +6,8 @@
 // implements the Rust side of that contract, replacing the quote-template
 // fallback with a REAL expansion:
 //
-//   1. dlopen the runtime + std libs (RTLD_GLOBAL) and InitCJRuntime.
-//   2. dlopen the compiled macro .so.
+//   1. Load the runtime + std libs (RTLD_GLOBAL on Linux) and InitCJRuntime.
+//   2. Load the compiled macro library (.so on Linux, .dll on Windows).
 //   3. Run the macro's global-init via RunCJTask (best-effort), then invoke
 //      `macroCall_c_*` on a runtime task with the serialized Tokens argument.
 //   4. Parse the returned serialized Tokens.
@@ -17,12 +17,11 @@
 // Tokens.inc ordinals — our generated TokenKind enum preserves them 1:1.
 //
 // Every failure path returns Err and the caller falls back to the existing
-// template expansion, so a missing SDK or a broken .so never destabilizes the
-// LSP.
+// template expansion, so a missing SDK or a broken library never destabilizes
+// the LSP.
 
 use crate::macro_cache;
 use cj_ast::{CodePos, Tokenish};
-use libloading::os::unix::{Library as UnixLibrary, Symbol};
 
 use std::ffi::c_void;
 use std::path::Path;
@@ -30,6 +29,103 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+
+// ---------------------------------------------------------------------------
+// Cross-platform dynamic library loading (platform layer).
+//
+// Linux  : libloading::os::unix (dlopen/dlsym, RTLD_NOW | RTLD_GLOBAL)
+// Windows: windows-sys (LoadLibraryW + GetProcAddress on kernel32)
+//
+// Both halves expose the same API shape as libloading — `open(path)` returns a
+// handle that unloads on drop, `get::<T>(&handle, symbol)` returns the bare
+// function pointer — so the shared runtime/expansion code below reads
+// identically on both platforms. Symbol names (`macroCall_c_<Name>_<Pkg>`) and
+// the serialized-token byte format (TokenSerialization.cpp) are
+// platform-independent.
+// ---------------------------------------------------------------------------
+#[cfg(target_os = "linux")]
+mod imp {
+    use libloading::os::unix::Library;
+    use std::ffi::c_void;
+    use std::path::Path;
+
+    /// dlopen handle (dlclose on drop) — the same type the Linux path always
+    /// used.
+    pub type Loaded = Library;
+
+    /// dlopen with the flags the Linux path always used (RTLD_NOW|RTLD_GLOBAL).
+    pub unsafe fn open(path: &Path) -> Result<Loaded, String> {
+        Library::open(Some(path), libc::RTLD_NOW | libc::RTLD_GLOBAL).map_err(|e| e.to_string())
+    }
+
+    /// dlsym a symbol; returns the bare function pointer.
+    pub unsafe fn get<T: Copy>(lib: &Loaded, symbol: &[u8]) -> Result<T, String> {
+        let sym: libloading::os::unix::Symbol<T> = lib.get(symbol).map_err(|e| e.to_string())?;
+        Ok(*sym)
+    }
+
+    /// free() the buffer a macro wrapper returned (official InvokeMacroFunc
+    /// contract).
+    pub unsafe fn free(ptr: *mut c_void) {
+        libc::free(ptr);
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod imp {
+    use std::ffi::c_void;
+    use std::path::Path;
+    use windows_sys::Win32::Foundation::{FreeLibrary, HMODULE};
+    use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+
+    /// LoadLibraryW handle; FreeLibrary on drop (mirrors dlclose).
+    pub struct Loaded {
+        handle: HMODULE,
+    }
+    // HMODULE is a raw pointer; the Runtime singleton owns exactly one copy, so
+    // sharing it across threads (it lives in a OnceLock) is safe.
+    unsafe impl Send for Loaded {}
+    unsafe impl Sync for Loaded {}
+
+    impl Drop for Loaded {
+        fn drop(&mut self) {
+            unsafe {
+                FreeLibrary(self.handle);
+            }
+        }
+    }
+
+    /// LoadLibraryW a macro .dll by full path.
+    pub unsafe fn open(path: &Path) -> Result<Loaded, String> {
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let handle = LoadLibraryW(wide.as_ptr());
+        if handle.is_null() {
+            return Err(format!("LoadLibraryW failed for {}", path.display()));
+        }
+        Ok(Loaded { handle })
+    }
+
+    /// GetProcAddress a symbol; returns the bare function pointer.
+    pub unsafe fn get<T: Copy>(lib: &Loaded, symbol: &[u8]) -> Result<T, String> {
+        // Symbol names are ASCII (`macroCall_c_<Name>_<Pkg>`); GetProcAddress
+        // takes an ANSI name.
+        let name = std::ffi::CStr::from_bytes_with_nul(symbol).map_err(|e| e.to_string())?;
+        let raw: unsafe extern "system" fn() -> isize =
+            GetProcAddress(lib.handle, name.as_ptr() as *const u8)
+                .ok_or_else(|| format!("GetProcAddress failed for {:?}", name.to_bytes()))?;
+        // FARPROC and every requested T are pointer-sized fn pointers — bit-copy
+        // the address into the caller's fn-pointer type.
+        Ok(std::mem::transmute_copy(&raw))
+    }
+
+    /// free() the buffer a macro wrapper returned. The official compiler
+    /// releases it with the C runtime's free() (InvokeMacroFunc); link the
+    /// same CRT free here.
+    pub unsafe fn free(ptr: *mut c_void) {
+        libc::free(ptr);
+    }
+}
 
 /// The C signature of the desugared macro wrapper.
 /// `macroCall_c_<Name>_<Pkg>(paramPtr: CPointer<UInt8>, paramSize: Int64,
@@ -131,8 +227,8 @@ struct Notify {
 /// Held runtime handles + entry points. Kept alive for the process lifetime so
 /// dlclosing a macro .so never unloads the std libs underneath it.
 struct Runtime {
-    _runtime_lib: UnixLibrary,
-    _std_libs: Vec<(std::path::PathBuf, UnixLibrary)>,
+    _runtime_lib: imp::Loaded,
+    _std_libs: Vec<(std::path::PathBuf, imp::Loaded)>,
     run_cj_task: unsafe extern "C" fn(TaskFn, *mut c_void) -> *mut c_void,
     release_handle: unsafe extern "C" fn(*mut c_void),
 }
@@ -192,26 +288,23 @@ fn init_runtime() -> Result<Runtime, String> {
     for name in preload {
         let p = lib_dir.join(name);
         if p.exists() {
-            let lib = unsafe { UnixLibrary::open(Some(&p), libc::RTLD_NOW | libc::RTLD_GLOBAL) }
-                .map_err(|e| format!("dlopen {}: {e}", p.display()))?;
+            let lib =
+                unsafe { imp::open(&p) }.map_err(|e| format!("dlopen {}: {e}", p.display()))?;
             std_libs.push((p, lib));
         }
     }
 
     let runtime_path = lib_dir.join("libcangjie-runtime.so");
-    let runtime_lib =
-        unsafe { UnixLibrary::open(Some(&runtime_path), libc::RTLD_NOW | libc::RTLD_GLOBAL) }
-            .map_err(|e| format!("dlopen runtime {}: {e}", runtime_path.display()))?;
+    let runtime_lib = unsafe { imp::open(&runtime_path) }
+        .map_err(|e| format!("dlopen runtime {}: {e}", runtime_path.display()))?;
 
     unsafe {
-        let init_runtime: Symbol<unsafe extern "C" fn(*mut ConfigParam) -> i64> = runtime_lib
-            .get(b"InitCJRuntime\0")
-            .map_err(|e| e.to_string())?;
-        let run_cj_task: Symbol<unsafe extern "C" fn(TaskFn, *mut c_void) -> *mut c_void> =
-            runtime_lib.get(b"RunCJTask\0").map_err(|e| e.to_string())?;
-        let release_handle: Symbol<unsafe extern "C" fn(*mut c_void)> = runtime_lib
-            .get(b"ReleaseHandle\0")
-            .map_err(|e| e.to_string())?;
+        let init_runtime: unsafe extern "C" fn(*mut ConfigParam) -> i64 =
+            imp::get(&runtime_lib, b"InitCJRuntime\0")?;
+        let run_cj_task: unsafe extern "C" fn(TaskFn, *mut c_void) -> *mut c_void =
+            imp::get(&runtime_lib, b"RunCJTask\0")?;
+        let release_handle: unsafe extern "C" fn(*mut c_void) =
+            imp::get(&runtime_lib, b"ReleaseHandle\0")?;
 
         let mut cfg = ConfigParam::for_macro_expansion();
         let rc = init_runtime(&mut cfg);
@@ -222,8 +315,8 @@ fn init_runtime() -> Result<Runtime, String> {
         let rt = Runtime {
             _runtime_lib: runtime_lib,
             _std_libs: std_libs,
-            run_cj_task: *run_cj_task,
-            release_handle: *release_handle,
+            run_cj_task,
+            release_handle,
         };
 
         // Best-effort std package inits in dependency order (std.core →
@@ -255,17 +348,17 @@ unsafe extern "C" fn notify_cb(arg: *mut c_void) {
 
 /// Run a raw Cangjie function (e.g. a package `..._global_init$_reset`) on a
 /// runtime task and wait for its notify callback. Best-effort.
-fn run_pkg_init(rt: &Runtime, lib: &UnixLibrary, sym: &str) -> Result<(), String> {
+fn run_pkg_init(rt: &Runtime, lib: &imp::Loaded, sym: &str) -> Result<(), String> {
     unsafe {
-        let init_fn: Symbol<unsafe extern "C" fn(*mut c_void) -> *mut c_void> =
-            lib.get(sym.as_bytes()).map_err(|e| e.to_string())?;
+        let init_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+            imp::get(lib, sym.as_bytes())?;
         let done = Box::new(AtomicBool::new(false));
         let notify = Box::new(Notify {
             func: notify_cb,
             arg: &*done as *const AtomicBool as *mut c_void,
         });
         let arg = &*notify as *const Notify as *mut c_void;
-        let handle = (rt.run_cj_task)(*init_fn, arg);
+        let handle = (rt.run_cj_task)(init_fn, arg);
         wait_flag(&done, Duration::from_secs(5));
         (rt.release_handle)(handle);
         Ok(())
@@ -319,11 +412,11 @@ pub fn expand_macro_call(
     args: &[Tokenish],
 ) -> Result<Vec<Tokenish>, String> {
     let rt = ensure_runtime()?;
-    let so = unsafe { UnixLibrary::open(Some(so_path), libc::RTLD_NOW | libc::RTLD_GLOBAL) }
-        .map_err(|e| format!("dlopen {}: {e}", so_path.display()))?;
+    let so =
+        unsafe { imp::open(so_path) }.map_err(|e| format!("dlopen {}: {e}", so_path.display()))?;
     let symbol = macro_symbol_name(macro_name, pkg_name);
-    let macro_fn: Symbol<MacroFn> =
-        unsafe { so.get(symbol.as_bytes()) }.map_err(|e| format!("dlsym {symbol}: {e}"))?;
+    let macro_fn: MacroFn =
+        unsafe { imp::get(&so, symbol.as_bytes()) }.map_err(|e| format!("dlsym {symbol}: {e}"))?;
 
     // Serialized Tokens input (official GetTokensBytes format).
     let input = serialize_tokens(args);
@@ -338,7 +431,7 @@ pub fn expand_macro_call(
     fake_node[0x1b0..0x1b4].copy_from_slice(&0i32.to_le_bytes()); // fileID
 
     let data = Box::new(TaskData {
-        macro_fn: *macro_fn,
+        macro_fn,
         input,
         fake_node: fake_node.as_mut_ptr() as *mut c_void,
         out: AtomicPtr::new(ptr::null_mut()),
@@ -367,7 +460,7 @@ pub fn expand_macro_call(
     let tokens = unsafe { deserialize_from_ptr(out) }?;
     // The wrapper returns a malloc'd buffer (the official compiler free()s it
     // in InvokeMacroFunc) — release it, matching the contract.
-    unsafe { libc::free(out as *mut c_void) };
+    unsafe { imp::free(out as *mut c_void) };
     // Task finished: reclaim the boxed context.
     unsafe {
         drop(Box::from_raw(data_ptr as *mut TaskData));

@@ -404,14 +404,15 @@ fn expand_one_cached(name: &str, args: &[cj_ast::Tokenish], pos: &CodePos, ctx: 
     }
 
     // 2. Macro-package compile cache: if a package dir is available, compile
-    //    the macro package (cached by source hash) and dlopen the resulting
-    //    .so to actually run `macroCall_c_*` (real expansion, spec Ch.14).
-    //    On any failure (no SDK, dlopen/dlsym miss, call error) we fall back
-    //    gracefully — template expansion if a def is available, else the
-    //    previous placeholder text — so the LSP never destabilizes.
-    //    Linux-only: dlopen of macro .so (dylib.rs) is Unix-specific; other
-    //    platforms fall through to template expansion (step 3).
-    #[cfg(target_os = "linux")]
+    //    the macro package (cached by source hash) and load the resulting
+    //    shared library (.so on Linux via dlopen, .dll on Windows via
+    //    LoadLibraryW) to actually run `macroCall_c_*` (real expansion,
+    //    spec Ch.14). On any failure (no SDK, dlopen/dlsym miss, call error)
+    //    we fall back gracefully — template expansion if a def is available,
+    //    else the previous placeholder text — so the LSP never destabilizes.
+    //    Supported on Linux + Windows (dylib.rs `imp`); other platforms fall
+    //    through to template expansion (step 3).
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     if let Some(dir) = ctx.pkg_dir {
         if let Ok((so, pkg_name)) = ctx.cache.compile_macro_package(dir) {
             let key = crate::macro_cache::MacroCache::expansion_key(name, &args_text(args));
@@ -457,11 +458,11 @@ fn expand_one_cached(name: &str, args: &[cj_ast::Tokenish], pos: &CodePos, ctx: 
     ));
 }
 
-/// Graceful fallback when the compiled .so cannot be invoked: template
+/// Graceful fallback when the compiled library cannot be invoked: template
 /// expansion via the macro's quote body (the pre-T11 behavior), else a
-/// placeholder noting the .so + failure. Never returns an unresolved diag —
-/// the caller has already decided this macro has a definition.
-#[cfg(target_os = "linux")]
+/// placeholder noting the library + failure. Never returns an unresolved
+/// diag — the caller has already decided this macro has a definition.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn fallback_expansion(
     name: &str,
     args: &[cj_ast::Tokenish],
