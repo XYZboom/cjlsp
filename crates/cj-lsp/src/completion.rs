@@ -597,13 +597,13 @@ const KEYWORDS: &[(&str, &str, u32, &str)] = &[
         "func name(){}",
         "func name(){}",
         2,
-        "func ${1:name}() {\n\t$0\n}",
+        "func ${1:name}($2) {\n\t$0\n}",
     ),
     (
         "func name<T>(){}",
         "func name<T>(){}",
         2,
-        "func ${1:name}<T>() {\n\t$0\n}",
+        "func ${1:name}<T>($2) {\n\t$0\n}",
     ),
     ("extend", "", 1, "extend"),
     (
@@ -690,6 +690,9 @@ const KEYWORDS: &[(&str, &str, u32, &str)] = &[
     ("new", "", 1, "new"),
     ("operator", "", 1, "operator"),
     ("except", "", 1, "except"),
+    ("forward", "", 1, "forward"),
+    ("true", "", 1, "true"),
+    ("false", "", 1, "false"),
     ("IntNative", "", 1, "IntNative"),
     ("UIntNative", "", 1, "UIntNative"),
     ("This", "", 1, "This"),
@@ -801,13 +804,17 @@ pub(crate) fn display_type(t: &Type) -> String {
 
 // ─── Helper: render a Param ─────────────────────────────────────────────
 // detail form: `name: T` or `name!: T = default`
+// Official shows the literal default source (e.g. `= 1`), not `= ...`.
+fn param_default_src(p: &Param) -> String {
+    p.default
+        .as_ref()
+        .map(|e| format!(" = {}", expr_lit_src(e)))
+        .unwrap_or_default()
+}
+
 fn param_detail(p: &Param) -> String {
     let ty_s = display_type(&p.ty);
-    let default_s = p
-        .default
-        .as_ref()
-        .map(|_| " = ...".to_string())
-        .unwrap_or_default();
+    let default_s = param_default_src(p);
     if p.is_named {
         format!("{}!: {}{}", p.name, ty_s, default_s)
     } else {
@@ -818,11 +825,7 @@ fn param_detail(p: &Param) -> String {
 // label form: `name: T` (named params keep `!` in the label too)
 fn param_label(p: &Param) -> String {
     let ty_s = display_type(&p.ty);
-    let default_s = p
-        .default
-        .as_ref()
-        .map(|_| " = ...".to_string())
-        .unwrap_or_default();
+    let default_s = param_default_src(p);
     if p.is_named {
         format!("{}!: {}{}", p.name, ty_s, default_s)
     } else {
@@ -835,15 +838,82 @@ fn param_insert(p: &Param, counter: &mut u32) -> String {
     let n = *counter;
     *counter += 1;
     let ty_s = display_type(&p.ty);
-    let default_s = p
-        .default
-        .as_ref()
-        .map(|_| " = ...".to_string())
-        .unwrap_or_default();
+    let default_s = param_default_src(p);
     if p.is_named {
         format!("{}: ${{{}}}{}", p.name, n, ty_s + &default_s)
     } else {
         format!("${{{0}: {1}: {2}}}", n, p.name, ty_s + &default_s)
+    }
+}
+
+// ─── Helper: render a default-value Expr back to source text ─────────────
+fn unop_str(op: &cj_ast::UnOp) -> &'static str {
+    match op {
+        cj_ast::UnOp::Neg => "-",
+        cj_ast::UnOp::Pos => "+",
+        cj_ast::UnOp::Not => "!",
+        cj_ast::UnOp::BitNot => "~",
+    }
+}
+
+fn binop_str(op: &cj_ast::BinOp) -> &'static str {
+    use cj_ast::BinOp::*;
+    match op {
+        Add => "+",
+        Sub => "-",
+        Mul => "*",
+        Div => "/",
+        Mod => "%",
+        Exp => "**",
+        Eq => "==",
+        Ne => "!=",
+        Lt => "<",
+        Gt => ">",
+        Le => "<=",
+        Ge => ">=",
+        BitAnd => "&",
+        BitOr => "|",
+        BitXor => "^",
+        And => "&&",
+        Or => "||",
+        LShift => "<<",
+        RShift => ">>",
+        Coalesce => "??",
+        Pipe => "|>",
+        Compose => "~>",
+        Range => "..",
+        ClosedRange => "..=",
+    }
+}
+
+fn expr_lit_src(e: &Expr) -> String {
+    match e {
+        Expr::Lit { value, .. } => value.clone(),
+        Expr::Name { name, .. } => name.clone(),
+        Expr::Paren { inner, .. } => format!("({})", expr_lit_src(inner)),
+        Expr::Unary { op, inner, .. } => format!("{}{}", unop_str(op), expr_lit_src(inner)),
+        Expr::Binary { op, lhs, rhs, .. } => {
+            format!("{} {} {}", expr_lit_src(lhs), binop_str(op), expr_lit_src(rhs))
+        }
+        Expr::Call { callee, args, .. } => {
+            let callee_s = expr_lit_src(callee);
+            let arg_strs: Vec<String> = args
+                .iter()
+                .map(|a| {
+                    if let Some(n) = &a.name {
+                        format!("{n}: {}", expr_lit_src(&a.value))
+                    } else {
+                        expr_lit_src(&a.value)
+                    }
+                })
+                .collect();
+            format!("{callee_s}({})", arg_strs.join(", "))
+        }
+        Expr::Array { elements, .. } => {
+            let el: Vec<String> = elements.iter().map(expr_lit_src).collect();
+            format!("[{}]", el.join(", "))
+        }
+        _ => String::new(),
     }
 }
 
@@ -899,7 +969,7 @@ fn vis_prefix(
 // ─── Candidate collection ────────────────────────────────────────────────
 
 #[derive(Clone)]
-struct Candidate {
+pub(crate) struct Candidate {
     label: String,
     kind: u32,
     detail: String,
@@ -1015,6 +1085,7 @@ fn emit_ctor_items(
     is_sealed: bool,
     is_abstract: bool,
     type_params: &[cj_ast::TypeParam],
+    detail_name: &str, // class name for primary ctor, "init" for init()
 ) {
     let vis = vis_prefix(is_public, is_open, is_sealed, is_abstract, false, false);
     let tp = type_params_str(type_params);
@@ -1028,15 +1099,15 @@ fn emit_ctor_items(
     } else {
         format!("<${{1:{tp}}}>")
     };
-    let tp_num = if tp.is_empty() { 0u32 } else { 1 };
+    let tp_num = type_params.len() as u32;
 
-    // Class detail: `func init()` / `func init(params)` — official uses `init`
-    // for ctors regardless of primary vs init-method.
+    // Detail uses the declared ctor name: primary ctor → class name, else
+    // `init`. e.g. `func Data1(a!: Int64 = 1)` / `func init(b!: Int32 = 2)`.
     let detail = if params.is_empty() {
-        format!("{vis}func init()")
+        format!("{vis}func {detail_name}()")
     } else {
         let param_strs: Vec<String> = params.iter().map(param_detail).collect();
-        format!("{vis}func init({})", param_strs.join(", "))
+        format!("{vis}func {detail_name}({})", param_strs.join(", "))
     };
 
     let label = if params.is_empty() {
@@ -1049,7 +1120,10 @@ fn emit_ctor_items(
     let (fmt, ins) = if params.is_empty() {
         (1, format!("{class_name}(){tp_insert}"))
     } else {
-        let mut c = tp_num + 1;
+        // Snippet numbering: type params occupy 1..=tp_num, then a slot is
+        // skipped when any type param exists (official starts ctor args at
+        // tp_num + 2, or at 1 when there are no type params).
+        let mut c = if tp_num == 0 { 1 } else { tp_num + 2 };
         let ins_params: Vec<String> = params.iter().map(|p| param_insert(p, &mut c)).collect();
         (
             2,
@@ -1063,12 +1137,65 @@ fn emit_ctor_items(
         Candidate {
             label,
             kind: KIND_FUNCTION,
-            detail,
+            detail: detail.clone(),
             insert_text: ins,
             insert_text_format: fmt,
             filter_text: class_name.to_string(),
         },
     );
+
+    // Lambda / trailing-closure form: when the LAST param is a function type
+    // `fn: (A...) -> B`, official adds a `C(...) { A1, A2 => B }` item that
+    // drops the fn param and renders the closure. Only when fn is last.
+    if let Some(fn_param) = params.last().filter(|p| matches!(&p.ty, Type::Func { .. })) {
+        let (fn_args, fn_ret) = match &fn_param.ty {
+            Type::Func { params: fp, ret, .. } => {
+                let a: Vec<String> = fp.iter().map(display_type).collect();
+                (a, display_type(ret))
+            }
+            _ => (Vec::new(), String::new()),
+        };
+        let leading = &params[..params.len() - 1];
+        let mut c = if tp_num == 0 { 1 } else { tp_num + 2 };
+        let ins_leading: Vec<String> = leading.iter().map(|p| param_insert(p, &mut c)).collect();
+        // closure snippets continue the counter
+        let closure_start = c;
+        let arg_names: Vec<String> = fn_args
+            .iter()
+            .enumerate()
+            .map(|(i, t)| format!("arg{}: {t}", i + 1))
+            .collect();
+        let fn_args_s = fn_args.join(", ");
+        let closure_ins =
+            format!("{{ {} => ${{{}:{}}} }}", arg_names.join(", "), closure_start, fn_ret);
+        let leading_label: Vec<String> = leading.iter().map(param_label).collect();
+        let leading_str = if leading.is_empty() {
+            String::new()
+        } else {
+            format!("({})", leading_label.join(", "))
+        };
+        let closure_label = format!("{class_name}{leading_str} {{ {fn_args_s} => {fn_ret} }}");
+        let ins = if leading.is_empty() {
+            format!("{class_name} {closure_ins}")
+        } else {
+            format!(
+                "{class_name}{tp_insert}({}) {closure_ins}",
+                ins_leading.join(", ")
+            )
+        };
+        push_candidate(
+            cands,
+            seen,
+            Candidate {
+                label: closure_label,
+                kind: KIND_FUNCTION,
+                detail: detail.clone(),
+                insert_text: ins,
+                insert_text_format: 2,
+                filter_text: class_name.to_string(),
+            },
+        );
+    }
 }
 
 /// Collect top-level decls from a parsed File.
@@ -1136,6 +1263,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                                 *is_sealed,
                                 *is_abstract,
                                 type_params,
+                                name,
                             );
                         }
                         Decl::Func {
@@ -1153,6 +1281,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                                 *is_sealed,
                                 *is_abstract,
                                 type_params,
+                                "init",
                             );
                         }
                         _ => {}
@@ -1210,6 +1339,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                                 false,
                                 false,
                                 type_params,
+                                name,
                             );
                         }
                         Decl::Func {
@@ -1227,6 +1357,7 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                                 false,
                                 false,
                                 type_params,
+                                "init",
                             );
                         }
                         _ => {}
@@ -1464,6 +1595,17 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
             _ => {}
         }
     }
+}
+
+/// Collect all top-level declaration candidates for a same-package sibling
+/// file (classes + ctors, structs + ctors, enums, interfaces, funcs, vars,
+/// type aliases, props) — the same shape `collect_file_decls` produces for the
+/// opened file, minus a shared `seen` set so cross-file duplicates collapse.
+pub fn sibling_candidates(file: &File) -> Vec<Candidate> {
+    let mut cands: Vec<Candidate> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    collect_file_decls(file, &mut cands, &mut seen);
+    cands
 }
 
 // ─── Helper: position of any expression node ─────────────────────────────
@@ -1889,6 +2031,22 @@ fn decl_pos(d: &Decl) -> cj_ast::CodePos {
 /// Collect std-core symbols as candidates.
 fn collect_std_symbols(cands: &mut Vec<Candidate>, seen: &mut HashSet<String>) {
     for sym in STD_CORE {
+        if sym.name == "CFunc" {
+            // Official renders CFunc as a type-argument snippet.
+            push_candidate(
+                cands,
+                seen,
+                Candidate {
+                    label: "CFunc<T>".to_string(),
+                    kind: KIND_CLASS,
+                    detail: sym.detail.to_string(),
+                    insert_text: "CFunc<${1:()} -> ${2:Unit}>".to_string(),
+                    insert_text_format: 2,
+                    filter_text: sym.name.to_string(),
+                },
+            );
+            continue;
+        }
         push_candidate(
             cands,
             seen,
@@ -1922,6 +2080,9 @@ fn collect_std_symbols(cands: &mut Vec<Candidate>, seen: &mut HashSet<String>) {
 /// Collect keyword candidates.
 fn collect_keywords(cands: &mut Vec<Candidate>, seen: &mut HashSet<String>) {
     for (label, detail, fmt, ins) in KEYWORDS {
+        // filterText is the leading keyword token (e.g. `func name(){}` filters
+        // on `func`), so the template set collapses under a keyword prefix.
+        let filter = label.split([' ', '<', '(']).next().unwrap_or(label);
         push_candidate(
             cands,
             seen,
@@ -1931,7 +2092,7 @@ fn collect_keywords(cands: &mut Vec<Candidate>, seen: &mut HashSet<String>) {
                 detail: detail.to_string(),
                 insert_text: ins.to_string(),
                 insert_text_format: *fmt,
-                filter_text: label.to_string(),
+                filter_text: filter.to_string(),
             },
         );
     }
@@ -2050,7 +2211,7 @@ pub fn complete_at(
     source: &str,
     line: u32,
     character: u32,
-    sibling_decls: Option<&Vec<(String, u32, String)>>,
+    sibling_decls: Option<&[Candidate]>,
     project_root: Option<&Path>,
     uri: &str,
 ) -> Value {
@@ -2080,19 +2241,8 @@ pub fn complete_at(
 
         // 2. Same-package sibling decls (from project root scanning)
         if let Some(sibs) = sibling_decls {
-            for (name, kind, detail) in sibs {
-                push_candidate(
-                    &mut candidates,
-                    &mut seen,
-                    Candidate {
-                        label: name.clone(),
-                        kind: *kind,
-                        detail: detail.clone(),
-                        insert_text: name.clone(),
-                        insert_text_format: 1,
-                        filter_text: name.clone(),
-                    },
-                );
+            for c in sibs {
+                push_candidate(&mut candidates, &mut seen, c.clone());
             }
         }
         let _ = project_root;

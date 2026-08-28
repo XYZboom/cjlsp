@@ -113,13 +113,16 @@ impl LspServer {
         // sibling file decls (official behavior: cross-file completion).
         let cwd = std::env::current_dir().unwrap_or_default();
         let project_root = resolve_project_root(&cwd, path);
+        let siblings = project_root.as_deref().map(|r| {
+            collect_same_package_candidates(r, file.package.as_deref(), &path.to_string_lossy())
+        });
 
         crate::completion::complete_at(
             &file,
             source,
             line,
             character,
-            None,
+            siblings.as_deref(),
             project_root.as_deref(),
             &uri,
         )
@@ -392,6 +395,48 @@ fn collect_same_package_sigs(root: &Path, package: Option<&str>) -> HashMap<Stri
     sigs
 }
 
+/// Collect top-level decl candidates from same-package sibling .cj files
+/// under the project root (cross-file completion). Excludes `path` itself.
+/// Returns the candidates (labels/kinds/details) for completion to merge.
+fn collect_same_package_candidates(
+    root: &Path,
+    package: Option<&str>,
+    self_path: &str,
+) -> Vec<crate::completion::Candidate> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|e| e == "cj")
+                && !p.to_string_lossy().ends_with(self_path)
+            {
+                let Ok(src) = fs::read_to_string(&p) else {
+                    continue;
+                };
+                let mut parser =
+                    cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
+                let f = parser.run();
+                // Only same-package siblings are visible (spec Ch.03).
+                let same_pkg = match (package, f.package.as_deref()) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => true,
+                };
+                if !same_pkg {
+                    continue;
+                }
+                out.extend(crate::completion::sibling_candidates(&f));
+            }
+        }
+    }
+    out
+}
+
 /// Convert an LSP 0-based (line, character) position to a byte offset in
 /// `src`. `character` counts Unicode code points (matches the lexer's column
 /// semantics). Out-of-range positions clamp to the nearest valid offset.
@@ -445,14 +490,24 @@ fn apply_incremental_change(text: &mut String, range: &Value, new_text: &str) {
     let s_char = start["character"].as_u64().unwrap_or(0) as u32;
     let e_line = end["line"].as_u64().unwrap_or(0) as u32;
     let e_char = end["character"].as_u64().unwrap_or(0) as u32;
-    // Official ignores edits whose range end exceeds the line's length
-    // (invalid ranges — e.g. a typed prefix beyond an empty line).
-    if e_char as usize > line_char_len(text, e_line) {
+    let s_len = line_char_len(text, s_line) as u32;
+    let e_len = line_char_len(text, e_line) as u32;
+    // A range that starts at-or-past the line's end and runs beyond it is an
+    // invalid replacement (claims to consume chars that don't exist — e.g.
+    // typing over a trailing empty line). Official ignores it entirely.
+    if s_line == e_line && s_char >= s_len && e_char > e_len {
         return;
     }
     let s = lsp_pos_to_byte(text, s_line, s_char);
-    let e = lsp_pos_to_byte(text, e_line, e_char);
-    if s <= e && e <= text.len() {
+    // Clamp the end to the line's length: a range end past the line means
+    // "to end of line" (replacing a typed span that ends past the content).
+    let e = if e_char as usize > e_len as usize {
+        lsp_pos_to_byte(text, e_line, e_len)
+    } else {
+        lsp_pos_to_byte(text, e_line, e_char)
+    };
+    let s = s.min(e);
+    if e <= text.len() {
         text.replace_range(s..e, new_text);
     }
 }
