@@ -34,7 +34,6 @@ pub enum LitKind { Integer, RuneByte, Float, Rune, String, JString, Bool, Unit, 
 
 /// Binary operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-<<<<<<< HEAD
 pub enum BinOp {
     Add,
     Sub,
@@ -61,10 +60,6 @@ pub enum BinOp {
     Range,
     ClosedRange,
 }
-=======
-pub enum BinOp { Add, Sub, Mul, Div, Mod, Exp, And, Or, BitAnd, BitOr, BitXor,
-    LShift, RShift, Eq, Ne, Lt, Gt, Le, Ge, Coalesce, Pipe, Range, ClosedRange }
->>>>>>> wt/t26-completion45
 
 /// Unary operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
