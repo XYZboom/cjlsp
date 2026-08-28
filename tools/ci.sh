@@ -3,7 +3,8 @@
 #
 # One command runs every gate a developer needs before pushing:
 #   fmt check -> clippy (-D warnings) -> unit tests -> LSP diagnostics
-#   coverage -> SCAN Parser alignment -> macro E2E
+#   coverage -> SCAN Parser alignment -> macro E2E -> cross-platform (T45):
+#   Linux debug+release build, Windows GNU cross-build, clippy on both targets.
 #
 # Each step prints PASS/FAIL with the measurable number (coverage %, test
 # count). The script exits non-zero on the first failing gate so CI can stop
@@ -122,6 +123,27 @@ if [ "${FEATURE_FULL:-0}" = "1" ]; then
   SUMMARY+=("feature-cases|$FEAT_RC")
 else
   step "feature smoke (completion/hover)" bash -c "python3 tools/run_feature_cases.py --limit 2 --workers 4 2>&1 | tail -4"
+fi
+
+# 8. Cross-platform build gates (T45). Linux debug+release workspace build,
+#    Windows GNU cross-build of the two user-facing binaries (cj-lsp /
+#    cj-frontend, which pull in the whole dependency graph) and clippy on the
+#    Windows target. Windows steps need the rustup target plus a mingw linker;
+#    they are skipped (with a visible note) on boxes without the toolchain so
+#    the pipeline still runs on Linux-only dev machines.
+step "cargo build (linux, workspace)" bash -c "cargo build --workspace 2>&1"
+step "cargo build --release (linux, workspace)" bash -c "cargo build --release --workspace 2>&1"
+
+if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1 \
+   && rustup target list --installed 2>/dev/null | grep -qx x86_64-pc-windows-gnu; then
+  # Debug links may print "corrupt .drectve at end of def file" from mingw ld
+  # (known false positive, release links are silent). It is a warning only and
+  # does not fail the gate.
+  step "cargo build (windows-gnu, cj-lsp+cj-frontend)" bash -c "cargo build --target x86_64-pc-windows-gnu -p cj-lsp -p cj-frontend 2>&1"
+  step "cargo build --release (windows-gnu, cj-lsp+cj-frontend)" bash -c "cargo build --release --target x86_64-pc-windows-gnu -p cj-lsp -p cj-frontend 2>&1"
+  step "clippy (windows-gnu target)" bash -c "cargo clippy --workspace --target x86_64-pc-windows-gnu -- -D warnings 2>&1"
+else
+  echo "SKIP  windows-gnu cross-build (needs rustup target x86_64-pc-windows-gnu + x86_64-w64-mingw32-gcc)"
 fi
 
 echo

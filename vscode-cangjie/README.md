@@ -83,6 +83,42 @@ vscode-cangjie/
 └── .vscode/launch.json       # F5 扩展开发调试
 ```
 
+## 开发者：跨平台构建与 CI 门禁
+
+仓库根目录的 `tools/ci.sh` 是完整 CI 管道，T45 起含**全平台门禁**：Linux
+debug+release 构建、Windows GNU 交叉编译、clippy 双 target（linux &
+windows-gnu）、单元测试、LSP 诊断覆盖率、SCAN Parser 对齐、宏 E2E。推送前
+跑一次即可全部验证：
+
+```bash
+cd <仓库根目录>
+./tools/ci.sh            # 完整管道
+./tools/ci.sh -j 12      # 并行构建（12 核）
+```
+
+跨平台构建命令速查（在仓库根目录执行）：
+
+| 目标平台 | 命令 | 产物 |
+|---|---|---|
+| Linux（宿主） | `cargo build --release -p cj-lsp -p cj-frontend` | `target/release/LSPServer`、`target/release/cj-frontend` |
+| Windows 交叉编译 | `cargo build --release --target x86_64-pc-windows-gnu -p cj-lsp -p cj-frontend` | `target/x86_64-pc-windows-gnu/release/LSPServer.exe`、`…/cj-frontend.exe` |
+
+> 说明：`cj-lsp` 与 `cj-frontend` 两个 crate 会拉入全部依赖（含宏动态加载
+> `cj-sema/dylib.rs` 的 `cfg(windows)` 实现），因此交叉编译即覆盖全工作区。
+> 如需整工作区校验，可换 `cargo build --target x86_64-pc-windows-gnu`。
+
+Windows 交叉编译前置条件（一次性准备）：
+
+```bash
+rustup target add x86_64-pc-windows-gnu          # rustup 目标
+sudo apt install gcc-mingw-w64-x86-64            # 链接器（x86_64-w64-mingw32-gcc）
+cargo clippy --workspace --target x86_64-pc-windows-gnu -- -D warnings   # Windows target 单独 clippy
+```
+
+> 已知良性提示：Windows debug 链接时 mingw ld 可能打印
+> `corrupt .drectve at end of def file`（release 链接不出现），是 ld 的
+> 误报，不影响产物，ci.sh 中该步骤不因 warning 失败。
+
 ## License
 
 MIT
