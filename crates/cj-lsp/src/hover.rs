@@ -83,11 +83,11 @@ pub fn definition_at(file: &File, uri: &str, line: u32, character: u32) -> Value
 struct LspRange(u32, u32, u32); // line, start col, end col (0-based)
 
 fn render_hover(hi: &Hoverable, r: LspRange) -> Value {
+    // markdown-escape `_` in the package name (official renders it as `\_`)
+    let pkg = hi.pkg.as_deref().unwrap_or("").replace('_', "\\_");
     let mut value = format!(
         "Declared in: {}  \nPackage info: {}  \n\n```cangjie\n{}\n```\n",
-        hi.declared_in,
-        hi.pkg.as_deref().unwrap_or(""),
-        hi.signature
+        hi.declared_in, pkg, hi.signature
     );
     if let Some(doc) = &hi.doc {
         value.push_str(&format!("\n---\n\n{doc}  \n"));
@@ -126,6 +126,9 @@ struct Hoverable {
     ty: Option<String>,
     /// True when this symbol names a type (class/interface/struct/enum/alias).
     is_type: bool,
+    /// Rendered parameter types for func-like decls; used to pick the right
+    /// overload at a call site by matching the inferred argument types.
+    param_tys: Vec<String>,
 }
 
 impl Hoverable {
@@ -153,6 +156,8 @@ struct Word {
 
 struct Index<'a> {
     source: &'a str,
+    /// The parsed file (used to walk call args for overload resolution).
+    file: &'a File,
     total_lines: u32,
     package: Option<&'a str>,
     file_name: &'a str,
@@ -165,6 +170,9 @@ struct Index<'a> {
     locals: HashMap<String, Vec<usize>>,
     /// Type name -> index into `all` (classes/interfaces/structs/enums/aliases).
     types: HashMap<String, usize>,
+    /// Type name -> kind label ("class"/"struct"/"interface"/"enum") — used
+    /// to render `// In struct A` for extend-block members.
+    type_kind: HashMap<String, String>,
     /// container type name -> member indices into `all`.
     members: HashMap<String, Vec<usize>>,
     containers: Vec<Container>,
@@ -181,6 +189,7 @@ impl<'a> Index<'a> {
     fn new(file: &'a File, source: &'a str, package: Option<&'a str>, file_name: &'a str) -> Self {
         let mut idx = Index {
             source,
+            file,
             total_lines: source.lines().count() as u32,
             package,
             file_name,
@@ -188,6 +197,7 @@ impl<'a> Index<'a> {
             by_name: HashMap::new(),
             locals: HashMap::new(),
             types: HashMap::new(),
+            type_kind: HashMap::new(),
             members: HashMap::new(),
             containers: Vec::new(),
             parents: HashMap::new(),
@@ -208,6 +218,7 @@ impl<'a> Index<'a> {
                     pkg: Some("std.core".to_string()),
                     ty: Some(s.name.to_string()),
                     is_type: true,
+                    param_tys: Vec::new(),
                 },
             );
         }
@@ -247,15 +258,16 @@ impl<'a> Index<'a> {
                 let ret_s = ret
                     .as_ref()
                     .map(render_type)
-                    .or_else(|| infer_body_ret(body));
+                    .or_else(|| self.infer_body_ret_ix(body));
+                let ret_txt = ret_s
+                    .as_deref()
+                    .map(|t| format!(": {t}"))
+                    .unwrap_or_else(|| ": Unit".to_string());
                 let sig = format!(
                     "{mods}func {name}{}({}){}",
                     render_type_params(type_params),
                     render_params(params, false),
-                    ret_s
-                        .as_deref()
-                        .map(|t| format!(": {t}"))
-                        .unwrap_or_default()
+                    ret_txt
                 );
                 let sig = self.with_container(&sig, container);
                 let hi = Hoverable {
@@ -269,6 +281,7 @@ impl<'a> Index<'a> {
                     pkg: self.package.map(str::to_string),
                     ty: ret_s,
                     is_type: false,
+                    param_tys: params.iter().map(|p| render_type(&p.ty)).collect(),
                 };
                 let idx = self.push(hi, !member);
                 if member {
@@ -321,9 +334,12 @@ impl<'a> Index<'a> {
                     pkg: self.package.map(str::to_string),
                     ty: None,
                     is_type: true,
+                    param_tys: Vec::new(),
                 };
                 self.push(hi, true);
                 self.types.insert(name.clone(), self.all.len() - 1);
+                self.type_kind.insert(name.clone(), "class".to_string());
+                self.collect_generic_params(type_params, &label);
                 self.add_implicit_init(name, &label);
                 if !parents.is_empty() {
                     self.parents
@@ -374,9 +390,12 @@ impl<'a> Index<'a> {
                     pkg: self.package.map(str::to_string),
                     ty: None,
                     is_type: true,
+                    param_tys: Vec::new(),
                 };
                 self.push(hi, true);
                 self.types.insert(name.clone(), self.all.len() - 1);
+                self.type_kind.insert(name.clone(), "interface".to_string());
+                self.collect_generic_params(type_params, &label);
                 if !parents.is_empty() {
                     self.parents
                         .insert(name.clone(), parents.iter().map(render_type).collect());
@@ -419,9 +438,12 @@ impl<'a> Index<'a> {
                     pkg: self.package.map(str::to_string),
                     ty: None,
                     is_type: true,
+                    param_tys: Vec::new(),
                 };
                 self.push(hi, true);
                 self.types.insert(name.clone(), self.all.len() - 1);
+                self.type_kind.insert(name.clone(), "struct".to_string());
+                self.collect_generic_params(type_params, &label);
                 self.add_implicit_init(name, &label);
                 let ci = self.containers.len();
                 self.containers.push(Container {
@@ -457,9 +479,12 @@ impl<'a> Index<'a> {
                     pkg: self.package.map(str::to_string),
                     ty: None,
                     is_type: true,
+                    param_tys: Vec::new(),
                 };
                 self.push(hi, true);
                 self.types.insert(name.clone(), self.all.len() - 1);
+                self.type_kind.insert(name.clone(), "enum".to_string());
+                self.collect_generic_params(type_params, &label);
                 let ci = self.containers.len();
                 self.containers.push(Container {
                     name: name.clone(),
@@ -484,6 +509,7 @@ impl<'a> Index<'a> {
                         pkg: self.package.map(str::to_string),
                         ty: Some(name.clone()),
                         is_type: false,
+                        param_tys: Vec::new(),
                     };
                     let idx = self.push(hi, false);
                     self.members.entry(name.clone()).or_default().push(idx);
@@ -516,6 +542,7 @@ impl<'a> Index<'a> {
                     pkg: self.package.map(str::to_string),
                     ty: Some(render_type(target)),
                     is_type: true,
+                    param_tys: Vec::new(),
                 };
                 self.push(hi, true);
                 self.types.insert(name.clone(), self.all.len() - 1);
@@ -532,6 +559,12 @@ impl<'a> Index<'a> {
             } => {
                 let mods =
                     self.effective_mods(pos, *is_public, container, member, &Body::Empty, false);
+                // collect locals inside the initializer first (lambdas in a
+                // `let`/`var` initializer) so the type inference below can
+                // resolve their params (e.g. `{a: Int64 => a}(1)` → Int64)
+                if let Some(i) = init {
+                    self.collect_local_expr(i, name_pos.line);
+                }
                 // declared/inferred type (bare, no `: ` prefix); the inferred
                 // initializer type is used when no annotation is written
                 // (official renders `var arr1: Array<Int64> = [...]`).
@@ -541,7 +574,8 @@ impl<'a> Index<'a> {
                     .filter(|r| r != "?")
                     .or_else(|| {
                         if ty.is_none() {
-                            init.as_ref().and_then(|i| infer_init_expr(i, self))
+                            init.as_ref()
+                                .and_then(|i| infer_init_expr_at(i, self, name_pos.line, 0))
                         } else {
                             None
                         }
@@ -549,9 +583,12 @@ impl<'a> Index<'a> {
                 let ty_disp = match ty {
                     Some(t) => {
                         let r = render_type(t);
-                        if r == "?" {
+                        // `??`/`???` option sugar mis-parses to Invalid — fall
+                        // back to the literal source annotation
+                        if r.contains('?') {
                             self.slice_type_from_source(name_pos.line, name)
                                 .map(|s| format!(": {s}"))
+                                .or_else(|| Some(format!(": {r}")))
                         } else {
                             Some(format!(": {r}"))
                         }
@@ -577,6 +614,7 @@ impl<'a> Index<'a> {
                     pkg: self.package.map(str::to_string),
                     ty: disp,
                     is_type: false,
+                    param_tys: Vec::new(),
                 };
                 let idx = self.push(hi, !member);
                 if member {
@@ -607,17 +645,45 @@ impl<'a> Index<'a> {
                     pkg: self.package.map(str::to_string),
                     ty: None,
                     is_type: false,
+                    param_tys: params.iter().map(|p| render_type(&p.ty)).collect(),
                 };
                 let idx = self.push(hi, false);
                 if let Some(c) = cname {
                     self.members.entry(c).or_default().push(idx);
                 }
                 // `init(...)` ctor params are hoverable locals too
+                if let Some(c) = container {
+                    self.collect_ctor_props(params, c);
+                }
                 self.collect_params(params);
                 if let Body::Block(stmts) = body {
                     self.collect_locals(stmts, pos.line);
                 }
             }
+            Decl::Extend {
+                target: Type::Ref { name: tname, .. },
+                members,
+                pos,
+                ..
+            } => {
+                // members of an `extend X { }` block belong to the target
+                // type: collect them with the `// In class X` / `// In struct X`
+                // container label for hit-testing and member resolution.
+                let kind = self
+                    .type_kind
+                    .get(tname.as_str())
+                    .map(String::as_str)
+                    .unwrap_or("class");
+                let label = format!("{kind} {tname}");
+                let ci = self.containers.len();
+                self.containers.push(Container {
+                    name: tname.clone(),
+                    name_line: pos.line,
+                    last_member_line: self.total_lines,
+                });
+                self.collect_members(members, &label, ci);
+            }
+            Decl::Extend { .. } => {}
             Decl::Prop {
                 name,
                 is_public,
@@ -629,17 +695,21 @@ impl<'a> Index<'a> {
                     self.effective_mods(pos, *is_public, container, member, &Body::Empty, false);
                 let sig = format!("{mods}let {name}: {}", render_type(ty));
                 let sig = self.with_container(&sig, container);
+                // the AST stores only the `prop` keyword span — recover the
+                // property NAME span from the source line
+                let (ncol, nend) = self.prop_name_span(pos, name);
                 let hi = Hoverable {
                     name: name.clone(),
                     line: pos.line,
-                    col: pos.col,
-                    end_col: pos.end_col,
+                    col: ncol,
+                    end_col: nend,
                     signature: sig,
                     doc: None,
                     declared_in: self.file_name.to_string(),
                     pkg: self.package.map(str::to_string),
                     ty: Some(render_type(ty)),
                     is_type: false,
+                    param_tys: Vec::new(),
                 };
                 let idx = self.push(hi, !member);
                 if member {
@@ -670,6 +740,7 @@ impl<'a> Index<'a> {
                     pkg: self.package.map(str::to_string),
                     ty: None,
                     is_type: false,
+                    param_tys: Vec::new(),
                 };
                 self.push(hi, !member);
             }
@@ -685,6 +756,7 @@ impl<'a> Index<'a> {
                     pkg: self.package.map(str::to_string),
                     ty: None,
                     is_type: false,
+                    param_tys: Vec::new(),
                 };
                 self.push(hi, true);
             }
@@ -722,6 +794,7 @@ impl<'a> Index<'a> {
                         pkg: self.package.map(str::to_string),
                         ty: None,
                         is_type: false,
+                        param_tys: params.iter().map(|p| render_type(&p.ty)).collect(),
                     };
                     let idx = self.push(hi, false);
                     if let Some(cn) = container_type_name(container) {
@@ -730,6 +803,7 @@ impl<'a> Index<'a> {
                     self.containers[ci].last_member_line =
                         self.containers[ci].last_member_line.max(name_pos.line);
                     // also collect the ctor params as locals (they are hoverable)
+                    self.collect_ctor_props(params, container);
                     self.collect_params(params);
                 }
                 _ => {
@@ -762,9 +836,86 @@ impl<'a> Index<'a> {
                 pkg: self.package.map(str::to_string),
                 ty: Some(render_type(&p.ty)),
                 is_type: false,
+                param_tys: Vec::new(),
             };
             let idx = self.push(hi, false);
             self.locals.entry(p.name.clone()).or_default().push(idx);
+        }
+    }
+
+    /// True when a ctor param is a property member (`var x!: T` in a
+    /// constructor's parens) — the `var` keyword precedes the name in source.
+    fn param_is_property(&self, p: &cj_ast::Param) -> bool {
+        let l = self.source_line(p.pos.line);
+        let col = p.pos.col.saturating_sub(1) as usize;
+        if col > l.len() {
+            return false;
+        }
+        let before = &l[..col];
+        let trimmed = before.trim_end();
+        trimmed.ends_with("var")
+            && trimmed
+                .get(..trimmed.len().saturating_sub(3))
+                .and_then(|r| r.chars().next_back())
+                .map(|c| !c.is_alphanumeric())
+                .unwrap_or(true)
+    }
+
+    /// Ctor property params (`var x!: T`) become member vars: they are added
+    /// to `members` with the `// In <container>` prefix so hovering them shows
+    /// `internal var x: T` (no initializer, no `!`).
+    fn collect_ctor_props(&mut self, params: &'a [cj_ast::Param], container: &str) {
+        let Some(cname) = container_type_name(container) else {
+            return;
+        };
+        for p in params {
+            if !self.param_is_property(p) {
+                continue;
+            }
+            let mods =
+                self.effective_mods(&p.pos, false, Some(container), true, &Body::Empty, false);
+            let sig = format!(
+                "// In {container}\n{mods}var {}: {}",
+                p.name,
+                render_type(&p.ty)
+            );
+            let hi = Hoverable {
+                name: p.name.clone(),
+                line: p.pos.line,
+                col: p.pos.col,
+                end_col: p.pos.end_col,
+                signature: sig,
+                doc: None,
+                declared_in: self.file_name.to_string(),
+                pkg: self.package.map(str::to_string),
+                ty: Some(render_type(&p.ty)),
+                is_type: false,
+                param_tys: Vec::new(),
+            };
+            let idx = self.push(hi, false);
+            self.members.entry(cname.clone()).or_default().push(idx);
+        }
+    }
+
+    /// Type parameters of a class-like decl are hoverable (`// In class C7\n
+    /// genericParam T`) and resolvable from type references.
+    fn collect_generic_params(&mut self, tps: &'a [cj_ast::TypeParam], container: &str) {
+        for tp in tps {
+            let sig = format!("// In {container}\ngenericParam {}", tp.name);
+            let hi = Hoverable {
+                name: tp.name.clone(),
+                line: tp.pos.line,
+                col: tp.pos.col,
+                end_col: tp.pos.end_col,
+                signature: sig,
+                doc: None,
+                declared_in: self.file_name.to_string(),
+                pkg: self.package.map(str::to_string),
+                ty: None,
+                is_type: false,
+                param_tys: Vec::new(),
+            };
+            self.push(hi, true);
         }
     }
 
@@ -786,6 +937,7 @@ impl<'a> Index<'a> {
                 pkg: self.package.map(str::to_string),
                 ty: None,
                 is_type: false,
+                param_tys: Vec::new(),
             },
         );
     }
@@ -846,6 +998,7 @@ impl<'a> Index<'a> {
                             pkg: self.package.map(str::to_string),
                             ty: ty_disp.clone(),
                             is_type: false,
+                            param_tys: Vec::new(),
                         };
                         let idx = self.push(hi, false);
                         self.locals.entry(name.clone()).or_default().push(idx);
@@ -909,6 +1062,7 @@ impl<'a> Index<'a> {
                         pkg: self.package.map(str::to_string),
                         ty: None,
                         is_type: false,
+                        param_tys: Vec::new(),
                     };
                     let idx = self.push(hi, false);
                     self.locals.entry(name.clone()).or_default().push(idx);
@@ -945,6 +1099,7 @@ impl<'a> Index<'a> {
                             pkg: self.package.map(str::to_string),
                             ty: None,
                             is_type: false,
+                            param_tys: Vec::new(),
                         };
                         let idx = self.push(hi, false);
                         self.locals.entry(cn.clone()).or_default().push(idx);
@@ -1098,14 +1253,27 @@ impl<'a> Index<'a> {
         let ret_s = ret
             .as_ref()
             .map(render_type)
-            .or_else(|| infer_body_ret(body));
+            .or_else(|| self.infer_body_ret_with_params(body, params));
+        let ret_txt = ret_s
+            .as_deref()
+            .map(|t| format!(": {t}"))
+            .unwrap_or_else(|| ": Unit".to_string());
+        // a scanned local func may actually be a member of a class-like body
+        // that the parser dropped (e.g. `operator func +` in an enum) —
+        // recover the container + modifiers from the source
+        let container = self.enclosing_container_label(start, lines);
+        let prefix = container
+            .as_deref()
+            .map(|c| format!("// In {c}\n"))
+            .unwrap_or_default();
+        let mods = if container.is_some() {
+            self.local_member_mods(start, lines)
+        } else {
+            String::new()
+        };
         let sig = format!(
-            "func {name}({}){}",
-            render_params(params, false),
-            ret_s
-                .as_deref()
-                .map(|t| format!(": {t}"))
-                .unwrap_or_default()
+            "{prefix}{mods}func {name}({}){ret_txt}",
+            render_params(params, false)
         );
         let line = start + name_pos.line.saturating_sub(1);
         Some(Hoverable {
@@ -1119,7 +1287,76 @@ impl<'a> Index<'a> {
             pkg: self.package.map(str::to_string),
             ty: ret_s,
             is_type: false,
+            param_tys: Vec::new(),
         })
+    }
+
+    /// Visibility modifiers for a scanned local func that is a class-like
+    /// member (defaults to `internal`; `mut`/`static`/... are recovered).
+    fn local_member_mods(&self, start: u32, lines: &[&str]) -> String {
+        let line = lines.get(start as usize).unwrap_or(&"");
+        let trimmed = line.trim_start();
+        let mut mods: Vec<&str> = Vec::new();
+        for m in [
+            "private",
+            "protected",
+            "public",
+            "internal",
+            "static",
+            "mut",
+            "open",
+            "abstract",
+        ] {
+            if word_in(trimmed, m) && !mods.contains(&m) {
+                mods.push(m);
+            }
+        }
+        let has_vis = mods
+            .iter()
+            .any(|m| matches!(*m, "private" | "protected" | "public" | "internal"));
+        if !has_vis {
+            mods.insert(0, "internal");
+        }
+        format!("{} ", mods.join(" "))
+    }
+
+    /// Nearest preceding `class/struct/interface/enum <Name>` opener label —
+    /// but a local func nested inside another func is NOT a class member, so
+    /// the scan stops at the nearest `func ... {` opener with None.
+    fn enclosing_container_label(&self, start: u32, lines: &[&str]) -> Option<String> {
+        for j in (0..start as usize).rev() {
+            let line = lines[j];
+            let trimmed = line.trim();
+            // a func opener that nests this func (ends with `{`) → local func
+            if trimmed.ends_with('{') && trimmed.contains("func ") {
+                return None;
+            }
+            for kw in ["class", "struct", "interface", "enum"] {
+                let mut rest = line;
+                while let Some(i) = rest.find(kw) {
+                    let before_ok =
+                        i == 0 || !rest[..i].chars().next_back().unwrap().is_alphanumeric();
+                    let after = &rest[i + kw.len()..];
+                    let after_ok = after
+                        .chars()
+                        .next()
+                        .map(|c| c == ' ' || c == '<')
+                        .unwrap_or(false);
+                    if before_ok && after_ok {
+                        let name = after
+                            .trim_start()
+                            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                            .next()
+                            .unwrap_or("");
+                        if !name.is_empty() {
+                            return Some(format!("{kw} {name}"));
+                        }
+                    }
+                    rest = after;
+                }
+            }
+        }
+        None
     }
 
     // ------------------------------------------------------------
@@ -1130,6 +1367,45 @@ impl<'a> Index<'a> {
         match container {
             Some(c) => format!("// In {c}\n{sig}"),
             None => sig.to_string(),
+        }
+    }
+
+    /// Infer a func's return type from its body (position-insensitive: every
+    /// in-scope local of the body is considered visible).
+    fn infer_body_ret_ix(&self, body: &Body) -> Option<String> {
+        match body {
+            Body::Empty => Some("Unit".to_string()),
+            Body::Block(stmts) => stmts
+                .last()
+                .and_then(|e| infer_init_expr_at(e, self, u32::MAX, u32::MAX)),
+        }
+    }
+
+    /// Like `infer_body_ret_ix` but also resolves Name refs against the given
+    /// params (for scanned local funcs whose params aren't in `locals`).
+    fn infer_body_ret_with_params(&self, body: &Body, params: &[cj_ast::Param]) -> Option<String> {
+        match body {
+            Body::Empty => Some("Unit".to_string()),
+            Body::Block(stmts) => stmts
+                .last()
+                .and_then(|e| self.infer_expr_with_params(e, params)),
+        }
+    }
+
+    fn infer_expr_with_params(&self, e: &Expr, params: &[cj_ast::Param]) -> Option<String> {
+        match e {
+            Expr::Name { name, .. } => {
+                if let Some(p) = params.iter().find(|p| &p.name == name) {
+                    return Some(render_type(&p.ty));
+                }
+                infer_init_expr_at(e, self, u32::MAX, u32::MAX)
+            }
+            Expr::Binary { lhs, .. } => self.infer_expr_with_params(lhs, params),
+            Expr::Paren { inner, .. } => self.infer_expr_with_params(inner, params),
+            Expr::Block { stmts, .. } => stmts
+                .last()
+                .and_then(|s| self.infer_expr_with_params(s, params)),
+            _ => infer_init_expr_at(e, self, u32::MAX, u32::MAX),
         }
     }
 
@@ -1165,23 +1441,21 @@ impl<'a> Index<'a> {
         let has_vis = mods
             .iter()
             .any(|m| matches!(*m, "private" | "protected" | "public" | "internal"));
+        // interface (and interface-extend) members are implicitly public
+        let in_interface = container
+            .map(|c| c.starts_with("interface "))
+            .unwrap_or(false)
+            && member;
         if !has_vis {
-            if is_public {
+            if is_public || in_interface {
                 mods.insert(0, "public");
             } else {
                 mods.insert(0, "internal");
             }
         }
-        // interface member funcs: abstract (no body) / open (has body)
-        let in_interface = container
-            .map(|c| c.starts_with("interface "))
-            .unwrap_or(false)
-            && member;
-        if in_interface
-            && !mods.contains(&"abstract")
-            && !mods.contains(&"open")
-            && !mods.contains(&"static")
-        {
+        // interface member funcs: abstract (no body) / open (has body) —
+        // even static ones are abstract when they have no body
+        if in_interface && !mods.contains(&"abstract") && !mods.contains(&"open") {
             if matches!(body, Body::Empty) || is_abstract {
                 mods.push("abstract");
             } else {
@@ -1210,8 +1484,21 @@ impl<'a> Index<'a> {
         };
         let after = line[eq + 1..].trim();
         let after = strip_trailing_comment(after);
-        if after.is_empty() || after.starts_with('{') {
+        if after.is_empty() {
             String::new()
+        } else if after.starts_with('{') {
+            // keep immediately-invoked lambdas `{a => ...}(1, 2)`; omit bare
+            // lambdas / blocks
+            if let Some(close) = after.rfind('}') {
+                let tail = after[close + 1..].trim_start();
+                if tail.starts_with('(') {
+                    format!(" = {after}")
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
         } else {
             format!(" = {after}")
         }
@@ -1237,6 +1524,32 @@ impl<'a> Index<'a> {
             None
         } else {
             Some(ty.to_string())
+        }
+    }
+
+    /// Recover a property's NAME span (1-based, inclusive/exclusive) from the
+    /// `prop` keyword span + the source line.
+    fn prop_name_span(&self, pos: &CodePos, name: &str) -> (u32, u32) {
+        let line = self.source_line(pos.line);
+        let mut i = pos.end_col.saturating_sub(1) as usize; // just after `prop`
+        if i > line.len() {
+            return (pos.col, pos.end_col);
+        }
+        while i < line.len()
+            && !(line.as_bytes()[i].is_ascii_alphanumeric() || line.as_bytes()[i] == b'_')
+        {
+            i += 1;
+        }
+        let start = i;
+        while i < line.len()
+            && (line.as_bytes()[i].is_ascii_alphanumeric() || line.as_bytes()[i] == b'_')
+        {
+            i += 1;
+        }
+        if line.get(start..i) == Some(name) {
+            (start as u32 + 1, i as u32 + 1)
+        } else {
+            (pos.col, pos.end_col)
         }
     }
 
@@ -1318,10 +1631,13 @@ impl<'a> Index<'a> {
                 }
             }
         }
-        // call position: `word(` or `word<T>(` → ctor/init or func
-        if self.is_call_at(word, line, character) {
+        // call position: `word(` or `word<T>(` → ctor/init or func. Slice
+        // from the END of the word (the cursor often sits mid-word).
+        let word_end = word_start + word.len() as u32;
+        if self.is_call_at(word, line, word_end) {
             if self.types.contains_key(word) {
-                if let Some(hi) = self.member_lookup(word, "init") {
+                let args = self.call_arg_tys(word, line, word_start, word_end);
+                if let Some(hi) = self.member_lookup_for_call(word, "init", &args) {
                     return Some(hi);
                 }
                 // no declared init — official shows the synthesized default
@@ -1332,11 +1648,17 @@ impl<'a> Index<'a> {
                     .or_else(|| self.lookup_type(word));
             }
             if let Some(hits) = self.by_name.get(word) {
-                return self
-                    .lookup_local(word, line, character)
-                    .or_else(|| self.pick_non_type(hits));
+                if let Some(hi) = self.lookup_local(word, line, character) {
+                    return Some(hi);
+                }
+                let args = self.call_arg_tys(word, line, word_start, word_end);
+                return self.pick_func_by_args(hits, &args);
             }
             return self.lookup_local(word, line, character);
+        }
+        // type name used as a static / enum-case receiver: `Foo.f`, `Time.Day`
+        if self.types.contains_key(word) && self.byte_after(line, word_end) == Some(b'.') {
+            return self.lookup_type(word);
         }
         // type position (preceded by : < as is extend etc)
         if self.is_type_position(word, line, word_start) {
@@ -1363,6 +1685,8 @@ impl<'a> Index<'a> {
         let before = &l[..col];
         let idx = before.rfind('.')?;
         let head = &before[..idx];
+        // optional receiver `c2?.item`: the `?` sits before the dot
+        let head = head.trim_end_matches('?');
         let recv = head
             .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
             .next()?;
@@ -1415,9 +1739,206 @@ impl<'a> Index<'a> {
         best
     }
 
-    fn is_call_at(&self, word: &str, line: u32, character: u32) -> bool {
+    /// Pick a ctor/func overload at a call site by matching the inferred
+    /// argument types against each candidate's parameter types.
+    fn member_lookup_for_call(
+        &self,
+        container: &str,
+        name: &str,
+        args: &[Option<String>],
+    ) -> Option<&Hoverable> {
+        let base = container.split('<').next().unwrap_or(container);
+        let idxs = self.members.get(base)?;
+        let mut best: Option<&Hoverable> = None;
+        let mut best_score = i32::MIN;
+        for i in idxs {
+            let h = &self.all[*i];
+            if h.name != name {
+                continue;
+            }
+            let score = match_score(&h.param_tys, args);
+            if best.is_none() || score > best_score {
+                best = Some(h);
+                best_score = score;
+            }
+        }
+        best
+    }
+
+    /// Pick the best function overload (by arg types) from the by_name hits.
+    fn pick_func_by_args(&self, hits: &[usize], args: &[Option<String>]) -> Option<&Hoverable> {
+        let mut best: Option<&Hoverable> = None;
+        let mut best_score = i32::MIN;
+        for &i in hits {
+            let h = &self.all[i];
+            if h.is_type {
+                continue;
+            }
+            let score = match_score(&h.param_tys, args);
+            if best.is_none() || score > best_score {
+                best = Some(h);
+                best_score = score;
+            }
+        }
+        best
+    }
+
+    /// Infer the declared types of the arguments of the call whose callee is
+    /// the identifier at (line, word_start..word_end).
+    fn call_arg_tys(
+        &self,
+        word: &str,
+        line: u32,
+        word_start: u32,
+        word_end: u32,
+    ) -> Vec<Option<String>> {
+        let mut calls: Vec<&Expr> = Vec::new();
+        for d in &self.file.decls {
+            self.collect_calls_in_decl(d, &mut calls);
+        }
+        let call = calls.into_iter().find(|c| {
+            if let Expr::Call { callee, .. } = c {
+                if let Expr::Name { name, pos, .. } = callee.as_ref() {
+                    return name == word
+                        && pos.line == line + 1
+                        && pos.col == word_start + 1
+                        && pos.end_col == word_end + 1;
+                }
+            }
+            false
+        });
+        match call {
+            Some(Expr::Call { args, .. }) => args
+                .iter()
+                .map(|a| infer_init_expr_at(&a.value, self, line, word_end))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn collect_calls_in_decl<'x>(&self, d: &'x Decl, out: &mut Vec<&'x Expr>) {
+        match d {
+            Decl::Func { body, .. } => self.collect_calls_in_body(body, out),
+            Decl::PrimaryCtor { body, .. } => self.collect_calls_in_body(body, out),
+            Decl::Class { members, .. }
+            | Decl::Struct { members, .. }
+            | Decl::Interface { members, .. }
+            | Decl::Extend { members, .. } => {
+                for m in members {
+                    self.collect_calls_in_decl(m, out);
+                }
+            }
+            Decl::Var { init: Some(i), .. } => self.collect_calls_in_expr(i, out),
+            Decl::Var { .. } => {}
+            _ => {}
+        }
+    }
+
+    fn collect_calls_in_body<'x>(&self, body: &'x Body, out: &mut Vec<&'x Expr>) {
+        if let Body::Block(stmts) = body {
+            for s in stmts {
+                self.collect_calls_in_expr(s, out);
+            }
+        }
+    }
+
+    #[allow(clippy::only_used_in_recursion)]
+    fn collect_calls_in_expr<'x>(&self, e: &'x Expr, out: &mut Vec<&'x Expr>) {
+        if let Expr::Call { .. } = e {
+            out.push(e);
+        }
+        match e {
+            Expr::Call { callee, args, .. } => {
+                self.collect_calls_in_expr(callee, out);
+                for a in args {
+                    self.collect_calls_in_expr(&a.value, out);
+                }
+            }
+            Expr::Member { object, .. } => self.collect_calls_in_expr(object, out),
+            Expr::Lambda { body, .. } => self.collect_calls_in_expr(body, out),
+            Expr::Block { stmts, .. } => {
+                for s in stmts {
+                    self.collect_calls_in_expr(s, out);
+                }
+            }
+            Expr::LetPatternDestructor { initializer, .. } => {
+                self.collect_calls_in_expr(initializer, out)
+            }
+            Expr::Binary { lhs, rhs, .. }
+            | Expr::Range {
+                start: lhs,
+                end: rhs,
+                ..
+            } => {
+                self.collect_calls_in_expr(lhs, out);
+                self.collect_calls_in_expr(rhs, out);
+            }
+            Expr::Assign { lhs, rhs, .. } => {
+                self.collect_calls_in_expr(lhs, out);
+                self.collect_calls_in_expr(rhs, out);
+            }
+            Expr::Subscript { object, index, .. } => {
+                self.collect_calls_in_expr(object, out);
+                self.collect_calls_in_expr(index, out);
+            }
+            Expr::Paren { inner, .. }
+            | Expr::Unary { inner, .. }
+            | Expr::IncOrDec { inner, .. }
+            | Expr::Return {
+                value: Some(inner), ..
+            }
+            | Expr::Is { inner, .. }
+            | Expr::As { inner, .. }
+            | Expr::Optional { inner, .. }
+            | Expr::OptionalChain { inner, .. }
+            | Expr::TrailingClosure { closure: inner, .. } => {
+                self.collect_calls_in_expr(inner, out)
+            }
+            Expr::If {
+                cond, then, els, ..
+            } => {
+                self.collect_calls_in_expr(cond, out);
+                self.collect_calls_in_expr(then, out);
+                if let Some(e) = els {
+                    self.collect_calls_in_expr(e, out);
+                }
+            }
+            Expr::While { cond, body, .. } | Expr::DoWhile { cond, body, .. } => {
+                self.collect_calls_in_expr(cond, out);
+                self.collect_calls_in_expr(body, out);
+            }
+            Expr::ForIn { iter, body, .. } => {
+                self.collect_calls_in_expr(iter, out);
+                self.collect_calls_in_expr(body, out);
+            }
+            Expr::Match {
+                scrutinee, cases, ..
+            } => {
+                self.collect_calls_in_expr(scrutinee, out);
+                for c in cases {
+                    self.collect_calls_in_expr(&c.body, out);
+                }
+            }
+            Expr::Interpolation { parts, .. } | Expr::StrInterpolation { parts, .. } => {
+                for p in parts {
+                    if let cj_ast::InterpPart::Expr(pe) = p {
+                        self.collect_calls_in_expr(pe, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Byte right after the word (0-based column), for `.`-receiver checks.
+    fn byte_after(&self, line: u32, col: u32) -> Option<u8> {
         let l = self.source_line(line + 1);
-        let col = character as usize;
+        l.as_bytes().get(col as usize).copied()
+    }
+
+    fn is_call_at(&self, word: &str, line: u32, word_end: u32) -> bool {
+        let l = self.source_line(line + 1);
+        let col = word_end as usize;
         let after = &l[col..];
         let after = after.trim_start();
         if after.starts_with('(') {
@@ -1681,18 +2202,7 @@ fn render_default_expr(e: &Expr) -> String {
     }
 }
 
-/// Infer a function's return type from its body when not declared.
-fn infer_body_ret(body: &Body) -> Option<String> {
-    let stmts = match body {
-        Body::Empty => return Some("Unit".to_string()),
-        Body::Block(stmts) => stmts,
-    };
-    match stmts.last() {
-        Some(e) => infer_expr_type(e),
-        None => Some("Unit".to_string()),
-    }
-}
-
+/// Infer a literal's type from its kind.
 fn lit_type(kind: &cj_ast::LitKind) -> String {
     match kind {
         cj_ast::LitKind::Integer => "Int64".to_string(),
@@ -1703,24 +2213,6 @@ fn lit_type(kind: &cj_ast::LitKind) -> String {
         cj_ast::LitKind::Unit => "Unit".to_string(),
         cj_ast::LitKind::None => "Nothing".to_string(),
     }
-}
-
-/// Type of the last statement of a block (for return-type inference).
-fn infer_expr_type(e: &Expr) -> Option<String> {
-    match e {
-        Expr::Lit { kind, .. } => Some(lit_type(kind)),
-        Expr::Name { .. } | Expr::Call { .. } => None,
-        Expr::Binary { lhs, .. } => infer_expr_type(lhs),
-        Expr::Block { stmts, .. } => stmts.last().and_then(infer_expr_type),
-        Expr::Lambda { .. } => Some("Unit".to_string()),
-        _ => None,
-    }
-}
-
-/// Infer the declared type of a `var x = <init>` when no explicit type is
-/// written. Returns a display string (e.g. `Array<Int64>`, `Option<Base1>`).
-fn infer_init_expr(e: &Expr, idx: &Index) -> Option<String> {
-    infer_init_expr_at(e, idx, 0, 0)
 }
 
 /// Position-aware variant: `line`/`character` (0-based) let name references
@@ -1734,56 +2226,127 @@ fn infer_init_expr_at(e: &Expr, idx: &Index, line: u32, character: u32) -> Optio
                 .and_then(|e| infer_init_expr_at(e, idx, line, character));
             elem.map(|t| format!("Array<{t}>"))
         }
-        Expr::Call { callee, .. } => match callee.as_ref() {
-            // type args live on the callee Name, not on the Call node
-            // (`Array<String>()` → Name{ name: "Array", type_args: [String] })
-            Expr::Name {
-                name, type_args, ..
-            } => {
-                if type_args.is_empty() {
-                    Some(name.clone())
-                } else {
-                    Some(format!(
-                        "{name}<{}>",
+        Expr::Call { callee, .. } => {
+            // immediately-invoked lambda: `{a: Int64, b: Int64 => a + b}(1, 2)`
+            // has the lambda's body type
+            if let Expr::Lambda { body, .. } = callee.as_ref() {
+                return infer_init_expr_at(body, idx, line, character);
+            }
+            match callee.as_ref() {
+                // type args live on the callee Name, not on the Call node
+                // (`Array<String>()` → Name{ name: "Array", type_args: [String] })
+                Expr::Name {
+                    name, type_args, ..
+                } => {
+                    if !type_args.is_empty() {
+                        // type constructor `Array<String>()` → `Array<String>`
+                        Some(format!(
+                            "{name}<{}>",
+                            type_args
+                                .iter()
+                                .map(render_type)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                    } else if idx.lookup_type(name).is_some() {
+                        // type constructor `C7()` → `C7`
+                        Some(name.clone())
+                    } else {
+                        // a plain function call → its declared return type
+                        if let Some(hits) = idx.by_name.get(name) {
+                            if let Some(hi) = idx.pick_non_type(hits) {
+                                if let Some(t) = &hi.ty {
+                                    return Some(t.clone());
+                                }
+                            }
+                        }
+                        Some("Unit".to_string())
+                    }
+                }
+                Expr::Member { object, name, .. } => match object.as_ref() {
+                    // enum case / static ctor with explicit type args: the result
+                    // type is the receiver type as written (`Time3<Array<Int64>>`)
+                    Expr::Name {
+                        name: on,
+                        type_args,
+                        ..
+                    } if !type_args.is_empty() => Some(format!(
+                        "{on}<{}>",
                         type_args
                             .iter()
                             .map(render_type)
                             .collect::<Vec<_>>()
                             .join(", ")
-                    ))
-                }
-            }
-            Expr::Member { object, name, .. } => match object.as_ref() {
-                // enum case / static ctor with explicit type args: the result
-                // type is the receiver type as written (`Time3<Array<Int64>>`)
-                Expr::Name {
-                    name: on,
-                    type_args,
-                    ..
-                } if !type_args.is_empty() => Some(format!(
-                    "{on}<{}>",
-                    type_args
-                        .iter()
-                        .map(render_type)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )),
-                Expr::Name { name: on, .. } => {
-                    // value receiver `recv.member(...)`: resolve through the
-                    // member's declared type (`c1.C2()` → `Unit`)
-                    if let Some(recv_ty) = idx.receiver_type(on, line, character) {
-                        if let Some(hi) = idx.member_lookup(&recv_ty, name) {
-                            if let Some(t) = &hi.ty {
-                                return Some(t.clone());
+                    )),
+                    Expr::Name { name: on, .. } => {
+                        // value receiver `recv.member(...)`: resolve through the
+                        // member's declared type (`c1.C2()` → `Unit`)
+                        if let Some(recv_ty) = idx.receiver_type(on, line, character) {
+                            if let Some(hi) = idx.member_lookup(&recv_ty, name) {
+                                return Some(hi.ty.clone().unwrap_or_else(|| "Unit".to_string()));
                             }
                         }
+                        None
                     }
-                    Some(on.clone())
-                }
+                    Expr::Optional { inner, .. } => {
+                        // optional receiver `c2?.m()`: unwrap, resolve, re-wrap
+                        if let Expr::Name { name: on, .. } = inner.as_ref() {
+                            if let Some(recv_ty) = idx.receiver_type(on, line, character) {
+                                if let Some(hi) = idx.member_lookup(&recv_ty, name) {
+                                    let t = hi.ty.clone().unwrap_or_else(|| "Unit".to_string());
+                                    return Some(format!("Option<{t}>"));
+                                }
+                            }
+                        }
+                        None
+                    }
+                    _ => None,
+                },
                 _ => None,
-            },
+            }
+        }
+        // member access on a value/static receiver: resolve the member's type
+        // (`ab.c1` → Int32, `Option<OptionC>.None` → Option<OptionC>)
+        Expr::Member { object, name, .. } => match object.as_ref() {
+            Expr::Name {
+                name: on,
+                type_args,
+                ..
+            } if !type_args.is_empty() => Some(format!(
+                "{on}<{}>",
+                type_args
+                    .iter()
+                    .map(render_type)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+            Expr::Name { name: on, .. } => {
+                if let Some(recv_ty) = idx.receiver_type(on, line, character) {
+                    if let Some(hi) = idx.member_lookup(&recv_ty, name) {
+                        return Some(hi.ty.clone().unwrap_or_else(|| "Unit".to_string()));
+                    }
+                }
+                None
+            }
+            Expr::Optional { inner, .. } => {
+                // optional receiver `c2?.item`: unwrap, resolve, re-wrap
+                if let Expr::Name { name: on, .. } = inner.as_ref() {
+                    if let Some(recv_ty) = idx.receiver_type(on, line, character) {
+                        if let Some(hi) = idx.member_lookup(&recv_ty, name) {
+                            let t = hi.ty.clone().unwrap_or_else(|| "Unit".to_string());
+                            return Some(format!("Option<{t}>"));
+                        }
+                    }
+                }
+                None
+            }
             _ => None,
         },
+        // optional chain `c2?.item`: the member type wrapped in Option
+        Expr::OptionalChain { inner, .. } => {
+            let t = infer_init_expr_at(inner, idx, line, character)?;
+            Some(format!("Option<{t}>"))
+        }
         Expr::As { ty, .. } => Some(format!("Option<{}>", render_type(ty))),
         Expr::Name { name, .. } => {
             // resolve the referenced symbol's declared type; locals (params
@@ -1805,8 +2368,22 @@ fn infer_init_expr_at(e: &Expr, idx: &Index, line: u32, character: u32) -> Optio
             }
         }
         Expr::Binary { lhs, .. } => infer_init_expr_at(lhs, idx, line, character),
+        Expr::Block { stmts, .. } => stmts
+            .last()
+            .and_then(|s| infer_init_expr_at(s, idx, line, character)),
+        Expr::Paren { inner, .. } => infer_init_expr_at(inner, idx, line, character),
         Expr::StrInterpolation { .. } | Expr::Interpolation { .. } => Some("String".to_string()),
-        Expr::Lambda { body, .. } => infer_expr_type(body),
+        Expr::Lambda { params, body, .. } => {
+            // a lambda value has a function type `(P...) -> R`
+            let ptys = params
+                .iter()
+                .map(|p| render_type(&p.ty))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ret =
+                infer_init_expr_at(body, idx, line, character).unwrap_or_else(|| "?".to_string());
+            Some(format!("({ptys}) -> {ret}"))
+        }
         _ => None,
     }
 }
@@ -1827,6 +2404,20 @@ fn strip_std_wrap(ty: Option<String>) -> Option<String> {
 
 fn h_sig_len(h: &Hoverable) -> usize {
     h.signature.matches('(').count()
+}
+
+/// Score a call candidate against the inferred argument types: exact
+/// param-type matches weigh heavily; arity distance is a penalty.
+fn match_score(ptys: &[String], args: &[Option<String>]) -> i32 {
+    let mut exact = 0i32;
+    for (p, a) in ptys.iter().zip(args.iter()) {
+        if let Some(a) = a {
+            if a == p {
+                exact += 1;
+            }
+        }
+    }
+    exact * 10 - (ptys.len() as i32 - args.len() as i32).abs() * 5
 }
 
 // ================================================================
