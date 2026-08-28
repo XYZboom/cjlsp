@@ -522,6 +522,7 @@ impl<'a> Index<'a> {
                 is_public,
                 target,
                 pos,
+                ..
             } => {
                 let mods =
                     self.effective_mods(pos, *is_public, container, member, &Body::Empty, false);

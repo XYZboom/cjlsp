@@ -1487,7 +1487,7 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
 /// Recursively mark every binding in a pattern as mutable. Used to propagate
 /// the `var` keyword onto the pattern of `var (a, b) = ...` / `var x = ...`
 /// (the AST's Pattern::Var.is_mutable records `var`, not the destructor's).
-fn set_pattern_mutable(pat: &mut Pattern) {
+pub(crate) fn set_pattern_mutable(pat: &mut Pattern) {
     match pat {
         Pattern::Var { is_mutable, .. } => *is_mutable = true,
         Pattern::Tuple { elements, .. } => {

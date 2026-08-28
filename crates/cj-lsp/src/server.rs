@@ -138,15 +138,40 @@ impl LspServer {
         // the whole package, on every request.
         let cwd = std::env::current_dir().unwrap_or_default();
         let project_root = resolve_project_root(&cwd, path);
+        // The current file's imports name the sibling packages whose decls are
+        // visible cross-file (spec Ch.03). Wildcard (`pkg.*`) and selected
+        // (`pkg.X`) imports both make that package visible; same-package
+        // siblings are always visible.
+        let mut imported: Vec<String> = Vec::new();
+        for imp in &file.imports {
+            let pkg = imp.path.join(".");
+            if !pkg.is_empty() && !imported.contains(&pkg) {
+                imported.push(pkg);
+            }
+        }
         let siblings = project_root.as_deref().map(|r| {
             let cache = self.scan_cache.entry(r.to_path_buf()).or_default();
             collect_same_package_candidates(
                 cache,
                 r,
                 file.package.as_deref(),
+                &imported,
                 &path.to_string_lossy(),
             )
         });
+        // Parsed sibling docs (file + source) for cross-file member-access
+        // type/alias/var resolution. Borrow the cache immutably AFTER the
+        // mutable refresh above has completed.
+        let sibling_docs: Vec<(&cj_ast::File, &str)> = match &project_root {
+            Some(r) => self
+                .scan_cache
+                .get(r)
+                .map(|cache| {
+                    collect_visible_sibling_docs(cache, r, file.package.as_deref(), &imported)
+                })
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
 
         crate::completion::complete_at(
             file,
@@ -154,6 +179,7 @@ impl LspServer {
             line,
             character,
             siblings.as_deref(),
+            &sibling_docs,
             project_root.as_deref(),
             uri,
         )
@@ -416,12 +442,15 @@ fn resolve_project_root(cwd: &Path, uri_path: &Path) -> Option<PathBuf> {
 /// One parsed same-package sibling file in the cross-file scan cache.
 ///
 /// Holds the file's mtime (to detect disk changes), its package name (for
-/// the spec Ch.03 same-package filter) and both derived payloads: the
-/// completion `Candidate`s and the collected function signatures for
-/// cross-file call type checking.
+/// the spec Ch.03 same-package filter), the parsed AST + source (so member
+/// completion can resolve cross-file types/aliases/vars), and both derived
+/// payloads: the completion `Candidate`s and the collected function
+/// signatures for cross-file call type checking.
 struct CachedSibling {
     mtime: SystemTime,
     package: Option<String>,
+    file: cj_ast::File,
+    source: String,
     candidates: Vec<crate::completion::Candidate>,
     func_sigs: HashMap<String, FuncSig>,
 }
@@ -439,13 +468,15 @@ struct SiblingData {
 /// Cost model: the directory walk (`read_dir`) is cheap; each `.cj` file's
 /// mtime is diffed against the cache and ONLY changed/new files are re-parsed
 /// (read + lex + parse + collect). Deleted files are dropped. The merge keeps
-/// files whose package matches `package` (spec Ch.03 — only same-package
-/// siblings are visible); `self_path`, when given, excludes the opened file
-/// itself from the candidate list (its decls come from the live buffer).
+/// files whose package matches `package` OR one of `imported` (spec Ch.03 —
+/// same-package siblings plus wildcard/selected imports are visible);
+/// `self_path`, when given, excludes the opened file itself from the
+/// candidate list (its decls come from the live buffer).
 fn refresh_sibling_cache(
     cache: &mut HashMap<PathBuf, CachedSibling>,
     root: &Path,
     package: Option<&str>,
+    imported: &[String],
     self_path: Option<&str>,
 ) -> SiblingData {
     // 1. Cheap directory walk: (path, mtime) for every .cj file under root.
@@ -485,16 +516,17 @@ fn refresh_sibling_cache(
     }
     cache.retain(|p, _| disk.contains_key(p));
 
-    // 3. Merge same-package payloads (excluding the opened file for
-    // candidates). Decls from local cjpm dependencies are also visible
+    // 3. Merge same-package + imported payloads (excluding the opened file
+    // for candidates). Decls from local cjpm dependencies are also visible
     // (their packages appear in visible_packages).
     let visible = crate::cjpm::visible_packages(root);
     let mut candidates = Vec::new();
     let mut func_sigs = HashMap::new();
     for (p, c) in cache.iter() {
-        let same_pkg = match (package, c.package.as_deref()) {
-            (Some(a), Some(b)) => a == b || visible.contains(b),
-            _ => true,
+        let pkg = c.package.as_deref().unwrap_or_default();
+        let same_pkg = match package {
+            Some(a) => a == pkg || visible.contains(pkg) || imported.iter().any(|i| i == pkg),
+            None => true,
         };
         if !same_pkg {
             continue;
@@ -523,6 +555,8 @@ fn parse_sibling_file(p: &Path, mtime: SystemTime) -> Option<CachedSibling> {
     Some(CachedSibling {
         mtime,
         package,
+        file: f,
+        source: src,
         candidates,
         func_sigs: r.func_sigs,
     })
@@ -537,7 +571,7 @@ fn collect_same_package_sigs(
     root: &Path,
     package: Option<&str>,
 ) -> HashMap<String, FuncSig> {
-    refresh_sibling_cache(cache, root, package, None).func_sigs
+    refresh_sibling_cache(cache, root, package, &[], None).func_sigs
 }
 
 /// Collect top-level decl candidates from same-package sibling .cj files
@@ -548,9 +582,34 @@ fn collect_same_package_candidates(
     cache: &mut HashMap<PathBuf, CachedSibling>,
     root: &Path,
     package: Option<&str>,
+    imported: &[String],
     self_path: &str,
 ) -> Vec<crate::completion::Candidate> {
-    refresh_sibling_cache(cache, root, package, Some(self_path)).candidates
+    refresh_sibling_cache(cache, root, package, imported, Some(self_path)).candidates
+}
+
+/// Collect parsed sibling `File`s (+ sources) whose package is visible to the
+/// opened file (same package, wildcard/selected import, or cjpm dependency).
+/// The completion engine uses these to resolve member-access types, aliases
+/// and vars defined cross-file. Reuses the scan cache (already refreshed).
+fn collect_visible_sibling_docs<'a>(
+    cache: &'a HashMap<PathBuf, CachedSibling>,
+    root: &Path,
+    package: Option<&str>,
+    imported: &[String],
+) -> Vec<(&'a cj_ast::File, &'a str)> {
+    let visible = crate::cjpm::visible_packages(root);
+    cache
+        .iter()
+        .filter(|(_, c)| {
+            let pkg = c.package.as_deref().unwrap_or_default();
+            match package {
+                Some(a) => a == pkg || imported.iter().any(|i| i == pkg) || visible.contains(pkg),
+                None => true,
+            }
+        })
+        .map(|(_, c)| (&c.file, c.source.as_str()))
+        .collect()
 }
 
 /// Convert an LSP 0-based (line, character) position to a byte offset in
@@ -608,10 +667,12 @@ fn apply_incremental_change(text: &mut String, range: &Value, new_text: &str) {
     let e_char = end["character"].as_u64().unwrap_or(0) as u32;
     let s_len = line_char_len(text, s_line) as u32;
     let e_len = line_char_len(text, e_line) as u32;
-    // A range that starts at-or-past the line's end and runs beyond it is an
-    // invalid replacement (claims to consume chars that don't exist — e.g.
-    // typing over a trailing empty line). Official ignores it entirely.
-    if s_line == e_line && s_char >= s_len && e_char > e_len {
+    // Only skip an edit whose start is STRICTLY past the line's content
+    // (a truly invalid range that claims to consume chars that don't exist).
+    // An edit that starts AT the line's end is a legitimate insertion into a
+    // trailing empty line (e.g. typing "C1" on the final line of a file) and
+    // must be applied — the official engine registers it (050/107).
+    if s_line == e_line && s_char > s_len && e_char > e_len {
         return;
     }
     let s = lsp_pos_to_byte(text, s_line, s_char);

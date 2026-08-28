@@ -201,6 +201,31 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let is_mut = tok.kind == TokenKind::VAR;
             p.advance();
             let name_tok = p.peek_token().clone();
+            // Tuple / destructuring pattern: `var (a, b) = ...` — official
+            // parses it via the pattern grammar into VAR_WITH_PATTERN_DECL
+            // (e.g. var_pattern_initialization.cj). The peek is LPAREN.
+            if name_tok.kind == TokenKind::LPAREN {
+                let mut pattern = crate::expr::parse_pattern(p);
+                if is_mut {
+                    crate::expr::set_pattern_mutable(&mut pattern);
+                }
+                let ty = if p.eat(TokenKind::COLON) {
+                    Some(crate::ty::parse_type(p))
+                } else {
+                    None
+                };
+                let init = if p.eat(TokenKind::ASSIGN) {
+                    Some(crate::expr::parse_expr_prec(p, 0))
+                } else {
+                    None
+                };
+                return Some(Decl::VarWithPattern {
+                    pattern,
+                    ty,
+                    init,
+                    pos: pos_of(&tok),
+                });
+            }
             if !name_tok.kind.is_name_like() && name_tok.kind != TokenKind::WILDCARD {
                 // Official DiagExpectedIdentifierOrPattern (ParseDecl.cpp): the
                 // found token may be a literal/keyword/etc — emit
@@ -367,6 +392,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             Some(Decl::TypeAlias {
                 name,
                 is_public,
+                type_params: _type_params,
                 target,
                 pos: pos_of(&tok),
             })

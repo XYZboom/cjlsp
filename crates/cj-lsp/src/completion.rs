@@ -639,7 +639,7 @@ const KEYWORDS: &[(&str, &str, u32, &str)] = &[
         "match (condExpr) {}",
         "match (condExpr) {}",
         2,
-        "match (${1:condExpr}) {\n\t$0\n}",
+        "match (${0:condExpr}) {\n\t\n}",
     ),
     ("case", "", 1, "case"),
     (
@@ -653,7 +653,7 @@ const KEYWORDS: &[(&str, &str, u32, &str)] = &[
         "for (pattern in expression) {}",
         "for (pattern in expression) {}",
         2,
-        "for (${1:pattern} in ${2:expression}) {\n\t$0\n}",
+        "for (${1:pattern} in ${0:expression}) {\n\t\n}",
     ),
     ("if", "", 1, "if"),
     ("else", "", 1, "else"),
@@ -1978,6 +1978,23 @@ fn find_type_decl<'a>(file: &'a File, base: &str) -> Option<&'a Decl> {
     })
 }
 
+/// One parsed source doc in the cross-file resolution context: the current
+/// file is `docs[0]`, followed by visible sibling files (same-package +
+/// wildcard/selected imports + cjpm deps).
+type Docs<'a> = [(&'a File, &'a str)];
+
+/// Find a top-level type decl across the current + sibling docs. Returns the
+/// doc index (for choosing the right source during member rendering) and the
+/// decl.
+fn find_type_decl_in<'a>(docs: &'a Docs<'a>, base: &str) -> Option<(usize, &'a Decl)> {
+    for (i, (f, _)) in docs.iter().enumerate() {
+        if let Some(d) = find_type_decl(f, base) {
+            return Some((i, d));
+        }
+    }
+    None
+}
+
 /// The full source line containing byte `offset`.
 fn line_at(source: &str, offset: usize) -> &str {
     let offset = offset.min(source.len());
@@ -2022,7 +2039,7 @@ fn ctor_param_kind(source: &str, p: &Param) -> Option<bool> {
 }
 
 /// Infer a display type string from an initializer expression.
-fn infer_expr_type(file: &File, source: &str, e: &Expr) -> Option<String> {
+fn infer_expr_type(docs: &Docs, e: &Expr) -> Option<String> {
     match e {
         Expr::Lit { kind, .. } => Some(match kind {
             LitKind::String | LitKind::JString => "String".to_string(),
@@ -2033,9 +2050,9 @@ fn infer_expr_type(file: &File, source: &str, e: &Expr) -> Option<String> {
             LitKind::None => "None".to_string(),
             LitKind::Integer => "Int64".to_string(),
         }),
-        Expr::Name { name, .. } => resolve_var_type(file, source, name, u32::MAX),
-        Expr::Paren { inner, .. } => infer_expr_type(file, source, inner),
-        Expr::Unary { inner, .. } => infer_expr_type(file, source, inner),
+        Expr::Name { name, .. } => resolve_var_type(docs, name, u32::MAX),
+        Expr::Paren { inner, .. } => infer_expr_type(docs, inner),
+        Expr::Unary { inner, .. } => infer_expr_type(docs, inner),
         Expr::Call { callee, .. } => match callee.as_ref() {
             Expr::Name { name, .. } => Some(name.split('<').next().unwrap_or(name).to_string()),
             Expr::Member { name, .. } => Some(name.clone()),
@@ -2044,7 +2061,7 @@ fn infer_expr_type(file: &File, source: &str, e: &Expr) -> Option<String> {
         Expr::Member { object, .. } => match object.as_ref() {
             // `Type.EnumCase` / `Type.staticMember` keeps the object's type
             Expr::Name { name, .. } => Some(name.clone()),
-            _ => infer_expr_type(file, source, object),
+            _ => infer_expr_type(docs, object),
         },
         Expr::Array { .. } => Some("Array".to_string()),
         _ => None,
@@ -2056,18 +2073,20 @@ fn infer_expr_type(file: &File, source: &str, e: &Expr) -> Option<String> {
 /// Walks the type's own members (filtered by `access`), its parent
 /// interfaces/base classes, and same-file `extend` blocks (excluding
 /// where-constrained extends). `seen` guards against parent cycles.
+/// `idx` is the doc index the type decl came from (0 = current file).
 fn collect_type_members(
-    file: &File,
-    source: &str,
+    docs: &Docs,
+    idx: usize,
     decl: &Decl,
     access: AccessKind,
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
 ) {
+    let (_, source) = docs[idx];
     match decl {
         Decl::Class { members, name, .. } | Decl::Struct { members, name, .. } => {
             for m in members {
-                emit_member_decl(file, source, m, access, name, false, false, cands, seen);
+                emit_member_decl(docs, source, m, access, name, false, false, cands, seen);
             }
             // parents: base class / interfaces (instance members)
             if access == AccessKind::Instance {
@@ -2079,19 +2098,19 @@ fn collect_type_members(
                     let pb = type_base_name(&p);
                     if !seen.contains(&pb) {
                         seen.insert(pb.clone());
-                        if let Some(pd) = find_type_decl(file, &pb) {
-                            collect_type_members(file, source, pd, access, cands, seen);
+                        if let Some((pidx, pd)) = find_type_decl_in(docs, &pb) {
+                            collect_type_members(docs, pidx, pd, access, cands, seen);
                         }
                     }
                 }
             }
-            collect_extend_members(file, source, name, access, cands, seen);
+            collect_extend_members(docs, name, access, cands, seen);
         }
         Decl::Interface { members, name, .. } => {
             for m in members {
-                emit_member_decl(file, source, m, access, name, false, true, cands, seen);
+                emit_member_decl(docs, source, m, access, name, false, true, cands, seen);
             }
-            collect_extend_members(file, source, name, access, cands, seen);
+            collect_extend_members(docs, name, access, cands, seen);
         }
         Decl::Enum { name, cases, .. } => {
             collect_enum_members(name, cases, cands, seen);
@@ -2103,29 +2122,30 @@ fn collect_type_members(
 /// Collect members contributed by `extend T { ... }` blocks for `base` in the
 /// same file (skip extends carrying a `where` constraint — official omits them).
 fn collect_extend_members(
-    file: &File,
-    source: &str,
+    docs: &Docs,
     base: &str,
     access: AccessKind,
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
 ) {
-    for d in &file.decls {
-        if let Decl::Extend {
-            target,
-            members,
-            pos,
-            ..
-        } = d
-        {
-            if type_base_name(target) != base {
-                continue;
-            }
-            if decl_line_has(source, pos.offset, "where") {
-                continue;
-            }
-            for m in members {
-                emit_member_decl(file, source, m, access, base, true, false, cands, seen);
+    for (file, source) in docs {
+        for d in &file.decls {
+            if let Decl::Extend {
+                target,
+                members,
+                pos,
+                ..
+            } = d
+            {
+                if type_base_name(target) != base {
+                    continue;
+                }
+                if decl_line_has(source, pos.offset, "where") {
+                    continue;
+                }
+                for m in members {
+                    emit_member_decl(docs, source, m, access, base, true, false, cands, seen);
+                }
             }
         }
     }
@@ -2163,7 +2183,7 @@ fn emit_ctor_properties(
 /// Emit one member decl with the official label/detail/insert formats.
 #[allow(clippy::too_many_arguments)]
 fn emit_member_decl(
-    file: &File,
+    docs: &Docs,
     source: &str,
     m: &Decl,
     access: AccessKind,
@@ -2200,7 +2220,7 @@ fn emit_member_decl(
             let ty_s = ty
                 .as_ref()
                 .map(display_type)
-                .or_else(|| init.as_ref().and_then(|i| infer_expr_type(file, source, i)))
+                .or_else(|| init.as_ref().and_then(|i| infer_expr_type(docs, i)))
                 .unwrap_or_default();
             let init_s = init
                 .as_ref()
@@ -2355,6 +2375,10 @@ fn collect_enum_members(
         } else {
             let payload_strs: Vec<String> = ec.payloads.iter().map(display_type).collect();
             let detail = format!("{name}.{}({})", ec.name, payload_strs.join(", "));
+            // Official label for a payload-bearing case includes the payload:
+            // `TimeUnit.Day(Int32)` / `Color.Blue(Int8)` (the bare name is a
+            // separate item only when the enum also declares a no-payload case).
+            let label = format!("{name}.{}({})", ec.name, payload_strs.join(", "));
             let ins_payload: Vec<String> = (0..payload_strs.len())
                 .map(|i| format!("${{{}:{}}}", i + 1, payload_strs[i]))
                 .collect();
@@ -2363,7 +2387,7 @@ fn collect_enum_members(
                 cands,
                 seen,
                 Candidate {
-                    label: qname.clone(),
+                    label,
                     kind: KIND_METHOD,
                     detail,
                     insert_text: ins,
@@ -2522,8 +2546,10 @@ fn collect_keywords(cands: &mut Vec<Candidate>, seen: &mut HashSet<String>) {
 ///
 /// When `line` (0-based cursor line) is known, locals of the enclosing
 /// top-level function are preferred; otherwise a file-wide fallback scans
-/// top-level vars, class members and any function's params.
-fn resolve_var_type(file: &File, source: &str, var_name: &str, line: u32) -> Option<String> {
+/// top-level vars, class members and any function's params (in the current
+/// file and, for top-level vars, the visible sibling files too).
+fn resolve_var_type(docs: &Docs, var_name: &str, line: u32) -> Option<String> {
+    let (file, _source) = docs[0];
     if line != u32::MAX {
         let cursor = line + 1; // 1-based
         let mut funcs: Vec<&Decl> = file
@@ -2540,7 +2566,7 @@ fn resolve_var_type(file: &File, source: &str, var_name: &str, line: u32) -> Opt
                 .unwrap_or(u32::MAX);
             if cursor >= start && cursor < end {
                 let mut map = HashMap::new();
-                collect_func_locals(file, source, f, &mut map);
+                collect_func_locals(docs, f, &mut map);
                 if let Some(t) = map.get(var_name) {
                     return Some(t.clone());
                 }
@@ -2549,60 +2575,63 @@ fn resolve_var_type(file: &File, source: &str, var_name: &str, line: u32) -> Opt
         }
     }
     // fallback: top-level vars, class member vars, any func params
-    for d in &file.decls {
-        match d {
-            Decl::Var { name, ty, init, .. } if name == var_name => {
-                return ty
-                    .as_ref()
-                    .map(display_type)
-                    .or_else(|| init.as_ref().and_then(|i| infer_expr_type(file, source, i)));
-            }
-            Decl::Func { params, .. } => {
-                for p in params {
-                    if p.name == var_name {
-                        return Some(display_type(&p.ty));
-                    }
+    for (dfile, _) in docs {
+        for d in &dfile.decls {
+            match d {
+                Decl::Var { name, ty, init, .. } if name == var_name => {
+                    return ty
+                        .as_ref()
+                        .map(display_type)
+                        .or_else(|| init.as_ref().and_then(|i| infer_expr_type(docs, i)));
                 }
-            }
-            Decl::Class { members, .. }
-            | Decl::Struct { members, .. }
-            | Decl::Interface { members, .. } => {
-                for m in members {
-                    if let Decl::Var { name, ty, init, .. } = m {
-                        if name == var_name {
-                            return ty.as_ref().map(display_type).or_else(|| {
-                                init.as_ref().and_then(|i| infer_expr_type(file, source, i))
-                            });
-                        }
-                    }
-                    if let Decl::Prop { name, ty, .. } = m {
-                        if name == var_name {
-                            return Some(display_type(ty));
+                Decl::Func { params, .. } => {
+                    for p in params {
+                        if p.name == var_name {
+                            return Some(display_type(&p.ty));
                         }
                     }
                 }
+                Decl::Class { members, .. }
+                | Decl::Struct { members, .. }
+                | Decl::Interface { members, .. } => {
+                    for m in members {
+                        if let Decl::Var { name, ty, init, .. } = m {
+                            if name == var_name {
+                                return ty.as_ref().map(display_type).or_else(|| {
+                                    init.as_ref().and_then(|i| infer_expr_type(docs, i))
+                                });
+                            }
+                        }
+                        if let Decl::Prop { name, ty, .. } = m {
+                            if name == var_name {
+                                return Some(display_type(ty));
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
     None
 }
 
 /// Collect params + local lets/vars of a top-level func into `out`.
-fn collect_func_locals(file: &File, source: &str, func: &Decl, out: &mut HashMap<String, String>) {
+fn collect_func_locals(docs: &Docs, func: &Decl, out: &mut HashMap<String, String>) {
+    let (_, _source) = docs[0];
     if let Decl::Func { params, body, .. } = func {
         for p in params {
             out.insert(p.name.clone(), display_type(&p.ty));
         }
         if let Body::Block(exprs) = body {
-            collect_let_types(file, source, exprs, out);
+            collect_let_types(docs, exprs, out);
         }
     }
 }
 
 /// Walk a block collecting `let`/`var` names with their types (explicit or
 /// inferred from the initializer).
-fn collect_let_types(file: &File, source: &str, exprs: &[Expr], out: &mut HashMap<String, String>) {
+fn collect_let_types(docs: &Docs, exprs: &[Expr], out: &mut HashMap<String, String>) {
     for e in exprs {
         match e {
             Expr::LetPatternDestructor {
@@ -2610,7 +2639,7 @@ fn collect_let_types(file: &File, source: &str, exprs: &[Expr], out: &mut HashMa
                 initializer,
                 ..
             } => {
-                let inferred = infer_expr_type(file, source, initializer);
+                let inferred = infer_expr_type(docs, initializer);
                 for p in patterns {
                     if let Pattern::Var { name, ty, .. } = p {
                         let t = ty.as_ref().map(display_type).or_else(|| inferred.clone());
@@ -2626,7 +2655,7 @@ fn collect_let_types(file: &File, source: &str, exprs: &[Expr], out: &mut HashMa
                     collect_block_lets(e, out);
                 }
             }
-            Expr::Block { stmts, .. } => collect_let_types(file, source, stmts, out),
+            Expr::Block { stmts, .. } => collect_let_types(docs, stmts, out),
             Expr::ForIn { body, .. } => collect_block_lets(body, out),
             Expr::While { body, .. } => collect_block_lets(body, out),
             Expr::DoWhile { body, .. } => collect_block_lets(body, out),
@@ -2687,7 +2716,7 @@ struct RcvTarget {
 /// Resolve a receiver expression (the text before the final `.`) to a
 /// completion target: type name → static, enum name → enum cases, variable /
 /// ctor-call → instance members of the variable's type.
-fn resolve_receiver(file: &File, source: &str, recv: &str, line: u32) -> Option<RcvTarget> {
+fn resolve_receiver(docs: &Docs, recv: &str, line: u32) -> Option<RcvTarget> {
     let mut recv = recv.trim().to_string();
     // `case TimeUnit.` → the receiver is the enum name after `case `.
     if recv.starts_with("case ") {
@@ -2705,7 +2734,7 @@ fn resolve_receiver(file: &File, source: &str, recv: &str, line: u32) -> Option<
     let segs = split_access_segments(&recv);
     let mut cur: Option<RcvTarget> = None;
     for seg in &segs {
-        cur = Some(resolve_access_step(file, source, seg, line, cur)?);
+        cur = Some(resolve_access_step(docs, seg, line, cur)?);
     }
     // Optional chaining: Option<T> instance access unwraps to T.
     if is_opt {
@@ -2723,8 +2752,7 @@ fn resolve_receiver(file: &File, source: &str, recv: &str, line: u32) -> Option<
 
 /// One step of a chained access: a bare name (var/type/member) or a ctor call.
 fn resolve_access_step(
-    file: &File,
-    source: &str,
+    docs: &Docs,
     seg: &str,
     line: u32,
     cur: Option<RcvTarget>,
@@ -2747,18 +2775,19 @@ fn resolve_access_step(
         None => {
             // First segment: this / type name / enum / var
             if base == "this" {
-                let (cb, _) = enclosing_type(file, line)?;
+                let (cb, _) = enclosing_type(docs, line)?;
                 return Some(RcvTarget {
                     base: cb,
                     args: Vec::new(),
                     access: AccessKind::Instance,
                 });
             }
-            if let Some(d) = find_type_decl(file, &base) {
+            if let Some((idx, d)) = find_type_decl_in(docs, &base) {
                 let access = match d {
                     Decl::Enum { .. } => AccessKind::Enum,
                     _ => AccessKind::Static,
                 };
+                let _ = idx;
                 return Some(RcvTarget { base, args, access });
             }
             if is_std_enum(&base) {
@@ -2776,12 +2805,12 @@ fn resolve_access_step(
                 });
             }
             // type alias → resolve to its target base
-            if let Some(t) = resolve_alias_base(file, &base) {
+            if let Some(t) = resolve_alias_base(docs, &base) {
                 let access = if is_std_enum(&t) {
                     AccessKind::Enum
                 } else {
-                    match find_type_decl(file, &t) {
-                        Some(Decl::Enum { .. }) => AccessKind::Enum,
+                    match find_type_decl_in(docs, &t) {
+                        Some((_, Decl::Enum { .. })) => AccessKind::Enum,
                         _ => AccessKind::Static,
                     }
                 };
@@ -2791,7 +2820,7 @@ fn resolve_access_step(
                     access,
                 });
             }
-            if let Some(t) = resolve_var_type(file, source, seg, line) {
+            if let Some(t) = resolve_var_type(docs, seg, line) {
                 let tb = t.split('<').next().unwrap_or(&t).trim().to_string();
                 return Some(RcvTarget {
                     base: tb,
@@ -2803,7 +2832,7 @@ fn resolve_access_step(
         }
         Some(cur) => {
             // member access: member `seg` of the current type
-            if let Some(mt) = member_type_of(file, source, &cur.base, &base, cur.access) {
+            if let Some(mt) = member_type_of(docs, &cur.base, &base, cur.access) {
                 let tb = mt.split('<').next().unwrap_or(&mt).trim().to_string();
                 Some(RcvTarget {
                     base: tb,
@@ -2913,13 +2942,15 @@ fn is_std_type(base: &str) -> bool {
 }
 
 /// Resolve a type-alias decl to its target's base name.
-fn resolve_alias_base(file: &File, base: &str) -> Option<String> {
-    for d in &file.decls {
-        if let Decl::TypeAlias { name, target, .. } = d {
-            if name == base {
-                let tb = type_base_name(target);
-                if !tb.is_empty() {
-                    return Some(tb);
+fn resolve_alias_base(docs: &Docs, base: &str) -> Option<String> {
+    for (f, _) in docs {
+        for d in &f.decls {
+            if let Decl::TypeAlias { name, target, .. } = d {
+                if name == base {
+                    let tb = type_base_name(target);
+                    if !tb.is_empty() {
+                        return Some(tb);
+                    }
                 }
             }
         }
@@ -2928,7 +2959,9 @@ fn resolve_alias_base(file: &File, base: &str) -> Option<String> {
 }
 
 /// Enclosing class/struct decl base name for a cursor line (for `this.`).
-fn enclosing_type(file: &File, line: u32) -> Option<(String, AccessKind)> {
+/// The cursor is always in the current file (docs[0]).
+fn enclosing_type(docs: &Docs, line: u32) -> Option<(String, AccessKind)> {
+    let (file, _) = docs[0];
     let cursor = line + 1; // 1-based
     let mut types: Vec<&Decl> = file
         .decls
@@ -2956,14 +2989,9 @@ fn enclosing_type(file: &File, line: u32) -> Option<(String, AccessKind)> {
 }
 
 /// Resolve member `member` of type `base` to its type display string.
-fn member_type_of(
-    file: &File,
-    source: &str,
-    base: &str,
-    member: &str,
-    access: AccessKind,
-) -> Option<String> {
-    let d = find_type_decl(file, base)?;
+fn member_type_of(docs: &Docs, base: &str, member: &str, access: AccessKind) -> Option<String> {
+    let (idx, d) = find_type_decl_in(docs, base)?;
+    let (_file, source) = docs[idx];
     match d {
         Decl::Class { members, .. }
         | Decl::Struct { members, .. }
@@ -2977,9 +3005,10 @@ fn member_type_of(
                         init,
                         ..
                     } if name == member && static_matches(*is_static, access) => {
-                        return ty.as_ref().map(display_type).or_else(|| {
-                            init.as_ref().and_then(|i| infer_expr_type(file, source, i))
-                        });
+                        return ty
+                            .as_ref()
+                            .map(display_type)
+                            .or_else(|| init.as_ref().and_then(|i| infer_expr_type(docs, i)));
                     }
                     Decl::Prop {
                         name,
@@ -3018,29 +3047,32 @@ fn member_type_of(
             };
             for p in parents {
                 let pb = type_base_name(&p);
-                if let Some(t) = member_type_of(file, source, &pb, member, access) {
+                if let Some(t) = member_type_of(docs, &pb, member, access) {
                     return Some(t);
                 }
             }
             // extends
-            for xd in &file.decls {
-                if let Decl::Extend {
-                    target,
-                    members,
-                    pos,
-                    ..
-                } = xd
-                {
-                    if type_base_name(target) != base || decl_line_has(source, pos.offset, "where")
+            for (xfile, xsource) in docs {
+                for xd in &xfile.decls {
+                    if let Decl::Extend {
+                        target,
+                        members,
+                        pos,
+                        ..
+                    } = xd
                     {
-                        continue;
-                    }
-                    for m in members {
-                        if let Decl::Var { name, ty, init, .. } = m {
-                            if name == member {
-                                return ty.as_ref().map(display_type).or_else(|| {
-                                    init.as_ref().and_then(|i| infer_expr_type(file, source, i))
-                                });
+                        if type_base_name(target) != base
+                            || decl_line_has(xsource, pos.offset, "where")
+                        {
+                            continue;
+                        }
+                        for m in members {
+                            if let Decl::Var { name, ty, init, .. } = m {
+                                if name == member {
+                                    return ty.as_ref().map(display_type).or_else(|| {
+                                        init.as_ref().and_then(|i| infer_expr_type(docs, i))
+                                    });
+                                }
                             }
                         }
                     }
@@ -3054,22 +3086,20 @@ fn member_type_of(
 
 /// Member access completion: resolve the receiver expression and add members.
 fn collect_member_access(
-    file: &File,
-    source: &str,
+    docs: &Docs,
     receiver: &str,
     line: u32,
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
 ) {
-    if let Some(t) = resolve_receiver(file, source, receiver, line) {
-        collect_for_target(file, source, &t, cands, seen);
+    if let Some(t) = resolve_receiver(docs, receiver, line) {
+        collect_for_target(docs, &t, cands, seen);
     }
 }
 
 /// Emit the candidate set for a resolved target (std tables + file decls).
 fn collect_for_target(
-    file: &File,
-    source: &str,
+    docs: &Docs,
     t: &RcvTarget,
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
@@ -3083,16 +3113,16 @@ fn collect_for_target(
             args: type_args_of(&inner),
             access: AccessKind::Instance,
         };
-        collect_for_target(file, source, &it, cands, seen);
+        collect_for_target(docs, &it, cands, seen);
         return;
     }
     match t.base.as_str() {
         "Array" => collect_array_members(t.access, cands, seen),
-        "String" => collect_string_members(file, source, t.access, cands, seen),
+        "String" => collect_string_members(docs, t.access, cands, seen),
         "Option" => collect_option_members(t.access, cands, seen),
         _ => {
-            if let Some(d) = find_type_decl(file, &t.base) {
-                collect_type_members(file, source, d, t.access, cands, seen);
+            if let Some((idx, d)) = find_type_decl_in(docs, &t.base) {
+                collect_type_members(docs, idx, d, t.access, cands, seen);
             }
         }
     }
@@ -3100,17 +3130,24 @@ fn collect_for_target(
 
 // ─── Main entry point ────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub fn complete_at(
     file: &File,
     source: &str,
     line: u32,
     character: u32,
     sibling_decls: Option<&[Candidate]>,
+    sibling_docs: &[(&File, &str)],
     project_root: Option<&Path>,
     uri: &str,
 ) -> Value {
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    // Combined resolution docs: the current file first, then visible
+    // siblings (for cross-file member-access type/alias/var resolution).
+    let mut docs: Vec<(&File, &str)> = Vec::with_capacity(1 + sibling_docs.len());
+    docs.push((file, source));
+    docs.extend_from_slice(sibling_docs);
 
     // Determine context: member access (after `.`) or plain prefix
     let line_text = source_line_text(source, line);
@@ -3131,7 +3168,7 @@ pub fn complete_at(
         if receiver.is_empty() {
             return Value::Null;
         }
-        collect_member_access(file, source, &receiver, line, &mut candidates, &mut seen);
+        collect_member_access(&docs, &receiver, line, &mut candidates, &mut seen);
     } else {
         // 1. File top-level decls
         collect_file_decls(file, source, &mut candidates, &mut seen);
@@ -3148,11 +3185,12 @@ pub fn complete_at(
         collect_local_scope(file, source, line, &mut candidates, &mut seen);
 
         // 4. Class members in scope (if cursor inside a class/struct body)
-        if let Some((cb, _)) = enclosing_type(file, line) {
-            if let Some(d) = find_type_decl(file, &cb) {
+        let doc0: &(&File, &str) = &(file, source);
+        if let Some((cb, _)) = enclosing_type(std::slice::from_ref(doc0), line) {
+            if let Some((idx, d)) = find_type_decl_in(&[(file, source)], &cb) {
                 collect_type_members(
-                    file,
-                    source,
+                    &[(file, source)],
+                    idx,
                     d,
                     AccessKind::Instance,
                     &mut candidates,
@@ -3492,12 +3530,12 @@ fn collect_array_members(
 }
 
 fn collect_string_members(
-    _file: &File,
-    _source: &str,
+    docs: &Docs,
     access: AccessKind,
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
 ) {
+    let _ = docs;
     if access == AccessKind::Static {
         return;
     }

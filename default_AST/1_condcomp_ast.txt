@@ -1,0 +1,145 @@
+Package: default {
+  noSubPkg: 0
+  File: tvar.cj {
+    curFile: /tmp/tvar.cj
+    position: (1, 1, 1) (1, 1, 36)
+    scopeName: ""
+    ty: UnknownType
+    ptr: 0x7f3394001170
+    fullPackageName: default
+    attributes: []
+    // features nullptr
+    // package nullptr
+    VarWithPatternDecl {
+      curFile: /tmp/tvar.cj
+      position: (1, 1, 1) (1, 1, 36)
+      scopeName: ""
+      ty: UnknownType
+      ptr: 0x7f33940066f0
+      fullPackageName: default
+      attributes: [GLOBAL]
+      linkage: 1 , isConst: 0
+      Var
+      TuplePattern {
+        patterns [
+        VarPattern: a {
+          curFile: /tmp/tvar.cj
+          position: (1, 1, 6) (1, 1, 7)
+          scopeName: ""
+          ty: UnknownType
+          ptr: 0x7f3394006bf0
+          fullPackageName: default
+          attributes: [GLOBAL]
+          // varDecl
+          VarDecl: var a {
+            curFile: /tmp/tvar.cj
+            position: (1, 1, 6) (1, 1, 7)
+            scopeName: ""
+            ty: UnknownType
+            ptr: 0x7f3394006d10
+            fullPackageName: default
+            attributes: [GLOBAL]
+            linkage: 1 , isConst: 0
+            annotations [
+            ]
+            // type nullptr
+            // initializer nullptr
+            parentPattern: 0x7f3394006bf0
+          }
+        }
+        VarPattern: b {
+          curFile: /tmp/tvar.cj
+          position: (1, 1, 9) (1, 1, 10)
+          scopeName: ""
+          ty: UnknownType
+          ptr: 0x7f33940070c0
+          fullPackageName: default
+          attributes: [GLOBAL]
+          // varDecl
+          VarDecl: var b {
+            curFile: /tmp/tvar.cj
+            position: (1, 1, 9) (1, 1, 10)
+            scopeName: ""
+            ty: UnknownType
+            ptr: 0x7f33940071e0
+            fullPackageName: default
+            attributes: [GLOBAL]
+            linkage: 1 , isConst: 0
+            annotations [
+            ]
+            // type nullptr
+            // initializer nullptr
+            parentPattern: 0x7f33940070c0
+          }
+        }
+        ]
+      }
+      // type
+      TupleType {
+        curFile: /tmp/tvar.cj
+        position: (1, 1, 13) (1, 1, 27)
+        scopeName: ""
+        ty: UnknownType
+        ptr: 0x7f3394001ac0
+        fullPackageName: default
+        attributes: []
+        fieldTypes [
+          PrimitiveType: Int64 {
+            curFile: /tmp/tvar.cj
+            position: (1, 1, 14) (1, 1, 19)
+            scopeName: ""
+            ty: UnknownType
+            ptr: 0x7f3394007570
+            fullPackageName: default
+            attributes: []
+          }
+          PrimitiveType: Int64 {
+            curFile: /tmp/tvar.cj
+            position: (1, 1, 21) (1, 1, 26)
+            scopeName: ""
+            ty: UnknownType
+            ptr: 0x7f3394007760
+            fullPackageName: default
+            attributes: []
+          }
+        ]
+      }
+      // initializer
+      TupleLiteral {
+        curFile: /tmp/tvar.cj
+        position: (1, 1, 30) (1, 1, 36)
+        scopeName: ""
+        ty: UnknownType
+        ptr: 0x7f3394007c60
+        fullPackageName: default
+        attributes: []
+        LitConstExpr: Integer "1" {
+          curFile: /tmp/tvar.cj
+          position: (1, 1, 31) (1, 1, 32)
+          scopeName: ""
+          ty: UnknownType
+          ptr: 0x7f3394007960
+          fullPackageName: default
+          attributes: []
+        }
+        LitConstExpr: Integer "2" {
+          curFile: /tmp/tvar.cj
+          position: (1, 1, 34) (1, 1, 35)
+          scopeName: ""
+          ty: UnknownType
+          ptr: 0x7f3394007f00
+          fullPackageName: default
+          attributes: []
+        }
+      }
+    }
+    originalMacroCallNodes [
+    ]
+  }
+  genericInstantiatedDecls {
+  }
+  srcImportedNonGenericDecls {
+  }
+  inlineFuncDecls {
+  }
+}

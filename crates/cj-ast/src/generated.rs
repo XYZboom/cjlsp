@@ -787,6 +787,8 @@ pub enum Decl {
         name: String,
         /// public modifier
         is_public: bool,
+        /// type parameters (generic alias: `type A<T> = ...`)
+        type_params: Vec<TypeParam>,
         /// aliased type
         target: Type,
         pos: CodePos,
