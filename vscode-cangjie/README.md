@@ -23,16 +23,17 @@
 
 - VSCode >= 1.85
 - Node.js >= 16（仅用于 `npm install` 与打包）
-- 已构建好的 `LSPServer`（`cd /root/Code/cangjie/cj-lang && cargo build -p cj-lsp`）
+- 已构建好的 `LSPServer`（`cd <cj-lang仓库> && cargo build -p cj-lsp`）
 
 ## 安装
 
 1. 构建语言服务器：
 
    ```bash
-   cd /root/Code/cangjie/cj-lang
+   cd <cj-lang仓库>
    cargo build -p cj-lsp
-   # 产物：target/debug/LSPServer（默认配置即指向它）
+   # 产物：target/debug/LSPServer
+   # 然后在 VSCode 设置 cangjie.lsp.serverPath 指向它（或设环境变量 CANGJIE_LSPSERVER）
    ```
 
 2. 安装依赖：
@@ -60,14 +61,14 @@
 ```jsonc
 {
   // LSPServer 二进制路径（默认已指向本地构建产物；也支持环境变量 CANGJIE_LSPSERVER）
-  "cangjie.lsp.serverPath": "/root/Code/cangjie/cj-lang/target/debug/LSPServer",
+  "cangjie.lsp.serverPath": "<绝对路径>/cj-lang/target/debug/LSPServer",
 
   // 追加给 LSPServer 的额外启动参数
   "cangjie.lsp.extraArgs": [],
 
   // 传给 LSPServer 进程的额外环境变量（例如宏运行时所需的 LD_LIBRARY_PATH）
   "cangjie.lsp.env": {
-    "LD_LIBRARY_PATH": "/root/Code/cangjie/sdk/cangjie/runtime/lib/linux_x86_64_cjnative"
+    "LD_LIBRARY_PATH": "<SDK路径>/runtime/lib/linux_x86_64_cjnative"
   }
 }
 ```

@@ -43,7 +43,7 @@
       "properties": {
         "cangjie.lsp.serverPath": {
           "type": "string",
-          "default": "/root/Code/cangjie/cj-lang/target/debug/LSPServer",
+          "default": ""
           "markdownDescription": "Absolute path to the built LSPServer binary (from `cargo build -p cj-lsp`). Falls back to the `CANGJIE_LSPSERVER` environment variable when unset."
         },
         "cangjie.lsp.extraArgs": {

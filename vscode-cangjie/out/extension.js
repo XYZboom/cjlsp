@@ -26,7 +26,9 @@ const {
   RevealOutputChannelOn,
 } = require('vscode-languageclient/node');
 
-const SERVER_DEFAULT = '/root/Code/cangjie/cj-lang/target/debug/LSPServer';
+// No hardcoded local path: server must be provided via config
+// (cangjie.lsp.serverPath) or env (CANGJIE_LSPSERVER).
+const SERVER_DEFAULT = '';
 
 /** @type {import('vscode-languageclient/node').LanguageClient | null} */
 let client = null;
@@ -34,7 +36,14 @@ let client = null;
 function serverCommand() {
   const settings = vscode.workspace.getConfiguration('cangjie');
   const fromEnv = process.env.CANGJIE_LSPSERVER || '';
-  return settings.get('lsp.serverPath', '') || fromEnv || SERVER_DEFAULT;
+  const s = settings.get('lsp.serverPath', '') || fromEnv || SERVER_DEFAULT;
+  if (!s) {
+    vscode.window.showErrorMessage(
+      'vscode-cangjie: LSPServer path not configured. Set cangjie.lsp.serverPath ' +
+      'or env CANGJIE_LSPSERVER (e.g. /path/to/cj-lang/target/debug/LSPServer).'
+    );
+  }
+  return s;
 }
 
 /**
