@@ -706,7 +706,8 @@ impl<'a> Index<'a> {
                     params,
                     ..
                 } if (name == container || container.ends_with(&format!(" {name}")))
-                    && !self.before_kind(name_pos).trim_end().ends_with("func") => {
+                    && !self.before_kind(name_pos).trim_end().ends_with("func") =>
+                {
                     let params_s = render_params(params, true);
                     // ctor signatures never carry a return type
                     let sig = format!("// In {container}\ninternal func init({params_s})");
@@ -724,10 +725,7 @@ impl<'a> Index<'a> {
                     };
                     let idx = self.push(hi, false);
                     if let Some(cn) = container_type_name(container) {
-                        self.members
-                            .entry(cn)
-                            .or_default()
-                            .push(idx);
+                        self.members.entry(cn).or_default().push(idx);
                     }
                     self.containers[ci].last_member_line =
                         self.containers[ci].last_member_line.max(name_pos.line);
@@ -816,8 +814,7 @@ impl<'a> Index<'a> {
             } => {
                 // position-aware inference so name refs in the initializer
                 // resolve against in-scope locals/params (e.g. `var a = x`)
-                let inferred =
-                    infer_init_expr_at(initializer, self, pos.line.saturating_sub(1), 0);
+                let inferred = infer_init_expr_at(initializer, self, pos.line.saturating_sub(1), 0);
                 for pat in patterns {
                     if let Pattern::Var {
                         name,
@@ -831,10 +828,7 @@ impl<'a> Index<'a> {
                         let kind = if *is_mutable { "var" } else { "let" };
                         // an explicit annotation (`var ii: Any = AA()`) wins
                         // over the type inferred from the initializer
-                        let ty_disp = ty
-                            .as_ref()
-                            .map(render_type)
-                            .or_else(|| inferred.clone());
+                        let ty_disp = ty.as_ref().map(render_type).or_else(|| inferred.clone());
                         let td = ty_disp
                             .as_deref()
                             .map(|t| format!(": {t}"))
@@ -1292,7 +1286,13 @@ impl<'a> Index<'a> {
         self.all.iter().find(|h| h.contains(line, character))
     }
 
-    fn resolve(&self, word: &str, line: u32, character: u32, word_start: u32) -> Option<&Hoverable> {
+    fn resolve(
+        &self,
+        word: &str,
+        line: u32,
+        character: u32,
+        word_start: u32,
+    ) -> Option<&Hoverable> {
         if word.is_empty() {
             return None;
         }

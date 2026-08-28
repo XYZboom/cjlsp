@@ -10,8 +10,7 @@ use std::path::PathBuf;
 
 /// A moderately large real-world Cangjie file (from the LLT suite).
 fn real_world_source() -> String {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/samples/large.cj");
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/samples/large.cj");
     match std::fs::read_to_string(&p) {
         Ok(s) => s,
         Err(_) => synthesized_source(), // fall back if samples missing
