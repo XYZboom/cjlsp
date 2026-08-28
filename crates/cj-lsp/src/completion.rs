@@ -893,7 +893,12 @@ fn expr_lit_src(e: &Expr) -> String {
         Expr::Paren { inner, .. } => format!("({})", expr_lit_src(inner)),
         Expr::Unary { op, inner, .. } => format!("{}{}", unop_str(op), expr_lit_src(inner)),
         Expr::Binary { op, lhs, rhs, .. } => {
-            format!("{} {} {}", expr_lit_src(lhs), binop_str(op), expr_lit_src(rhs))
+            format!(
+                "{} {} {}",
+                expr_lit_src(lhs),
+                binop_str(op),
+                expr_lit_src(rhs)
+            )
         }
         Expr::Call { callee, args, .. } => {
             let callee_s = expr_lit_src(callee);
@@ -1149,7 +1154,9 @@ fn emit_ctor_items(
     // drops the fn param and renders the closure. Only when fn is last.
     if let Some(fn_param) = params.last().filter(|p| matches!(&p.ty, Type::Func { .. })) {
         let (fn_args, fn_ret) = match &fn_param.ty {
-            Type::Func { params: fp, ret, .. } => {
+            Type::Func {
+                params: fp, ret, ..
+            } => {
                 let a: Vec<String> = fp.iter().map(display_type).collect();
                 (a, display_type(ret))
             }
@@ -1166,8 +1173,12 @@ fn emit_ctor_items(
             .map(|(i, t)| format!("arg{}: {t}", i + 1))
             .collect();
         let fn_args_s = fn_args.join(", ");
-        let closure_ins =
-            format!("{{ {} => ${{{}:{}}} }}", arg_names.join(", "), closure_start, fn_ret);
+        let closure_ins = format!(
+            "{{ {} => ${{{}:{}}} }}",
+            arg_names.join(", "),
+            closure_start,
+            fn_ret
+        );
         let leading_label: Vec<String> = leading.iter().map(param_label).collect();
         let leading_str = if leading.is_empty() {
             String::new()

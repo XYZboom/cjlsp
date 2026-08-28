@@ -7,7 +7,7 @@
 
 [lsp_server]
     win_path = ${win_lsp_server_path}
-    linux_path = /root/Code/cangjie/cj-lang/.worktrees/t_556d8230/target/debug
+    linux_path = /root/Code/cangjie/cj-lang/.worktrees/t_ca649751/target/debug
 
 [log]
     log_path = log.txt

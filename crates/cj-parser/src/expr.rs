@@ -1376,11 +1376,7 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
                     }
                 }
                 let _ = p.expect(TokenKind::RPAREN);
-                Pattern::Enum {
-                    name,
-                    args,
-                    pos,
-                }
+                Pattern::Enum { name, args, pos }
             } else {
                 Pattern::Var {
                     name,
