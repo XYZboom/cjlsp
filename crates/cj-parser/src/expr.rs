@@ -684,8 +684,16 @@ fn parse_atom(p: &mut Parser) -> Expr {
             let mut pos = pos_of(&tok);
             let mut args: Vec<cj_ast::Tokenish> = Vec::new();
             if p.eat(TokenKind::LPAREN) {
-                // macro args are tokens until matching RPAREN
-                while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+                // macro args are tokens until the MATCHING RPAREN — track
+                // nested parens so `@M(a, f(x), { => g(y) })` doesn't stop at
+                // the inner `)` (official scans to the macro's own `)`).
+                // `depth` counts parens nested inside the macro's own arg list;
+                // the enclosing `)` is left for expect() below.
+                let mut depth = 0i32;
+                while !p.at(TokenKind::END) {
+                    if p.at(TokenKind::RPAREN) && depth == 0 {
+                        break;
+                    }
                     let a = p.advance();
                     args.push(cj_ast::Tokenish {
                         text: a.text.clone(),
@@ -694,6 +702,11 @@ fn parse_atom(p: &mut Parser) -> Expr {
                     pos.end_line = a.end.line;
                     pos.end_col = a.end.column;
                     pos.end_offset = a.end.offset;
+                    match a.kind {
+                        TokenKind::LPAREN => depth += 1,
+                        TokenKind::RPAREN => depth -= 1,
+                        _ => {}
+                    }
                 }
                 // extend the call span through the closing `)`
                 let rp = p.expect(TokenKind::RPAREN);
@@ -1028,7 +1041,7 @@ pub fn parse_block_expr(p: &mut Parser) -> Expr {
 
 fn parse_if_expr(p: &mut Parser) -> Expr {
     let if_tok = p.expect(TokenKind::IF);
-    let cond = parse_expr_prec(p, 1);
+    let cond = parse_condition_or_expr(p);
     let then = parse_block_expr(p);
     let els = if p.eat(TokenKind::ELSE) {
         let e = if p.at(TokenKind::IF) {
@@ -1051,7 +1064,7 @@ fn parse_if_expr(p: &mut Parser) -> Expr {
 
 fn parse_while_expr(p: &mut Parser) -> Expr {
     let w = p.expect(TokenKind::WHILE);
-    let cond = parse_expr_prec(p, 1);
+    let cond = parse_condition_or_expr(p);
     let body = parse_block_expr(p);
     let pos = pos_of(&w);
     Expr::While {
@@ -1059,6 +1072,63 @@ fn parse_while_expr(p: &mut Parser) -> Expr {
         body: Box::new(body),
         pos,
     }
+}
+
+/// Parse a condition that may be an ENHANCED condition (spec Ch.10):
+/// `(<primaryCondition> (('&&' | '&') <primaryCondition>)*)` where a
+/// primary condition is either a boolean expression or a pattern match
+/// binding `('let' | 'var') <pattern> '<-' <expression>`. The parser
+/// recognizes the parenthesized `(let ... <- ...)` / `(var ... <- ...)`
+/// form and parses it as a pattern-binding; anything else falls through
+/// to the ordinary expression parser.
+fn parse_condition_or_expr(p: &mut Parser) -> Expr {
+    // lookahead: `( let|var` — enhanced condition list
+    if p.at(TokenKind::LPAREN)
+        && (p.peek_ahead(1) == TokenKind::LET || p.peek_ahead(1) == TokenKind::VAR)
+    {
+        let open = p.advance(); // (
+        let mut stmts = Vec::new();
+        while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
+            // `let <pattern> (<|> <pattern>)* <- <expr>` primary condition
+            // (or-patterns: `if (let 2 | 3 | 4 <- a)`, spec Ch.10).
+            let is_mut = p.peek() == TokenKind::VAR;
+            let kw = p.advance(); // let/var
+            let mut patterns = vec![parse_pattern(p)];
+            while p.eat(TokenKind::BITOR) {
+                patterns.push(parse_pattern(p));
+            }
+            if is_mut {
+                for pat in &mut patterns {
+                    set_pattern_mutable(pat);
+                }
+            }
+            let _ = p.expect(TokenKind::BACKARROW);
+            let init = parse_expr_prec(p, 1);
+            let pos = pos_of(&kw);
+            stmts.push(Expr::LetPatternDestructor {
+                patterns,
+                initializer: Box::new(init),
+                pos,
+            });
+            if !p.eat(TokenKind::AND) && !p.eat(TokenKind::BITAND) {
+                break;
+            }
+        }
+        let _ = p.expect(TokenKind::RPAREN);
+        let pos = pos_of(&open);
+        return Expr::Paren {
+            inner: Box::new(if stmts.len() == 1 {
+                stmts.pop().unwrap()
+            } else {
+                Expr::Block {
+                    stmts,
+                    pos: pos_of(&open),
+                }
+            }),
+            pos,
+        };
+    }
+    parse_expr_prec(p, 1)
 }
 
 /// `do { body } while (cond)` — loop that runs the body before testing.
@@ -1119,7 +1189,16 @@ fn parse_match(p: &mut Parser) -> Expr {
             continue;
         }
         let _ = p.expect(TokenKind::CASE);
-        let pattern = parse_pattern(p);
+        // or-patterns: `case p1 | p2 =>` (spec Ch.12) — parse the first
+        // pattern then consume `| pN` alternatives (the AST's MatchCase
+        // holds a single pattern; alternatives are dropped at parse time).
+        let mut pattern = parse_pattern(p);
+        while p.eat(TokenKind::BITOR) {
+            let _ = parse_pattern(p);
+        }
+        // enum pattern with generic/qualified name: `case a<b>.c(x)` —
+        // handled inside parse_pattern; nothing extra here.
+        let _ = &mut pattern;
         // guard: `case p if cond =>` or `case p where cond =>` (LLT uses both)
         let guard = if p.eat(TokenKind::IF) || p.eat(TokenKind::WHERE) {
             Some(parse_expr_prec(p, 1))
@@ -1237,6 +1316,55 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
         }
         TokenKind::IDENTIFIER => {
             p.advance();
+            // Qualified / generic enum pattern: `case a<b>.c(x)` (spec
+            // Ch.12) or `case Option<Int64>.Some(a)`. Build the full name
+            // string `a<b>.c` / `Option<Int64>.Some`; consume generic args
+            // and `.member` chains before the constructor's `(`.
+            let mut name = tok.text.clone();
+            let mut pos = pos_of(&tok);
+            loop {
+                // generic type args `a<b>` — consume and fold into name
+                if p.at(TokenKind::LT) {
+                    name.push('<');
+                    p.advance();
+                    let mut depth = 1i32;
+                    while depth > 0 && !p.at(TokenKind::END) {
+                        let t = p.peek_token().clone();
+                        match t.kind {
+                            TokenKind::LT => {
+                                depth += 1;
+                                name.push('<');
+                                p.advance();
+                            }
+                            TokenKind::GT => {
+                                depth -= 1;
+                                name.push('>');
+                                p.advance();
+                            }
+                            TokenKind::RSHIFT => {
+                                // `>>` closes two generic levels
+                                name.push_str(">>");
+                                p.advance();
+                                depth -= 2;
+                            }
+                            _ => {
+                                name.push_str(&t.text);
+                                p.advance();
+                            }
+                        }
+                    }
+                }
+                // qualified `.member`
+                if p.at(TokenKind::DOT) && p.peek_ahead(1).is_name_like() {
+                    name.push('.');
+                    p.advance(); // .
+                    let seg = p.advance();
+                    name.push_str(&seg.text);
+                    pos = pos_of(&tok);
+                    continue;
+                }
+                break;
+            }
             // constructor pattern if followed by (
             if p.at(TokenKind::LPAREN) {
                 p.advance();
@@ -1249,17 +1377,17 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
                 }
                 let _ = p.expect(TokenKind::RPAREN);
                 Pattern::Enum {
-                    name: tok.text.clone(),
+                    name,
                     args,
-                    pos: pos_of(&tok),
+                    pos,
                 }
             } else {
                 Pattern::Var {
-                    name: tok.text.clone(),
+                    name,
                     name_pos: pos_of(&tok),
                     is_mutable: false,
                     ty: None,
-                    pos: pos_of(&tok),
+                    pos,
                 }
             }
         }
@@ -1268,6 +1396,11 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
             let mut elems = Vec::new();
             while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
                 elems.push(parse_pattern(p));
+                // or-pattern inside a tuple element: `("A" | "B", x)` —
+                // consume the alternatives (match_or_pattern2).
+                while p.eat(TokenKind::BITOR) {
+                    let _ = parse_pattern(p);
+                }
                 if !p.eat(TokenKind::COMMA) {
                     break;
                 }
@@ -1276,6 +1409,18 @@ pub fn parse_pattern(p: &mut Parser) -> Pattern {
             Pattern::Tuple {
                 elements: elems,
                 pos: pos_of(&tok),
+            }
+        }
+        TokenKind::SUB => {
+            // negative literal pattern: `case -1 =>` — '-' + literal
+            p.advance();
+            if let Some(pat) = parse_literal_pattern(p) {
+                pat
+            } else {
+                let found = crate::token_display_text(&tok);
+                p.error_id(&tok, cj_diag::DiagId::PARSE_EXPECTED_PATTERN, &[&found]);
+                p.advance();
+                Pattern::Invalid(pos_of(&tok))
             }
         }
         _ => {
@@ -1338,11 +1483,47 @@ fn parse_literal_pattern(p: &mut Parser) -> Option<Pattern> {
                 pos,
             })
         }
-        TokenKind::STRING_LITERAL => {
+        TokenKind::STRING_LITERAL
+        | TokenKind::MULTILINE_STRING
+        | TokenKind::MULTILINE_RAW_STRING
+        | TokenKind::RUNE_LITERAL
+        | TokenKind::RUNE_BYTE_LITERAL => {
+            p.advance();
+            let pos = pos_of(&tok);
+            let kind = match tok.kind {
+                TokenKind::RUNE_LITERAL => LitKind::Rune,
+                TokenKind::RUNE_BYTE_LITERAL => LitKind::RuneByte,
+                _ => LitKind::String,
+            };
+            let lit = Expr::Lit {
+                kind,
+                value: tok.text.clone(),
+                pos,
+            };
+            Some(Pattern::Const {
+                literal: Some(Box::new(lit)),
+                pos,
+            })
+        }
+        TokenKind::FLOAT_LITERAL => {
             p.advance();
             let pos = pos_of(&tok);
             let lit = Expr::Lit {
-                kind: LitKind::String,
+                kind: LitKind::Float,
+                value: tok.text.clone(),
+                pos,
+            };
+            Some(Pattern::Const {
+                literal: Some(Box::new(lit)),
+                pos,
+            })
+        }
+        TokenKind::BOOL_LITERAL => {
+            // `case true =>` / `case false =>` — boolean literal patterns
+            p.advance();
+            let pos = pos_of(&tok);
+            let lit = Expr::Lit {
+                kind: LitKind::Bool,
                 value: tok.text.clone(),
                 pos,
             };
