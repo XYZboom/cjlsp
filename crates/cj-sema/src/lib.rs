@@ -18,12 +18,14 @@ use std::collections::HashMap;
 
 pub mod checks;
 pub mod dep_graph;
-// dlopen-based macro expansion (official Cangjie runtime), Linux-only:
-// libloading::os::unix + RTLD_NOW are Unix-specific; the macro .so format is
-// Linux-only. On other platforms macros fall back to template expansion
-// (expander.rs handles Err paths gracefully). Windows dynamic macro loading
-// is tracked as TODO (LoadLibraryW/GetProcAddress, macro .dll).
-#[cfg(target_os = "linux")]
+// dlopen/LoadLibrary-based macro expansion (official Cangjie runtime), for
+// the platforms that ship a native macro library:
+//   * Linux  — macro .so via dlopen (libloading::os::unix, RTLD_NOW|RTLD_GLOBAL)
+//   * Windows — macro .dll via LoadLibraryW + GetProcAddress (windows-sys)
+// Both share the same API shape and token byte format (dylib.rs `imp`).
+// On other platforms macros fall back to template expansion (expander.rs
+// handles Err paths gracefully).
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod dylib;
 pub mod expander;
 pub mod macro_cache;

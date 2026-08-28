@@ -1,8 +1,8 @@
 ==============================================================================
 cj-lang LLT frontend regression baseline (T19)
-generated: 2026-08-28 17:06:36
+generated: 2026-08-29 01:29:08
 frontend:  /root/Code/cangjie/cj-lang/target/release/cj-frontend
-commit:    c9b67ab
+commit:    9ce3650
 llt dir:   /root/Code/cangjie/cangjie_test/testsuites/LLT/compiler
 scope:     LLT/compiler/{Frontend,Lexer,Parser,Sema,Diagnose} (5351 .cj files)
 mode:      cj-frontend --dump-ast
