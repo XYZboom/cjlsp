@@ -81,7 +81,9 @@ pub fn parse_type(p: &mut Parser) -> Type {
         // `VArray` used as a GENERIC type (not a bare primitive keyword):
         // `VArray<Int64, $3>`. VARRAY lexes as a keyword; when followed by
         // `<` it names the generic builtin, so parse it as a Ref with args.
-        TokenKind::VARRAY if p.at(TokenKind::LT) => {
+        // Note: guard must look AHEAD — the cursor is still on VARRAY when
+        // the match arm is evaluated, so `p.peek_ahead(1)` (not `p.at`).
+        TokenKind::VARRAY if p.peek_ahead(1) == TokenKind::LT => {
             p.advance();
             let args = parse_generic_args(p);
             Type::Ref {
