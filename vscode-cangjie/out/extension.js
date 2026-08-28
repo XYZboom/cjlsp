@@ -26,24 +26,45 @@ const {
   RevealOutputChannelOn,
 } = require('vscode-languageclient/node');
 
-// No hardcoded local path: server must be provided via config
-// (cangjie.lsp.serverPath) or env (CANGJIE_LSPSERVER).
+// Bundled server: the release LSPServer ships inside the extension, with one
+// build per platform (bin/linux, bin/win32, bin/darwin), so the extension
+// works out of the box with zero config on Windows / macOS / Linux. An
+// explicit cangjie.lsp.serverPath setting or the CANGJIE_LSPSERVER env var
+// overrides it (e.g. to point at a freshly built debug binary).
 const SERVER_DEFAULT = '';
 
 /** @type {import('vscode-languageclient/node').LanguageClient | null} */
 let client = null;
 
-function serverCommand() {
+function platformServerBinary() {
+  // Returns the bundled binary path for the current platform, or null if we
+  // don't ship a build for it.
+  const path = require('path');
+  const { platform } = process;
+  let subdir = null;
+  let exe = 'LSPServer';
+  if (platform === 'win32') {
+    subdir = 'win32';
+    exe = 'LSPServer.exe';
+  } else if (platform === 'linux') {
+    subdir = 'linux';
+  } else if (platform === 'darwin') {
+    subdir = 'darwin';
+  } else {
+    return null;
+  }
+  return path.join(__dirname, '..', 'bin', subdir, exe);
+}
+
+function serverCommand(context) {
   const settings = vscode.workspace.getConfiguration('cangjie');
   const fromEnv = process.env.CANGJIE_LSPSERVER || '';
-  const s = settings.get('lsp.serverPath', '') || fromEnv || SERVER_DEFAULT;
-  if (!s) {
-    vscode.window.showErrorMessage(
-      'vscode-cangjie: LSPServer path not configured. Set cangjie.lsp.serverPath ' +
-      'or env CANGJIE_LSPSERVER (e.g. /path/to/cj-lang/target/debug/LSPServer).'
-    );
+  const configured = settings.get('lsp.serverPath', '') || fromEnv || SERVER_DEFAULT;
+  if (configured) {
+    return configured;
   }
-  return s;
+  // Bundled copy inside the extension directory.
+  return platformServerBinary();
 }
 
 /**
@@ -51,12 +72,13 @@ function serverCommand() {
  */
 function activate(context) {
   const fs = require('fs');
-  const command = serverCommand();
-  if (!fs.existsSync(command)) {
+  const command = serverCommand(context);
+  if (!command || !fs.existsSync(command)) {
     vscode.window.showErrorMessage(
-      "Cangjie: LSPServer binary not found at '" + command +
-      "'. Set 'cangjie.lsp.serverPath' (or the CANGJIE_LSPSERVER env var) to " +
-      'a built cj-lsp binary (cargo build -p cj-lsp).'
+      "Cangjie: LSPServer binary not found at '" + (command || '(none)') +
+      "'. This extension bundles builds for Windows/Linux/macOS; if yours is " +
+      "missing, set 'cangjie.lsp.serverPath' (or the CANGJIE_LSPSERVER env var) " +
+      'to a built cj-lsp binary (cargo build -p cj-lsp).'
     );
     return;
   }
@@ -106,8 +128,19 @@ function activate(context) {
     clientOptions
   );
   // vscode-languageclient 10.x: start() returns Promise<void>; teardown is
-  // handled by deactivate() -> client.stop().
-  client.start();
+  // handled by deactivate() -> client.stop(). Surface any start failure
+  // (bad binary, spawn error) instead of failing silently.
+  client.start().then(
+    () => {
+      console.log('[vscode-cangjie] client started, command = ' + command);
+      vscode.window.setStatusBarMessage('Cangjie LSP: started', 3000);
+    },
+    (err) => {
+      const msg = 'Cangjie LSP failed to start: ' + (err && err.message ? err.message : err);
+      console.error('[vscode-cangjie]', msg);
+      vscode.window.showErrorMessage(msg);
+    }
+  );
 }
 
 function deactivate() {

@@ -39,6 +39,11 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # cj-lang re
 BASELINE_OUT = os.path.join(REPO, "tools", "feature_baseline.txt")
 RESULTS_ROOT = os.path.join(BASE, ".batch_results")
 SUMMARY = os.path.join(RESULTS_ROOT, "run_summary.json")
+# The .info files reference a `cangjiesource` root that lsp_test.py rewrites
+# to an absolute path under the temp dir. Symlink the real source tree in so
+# cross-file sibling completion actually sees sibling files on disk (the
+# official DEPENDENCE line is ../../../sourcecode/cangjieTest/cangjiesource).
+CANGJIE_SRC = os.path.join(BASE, "sourcecode", "cangjieTest", "cangjiesource")
 
 
 def run_one(info):
@@ -48,6 +53,15 @@ def run_one(info):
     td = tempfile.mkdtemp(prefix=".batch_", dir=BASE)
     try:
         shutil.copy(CFG, os.path.join(td, "lsp_config.txt"))
+        # Make the rewritten uri/rootPath point at a REAL tree so the server's
+        # same-package sibling scan (resolve_project_root + read_dir) works.
+        if os.path.isdir(CANGJIE_SRC):
+            link = os.path.join(td, "cangjiesource")
+            if not os.path.exists(link):
+                os.symlink(CANGJIE_SRC, link)
+        else:
+            # fall back: create an empty dir so read_dir doesn't error
+            os.makedirs(os.path.join(td, "cangjiesource"), exist_ok=True)
         env = dict(os.environ, CANGJIE_STDX_PATH="/nonexistent")
         try:
             r = subprocess.run(

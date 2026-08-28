@@ -119,6 +119,19 @@ impl LspServer {
         let mut parser = cj_parser::Parser::new(&source, cj_lexer::Lexer::new(&source).tokenize());
         let file = parser.run();
 
+        self.completion_inner(&file, source, path, &uri, line, character)
+    }
+
+    fn completion_inner(
+        &self,
+        file: &cj_ast::File,
+        source: &str,
+        path: &std::path::Path,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) -> Value {
+        let _ = uri;
         // Resolve the project root so completion can include same-package
         // sibling file decls (official behavior: cross-file completion). The
         // scan cache re-parses only changed/new siblings (mtime diff), not
@@ -136,13 +149,18 @@ impl LspServer {
         });
 
         crate::completion::complete_at(
+<<<<<<< HEAD
             &file,
             &source,
+=======
+            file,
+            source,
+>>>>>>> wt/t35-completion60
             line,
             character,
             siblings.as_deref(),
             project_root.as_deref(),
-            &uri,
+            uri,
         )
     }
 
@@ -537,7 +555,42 @@ fn collect_same_package_candidates(
     package: Option<&str>,
     self_path: &str,
 ) -> Vec<crate::completion::Candidate> {
+<<<<<<< HEAD
     refresh_sibling_cache(cache, root, package, Some(self_path)).candidates
+=======
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|e| e == "cj")
+                && !p.to_string_lossy().ends_with(self_path)
+            {
+                let Ok(src) = fs::read_to_string(&p) else {
+                    continue;
+                };
+                let mut parser =
+                    cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
+                let f = parser.run();
+                // Only same-package siblings are visible (spec Ch.03).
+                let same_pkg = match (package, f.package.as_deref()) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => true,
+                };
+                if !same_pkg {
+                    continue;
+                }
+                out.extend(crate::completion::sibling_candidates(&f, &src));
+            }
+        }
+    }
+    out
+>>>>>>> wt/t35-completion60
 }
 
 /// Convert an LSP 0-based (line, character) position to a byte offset in
