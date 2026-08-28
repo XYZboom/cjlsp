@@ -1,21 +1,21 @@
 ==============================================================================
 cj-lang LLT frontend regression baseline (T19)
-generated: 2026-08-29 01:29:08
-frontend:  /root/Code/cangjie/cj-lang/target/release/cj-frontend
-commit:    9ce3650
+generated: 2026-08-29 07:43:53
+frontend:  /root/Code/cangjie/cj-lang/.worktrees/t46-fix/target/release/cj-frontend
+commit:    f61c17e
 llt dir:   /root/Code/cangjie/cangjie_test/testsuites/LLT/compiler
 scope:     LLT/compiler/{Frontend,Lexer,Parser,Sema,Diagnose} (5351 .cj files)
 mode:      cj-frontend --dump-ast
 ==============================================================================
 
-total=5351  success=4604  fail=747  crash=0  success-rate=86.0%
+total=5351  success=4646  fail=705  crash=0  success-rate=86.8%
 
 [by directory]
   Frontend      22  success=   20  fail=    2  crash=  0
   Lexer         28  success=   23  fail=    5  crash=  0
-  Parser       576  success=  407  fail=  169  crash=  0
-  Sema        3863  success= 3615  fail=  248  crash=  0
-  Diagnose     862  success=  539  fail=  323  crash=  0
+  Parser       576  success=  413  fail=  163  crash=  0
+  Sema        3863  success= 3647  fail=  216  crash=  0
+  Diagnose     862  success=  543  fail=  319  crash=  0
 
 [crash clusters]
   none — zero crash files
@@ -77,27 +77,27 @@ total=5351  success=4604  fail=747  crash=0  success-rate=86.0%
     49  error: unclosed delimiter: '{'   e.g. Lexer/Unicode/Diagnostic/emoji_in_multistring.cj
     22  error: expected expression after 'handle', found %s   e.g. Sema/effect/command_class_not_available.cj
     18  error: expected declaration, found '.'   e.g. Parser/ar/parse_support_keyword_context/decl/function.cj
-    18  error: expected expression after ',', found %s   e.g. Parser/expr/tuplelit2.cj
-    18  error: expected declaration, found '<'   e.g. Parser/others/parser_fuzz_03.cj
+    14  error: expected expression after ',', found %s   e.g. Parser/expr/tuplelit2.cj
     14  error: expected declaration, found '{'   e.g. Parser/native/block_error_line.cj
-    12  error: expected identifier or pattern after 'var', found '('   e.g. Parser/class/tuple_pattern.cj
-    11  error: expected declaration, found '('   e.g. Parser/ar/parse_support_keyword_context/decl/class.cj
     11  error: expected 'r_paren', found 'end'   e.g. Parser/expr/end/paramlist.cj
+    11  error: expected 'r_paren', found 'identifier'   e.g. Parser/lex/lex_support_three_kinds_of_terminator/escape_n/interpolation2.cj
+    10  error: expected 'r_paren', found '='   e.g. Parser/ar/support_tuple_left_value/normal/negative/left_tuple_literal.cj
+    10  error: expected declaration, found '('   e.g. Parser/const/const_variable.cj
     10  error: expected 'l_curl', found 'end'   e.g. Parser/modifiers/unsafe_modifier.cj
-     9  error: expected 'r_paren', found '='   e.g. Parser/ar/support_tuple_left_value/normal/negative/left_tuple_literal.cj
+    10  error: expected declaration, found keyword 'unsafe'   e.g. Parser/unsafe/class01.cj
      9  error: expected property name   e.g. Parser/expr/illegal_prop.cj
      9  error: expected 'upperbound', found '{'   e.g. Parser/others/testcase2.cj
-     9  error: expected declaration, found keyword 'unsafe'   e.g. Parser/unsafe/class01.cj
      9  error: expected expression after keyword 'init', found %s   e.g. Sema/class/class10.cj
      8  error: expected expression after ']', found %s   e.g. Parser/ar/parser_support_wildcard/negative/wildcard_quest_newline.cj
      8  error: expected macro name   e.g. Parser/new_package/new_package_err_10.cj
      8  error: expected 'r_curl', found 'as'   e.g. Sema/unusedImport/unusedImport001/unused007.cj
-     8  error: expected 'r_paren', found '<'   e.g. Sema/varray/err_byte_string.cj
      7  error: expected declaration, found ':'   e.g. Parser/class/constructor_ret.cj
      7  error: expected expression after ':', found %s   e.g. Parser/expr/end/lambdaparamlist.cj
-     7  error: expected 'r_paren', found 'identifier'   e.g. Parser/lex/lex_support_three_kinds_of_terminator/escape_n/interpolation2.cj
      7  error: expected 'r_paren', found '{'   e.g. Sema/forin/forin16.cj
+     6  error: expected 'r_paren', found ':'   e.g. Parser/ar/parse_support_keyword_context/decl/class.cj
      6  error: expected expression after ')', found %s   e.g. Parser/expr/quote/quoteDollarInterpolation/quoteDollarInterpolation1.cj
+     6  error: expected expression after keyword 'class', found %s   e.g. Parser/function/block_error.cj
+     6  error: expected declaration, found '}'   e.g. Sema/PatternMatching/MatchExpression/match022.cj
 
 note: success = exit 0 + no parser diagnostic; fail = exit 0 + diagnostic(s); crash = non-zero exit/timeout.
 note: dump-ast renders every parser diag (incl. warnings) as 'error:' on stderr; fail may include warning-only files.
