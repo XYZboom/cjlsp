@@ -1,0 +1,81 @@
+{
+  "name": "vscode-cangjie",
+  "displayName": "Cangjie Language (LSP)",
+  "description": "Cangjie language services (diagnostics, completion, hover, definition, references) via the Rust LSPServer (cj-lsp).",
+  "version": "0.1.0",
+  "publisher": "cangjie-lang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "cangjie",
+    "cangjie-lang",
+    "仓颉",
+    "lsp",
+    "language-server"
+  ],
+  "activationEvents": [
+    "onLanguage:cangjie"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "cangjie",
+        "aliases": [
+          "Cangjie",
+          "cangjie",
+          "仓颉"
+        ],
+        "extensions": [
+          ".cj"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "title": "Cangjie",
+      "properties": {
+        "cangjie.lsp.serverPath": {
+          "type": "string",
+          "default": ""
+          "markdownDescription": "Absolute path to the built LSPServer binary (from `cargo build -p cj-lsp`). Falls back to the `CANGJIE_LSPSERVER` environment variable when unset."
+        },
+        "cangjie.lsp.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra command-line arguments appended to LSPServer on startup."
+        },
+        "cangjie.lsp.env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Extra environment variables for the LSPServer process, merged over the current process env (e.g. LD_LIBRARY_PATH for the Cangjie macro runtime)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --allowJs --checkJs --strict false --module node16 --target es2020 --moduleResolution node16 --lib es2020 --types node,vscode --skipLibCheck out/extension.js",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^10.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.32.0",
+    "typescript": "^5.9.3"
+  }
+}
