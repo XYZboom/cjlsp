@@ -1,8 +1,8 @@
 ==============================================================================
 cj-lang LSP feature baseline (T16)
-generated: 2026-08-28 12:42:54
+generated: 2026-08-28 14:15:12
 LSPServer: /root/Code/cangjie/cj-lang/target/debug/LSPServer
-commit:    ce20125
+commit:    4e89a48
 ==============================================================================
 
 [completion]  pass=51  fail=110  total=161  rate=31.7%
@@ -118,8 +118,8 @@ commit:    ce20125
     textDocument_completion_165.info  (compare mismatch or no pass marker)
     textDocument_completion_166.info  (compare mismatch or no pass marker)
   failure clusters (from preserved artifacts):
-    result-null: 66  e.g. textDocument_completion_007.info, textDocument_completion_019.info, textDocument_completion_021.info, textDocument_completion_029.info
-    result-nonempty-list: 54  e.g. textDocument_completion_014.info, textDocument_completion_015.info, textDocument_completion_023.info, textDocument_completion_024.info
+    result-null: 63  e.g. textDocument_completion_007.info, textDocument_completion_019.info, textDocument_completion_021.info, textDocument_completion_029.info
+    result-nonempty-list: 57  e.g. textDocument_completion_014.info, textDocument_completion_015.info, textDocument_completion_023.info, textDocument_completion_024.info
     expected-null-vs-[]-harness-crash: 4  e.g. textDocument_completion_006.info, textDocument_completion_067.info, textDocument_completion_137.info, textDocument_completion_138.info
 
 note: judgment = 'testcase pass' marker in compare_result.txt (framework env_info-None crash after writing is ignored).
