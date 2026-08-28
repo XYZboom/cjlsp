@@ -23,44 +23,30 @@
 
 - VSCode >= 1.85
 - Node.js >= 16（仅用于 `npm install` 与打包）
-- 已构建好的 `LSPServer`（`cd <cj-lang仓库> && cargo build -p cj-lsp`）
+
+扩展随 VSIX 捆绑了各平台的 `LSPServer` 二进制（`bin/linux`、`bin/win32`、`bin/darwin`），
+安装后开箱即用、零配置。仅当你想使用**自己新构建的**服务器（例如 `cargo build -p cj-lsp`
+产出的 debug 版本）时，才需要手动指定路径。
 
 ## 安装
 
-1. 构建语言服务器：
+1. **从 Marketplace 一键安装**（推荐）：在 VSCode 扩展商店搜索 `Cangjie`，点击安装即可，
+   无需构建任何东西。
+2. **从 VSIX 安装**：`npx @vscode/vsce package` 生成 `vscode-cangjie-0.1.0.vsix`，然后在
+   VSCode 中「扩展 → 右上角 `...` → 从 VSIX 安装…」。
+3. **开发调试（F5）**：用 VSCode 打开本目录，按 F5（会启动 Extension Development Host，
+   见 `.vscode/launch.json`）。
+4. **直接复制**：把本目录（含 `node_modules`）复制到 `~/.vscode/extensions/`，重启 VSCode。
 
-   ```bash
-   cd <cj-lang仓库>
-   cargo build -p cj-lsp
-   # 产物：target/debug/LSPServer
-   # 然后在 VSCode 设置 cangjie.lsp.serverPath 指向它（或设环境变量 CANGJIE_LSPSERVER）
-   ```
-
-2. 安装依赖：
-
-   ```bash
-   cd vscode-cangjie
-   npm install
-   ```
-
-3. 三种加载方式任选其一：
-
-   - **开发调试（F5）**：用 VSCode 打开本目录，按 F5（会启动 Extension
-     Development Host，见 `.vscode/launch.json`）。
-   - **打包为 VSIX**：`npx @vscode/vsce package`，生成 `vscode-cangjie-0.1.0.vsix`，
-     然后在 VSCode 中「扩展 → 右上角 `...` → 从 VSIX 安装…」。
-   - **直接复制**：把本目录（含 `node_modules`）复制到 `~/.vscode/extensions/`，
-     重启 VSCode。
-
-4. 打开任意 `.cj` 文件即自动激活。
+打开任意 `.cj` 文件即自动激活。若使用自定义服务器，参考下面的「配置」。
 
 ## 配置
 
-在 VSCode 设置（JSON）中：
+在 VSCode 设置（JSON）中（不配置即为捆绑版默认行为）：
 
 ```jsonc
 {
-  // LSPServer 二进制路径（默认已指向本地构建产物；也支持环境变量 CANGJIE_LSPSERVER）
+  // LSPServer 二进制路径（可选；默认使用捆绑的 bin/<平台>/LSPServer，也支持环境变量 CANGJIE_LSPSERVER）
   "cangjie.lsp.serverPath": "<绝对路径>/cj-lang/target/debug/LSPServer",
 
   // 追加给 LSPServer 的额外启动参数
@@ -87,10 +73,13 @@
 
 ```
 vscode-cangjie/
-├── package.json              # 扩展清单：语言声明 + 激活事件 + 配置项
+├── package.json              # 扩展清单：语言声明 + 激活事件 + 配置项 + 发布元数据
 ├── out/extension.js          # 语言客户端（vscode-languageclient），纯 JS 无编译步骤
+├── bin/                      # 捆绑的 LSPServer（linux / win32 / darwin，按平台自动选择）
+├── icon.png                  # Marketplace 图标
 ├── language-configuration.json  # 注释 / 括号 / 自动闭合
 ├── README.md
+├── docs/vscode-publish.md    # 发布到 Marketplace 的操作手册
 └── .vscode/launch.json       # F5 扩展开发调试
 ```
 
