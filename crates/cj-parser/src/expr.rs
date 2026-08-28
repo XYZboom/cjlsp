@@ -93,6 +93,20 @@ pub fn parse_expr_prec(p: &mut Parser, min_prec: u8) -> Expr {
             rhs: Box::new(rhs),
             pos,
         };
+        // Range step: `a..b:step` / `a..=b:step` — a `:` (whitespace allowed)
+        // immediately after a range end introduces the increment expression
+        // (spec Ch.05 rangeExpression `':' additiveExpression`). Consume it
+        // so the token stream stays balanced.
+        if matches!(op, BinOp::Range | BinOp::ClosedRange)
+            && p.at(TokenKind::COLON)
+            && is_expr_start(p.peek_ahead(1))
+        {
+            p.advance(); // the `:`
+                         // the step binds looser than the range but tighter than the
+                         // enclosing context: parse at prec 1 (all binary ops, no
+                         // assignment / comma / closing delimiters).
+            let _step = parse_expr_prec(p, 1);
+        }
     }
     lhs
 }
@@ -252,6 +266,47 @@ fn parse_postfix(p: &mut Parser) -> Expr {
                     inner: Box::new(e),
                     pos,
                 };
+            }
+            TokenKind::QUEST => {
+                // Optional suffix (spec Ch.05 optionalExpr): `a?.b`, `a?(x)`,
+                // `a?[i]`, `a?{...}` — the `?` wraps the base expr in an
+                // OptionalExpr and the postfix chain continues on top of it.
+                let next = p.peek_ahead(1);
+                if matches!(
+                    next,
+                    TokenKind::DOT | TokenKind::LPAREN | TokenKind::LSQUARE | TokenKind::LCURL
+                ) {
+                    let q = p.advance();
+                    let pos = pos_of(&q);
+                    e = Expr::Optional {
+                        inner: Box::new(e),
+                        pos,
+                    };
+                    if next == TokenKind::LCURL {
+                        // trailing closure on the optional: `a?{x => ...}`
+                        let closure = if lambda_brace_ahead(p) {
+                            parse_lambda(p)
+                        } else {
+                            parse_block_expr(p)
+                        };
+                        let tpos = pos_of(&q);
+                        e = Expr::TrailingClosure {
+                            call: Box::new(e),
+                            closure: Box::new(closure),
+                            pos: tpos,
+                        };
+                    }
+                    continue;
+                }
+                // a single QUEST as an operator is grammatically incorrect
+                // (e.g. `a?b`) — official ParseSuffix reports it.
+                let q = p.peek_token().clone();
+                p.error_id(
+                    &q,
+                    cj_diag::DiagId::PARSE_EXPECTED_CHARACTER_AFTER,
+                    &["'.', '(', '[', '{' or '?'", "?"],
+                );
+                break;
             }
             _ => break,
         }
@@ -441,7 +496,9 @@ fn parse_atom(p: &mut Parser) -> Expr {
                 pos,
             }
         }
-        TokenKind::STRING_LITERAL | TokenKind::MULTILINE_STRING => {
+        TokenKind::STRING_LITERAL
+        | TokenKind::MULTILINE_STRING
+        | TokenKind::MULTILINE_RAW_STRING => {
             p.advance();
             let pos = pos_of(&tok);
             Expr::Lit {
@@ -449,6 +506,17 @@ fn parse_atom(p: &mut Parser) -> Expr {
                 value: tok.text.clone(),
                 pos,
             }
+        }
+        TokenKind::WILDCARD => {
+            // `_` as an expression (wildcard lvalue: `_ = 1`, or a discard).
+            p.advance();
+            Expr::Wildcard(pos_of(&tok))
+        }
+        TokenKind::UNSAFE => {
+            // `unsafe { ... }` — the unsafe block is parsed as its inner
+            // block (the marker itself carries no AST node).
+            p.advance();
+            parse_block_expr(p)
         }
         TokenKind::RUNE_LITERAL | TokenKind::RUNE_BYTE_LITERAL => {
             p.advance();
@@ -830,8 +898,20 @@ fn parse_atom(p: &mut Parser) -> Expr {
 /// a block: a `=>` appears at nesting depth 0 before the matching `}`.
 /// Per spec Ch.05: `'{' lambdaParameters? '=>' expressionOrDeclarations '}'`.
 fn lambda_brace_ahead(p: &Parser) -> bool {
+    // The cursor may be parked on trivia (NL/COMMENT) while the actual token
+    // being parsed is the first non-trivia one. Locate it first: scanning
+    // from `cursor + 1` would count the `{` itself as a nested brace (depth 1)
+    // and never see a top-level `=>`.
+    let mut base = p.cursor();
+    while base < p.token_len() {
+        let k = p.raw_kind_at(base);
+        if k != TokenKind::COMMENT && k != TokenKind::NL {
+            break;
+        }
+        base += 1;
+    }
     let mut depth = 0usize;
-    let mut i = p.cursor() + 1; // skip the opening `{`
+    let mut i = base + 1; // skip the opening `{`
     while i < p.token_len() {
         match p.raw_kind_at(i) {
             TokenKind::LCURL | TokenKind::LPAREN | TokenKind::LSQUARE => depth += 1,
@@ -1033,6 +1113,11 @@ fn parse_match(p: &mut Parser) -> Expr {
     let _ = p.expect(TokenKind::LCURL);
     let mut cases = Vec::new();
     while !p.at(TokenKind::RCURL) && !p.at(TokenKind::END) {
+        // empty statements (`;`) are legal between cases and after the last
+        // case — skip them before requiring `case` (official tolerates them).
+        if p.eat(TokenKind::SEMI) {
+            continue;
+        }
         let _ = p.expect(TokenKind::CASE);
         let pattern = parse_pattern(p);
         // guard: `case p if cond =>` or `case p where cond =>` (LLT uses both)
@@ -1042,7 +1127,25 @@ fn parse_match(p: &mut Parser) -> Expr {
             None
         };
         let _ = p.expect(TokenKind::DOUBLE_ARROW);
-        let body = parse_expr_prec(p, 1);
+        // body: expression or declaration sequence until the next `case` or
+        // `}` — a case body may span several statements (like a block without
+        // braces). Wrap multi-statement bodies in a Block.
+        let mut body_stmts = Vec::new();
+        while !p.at(TokenKind::CASE) && !p.at(TokenKind::RCURL) && !p.at(TokenKind::END) {
+            if p.eat(TokenKind::SEMI) {
+                continue;
+            }
+            body_stmts.push(parse_expr_prec(p, 0));
+            p.eat(TokenKind::SEMI);
+        }
+        let body = if body_stmts.len() == 1 {
+            body_stmts.pop().unwrap()
+        } else {
+            Expr::Block {
+                stmts: body_stmts,
+                pos: pos_of(&m),
+            }
+        };
         cases.push(cj_ast::MatchCase {
             pattern,
             guard,
@@ -1289,6 +1392,9 @@ pub fn is_expr_start(k: TokenKind) -> bool {
             | TokenKind::RUNE_LITERAL
             | TokenKind::RUNE_BYTE_LITERAL
             | TokenKind::MULTILINE_STRING
+            | TokenKind::MULTILINE_RAW_STRING
+            | TokenKind::WILDCARD
+            | TokenKind::UNSAFE
             | TokenKind::IDENTIFIER
             | TokenKind::THIS
             | TokenKind::SUPER
@@ -1353,6 +1459,7 @@ fn bin_op_from_token(k: TokenKind) -> Option<BinOp> {
         TokenKind::GE => BinOp::Ge,
         TokenKind::COALESCING => BinOp::Coalesce,
         TokenKind::PIPELINE => BinOp::Pipe,
+        TokenKind::COMPOSITION => BinOp::Compose,
         TokenKind::RANGEOP => BinOp::Range,
         TokenKind::CLOSEDRANGEOP => BinOp::ClosedRange,
         _ => return None,

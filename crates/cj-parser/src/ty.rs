@@ -35,7 +35,9 @@ pub fn is_type_start(kind: TokenKind) -> bool {
 /// Parse a type (starts at a type name or `(`).
 pub fn parse_type(p: &mut Parser) -> Type {
     let tok = p.peek_token().clone();
-    match tok.kind {
+    // Build the base type, then apply a postfix `?` (optional type, spec
+    // Ch.08 `optionType`) uniformly: `Int64?`, `Foo<T>?`, `(Int64, Bool)?`.
+    let mut ty = match tok.kind {
         // `$3`, `$x` — dollar identifier used as a type name (quote meta
         // vars / token placeholders, spec Ch.14). Lexed as `$` + name/number.
         TokenKind::DOLLAR => {
@@ -199,7 +201,15 @@ pub fn parse_type(p: &mut Parser) -> Type {
             p.advance();
             Type::Invalid(pos_of(&tok))
         }
+    };
+    // postfix optional `T?` — applies to any base type
+    if p.eat(TokenKind::QUEST) {
+        ty = Type::Option {
+            inner: Box::new(ty),
+            pos: pos_of(&tok),
+        };
     }
+    ty
 }
 
 pub(crate) fn parse_generic_args(p: &mut Parser) -> Vec<Type> {

@@ -66,6 +66,7 @@ pub enum BinOp {
     Ge,
     Coalesce,
     Pipe,
+    Compose,
     Range,
     ClosedRange,
 }

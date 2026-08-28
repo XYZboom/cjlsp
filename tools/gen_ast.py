@@ -470,7 +470,7 @@ def build() -> str:
     w("/// Binary operator.")
     w("#[derive(Debug, Clone, Copy, PartialEq, Eq)]")
     w("pub enum BinOp { Add, Sub, Mul, Div, Mod, Exp, And, Or, BitAnd, BitOr, BitXor,")
-    w("    LShift, RShift, Eq, Ne, Lt, Gt, Le, Ge, Coalesce, Pipe, Range, ClosedRange }")
+    w("    LShift, RShift, Eq, Ne, Lt, Gt, Le, Ge, Coalesce, Pipe, Compose, Range, ClosedRange }")
     w("")
     w("/// Unary operator.")
     w("#[derive(Debug, Clone, Copy, PartialEq, Eq)]")

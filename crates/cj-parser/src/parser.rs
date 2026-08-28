@@ -475,6 +475,18 @@ impl<'a> Parser<'a> {
             let _ = pkg_tok;
         }
 
+        // macro package header: `macro package a.b` (spec Ch.14) — same role
+        // as the package header: it must be followed by imports then decls.
+        if self.at(TokenKind::MACRO) && self.peek_ahead(1) == TokenKind::PACKAGE {
+            self.advance(); // macro
+            self.advance(); // package
+            let (name, name_pos) = self.parse_package_name();
+            if let Some(n) = name {
+                package = Some(n);
+                package_pos = Some(name_pos);
+            }
+        }
+
         // imports (repeatable, terminated by a decl keyword). The spec's
         // importModifier is optional and defaults to private, so `internal
         // import pkg.*` / `public import pkg.*` are legal — peek past access
@@ -629,6 +641,35 @@ impl<'a> Parser<'a> {
             let star = self.advance();
             last_tok_end = star.end;
             glob = true;
+        } else if self.eat(TokenKind::LCURL) {
+            // `import a.b.{X, Y}` — brace-selected imports (spec Ch.03)
+            while !self.at(TokenKind::RCURL) && !self.at(TokenKind::END) {
+                let t = self.peek_token().clone();
+                if t.kind == TokenKind::IDENTIFIER
+                    || t.kind == TokenKind::PACKAGE_IDENTIFIER
+                    || t.kind == TokenKind::MUL
+                    || t.kind.is_name_like()
+                {
+                    let s = self.advance();
+                    last_tok_end = s.end;
+                    selected.push(s.text);
+                } else {
+                    let found = crate::token_display_text(&t);
+                    self.error_id(
+                        &t,
+                        cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                        &["import", "selector", &found],
+                    );
+                    break;
+                }
+                if !self.eat(TokenKind::COMMA) {
+                    break;
+                }
+            }
+            let rc = self.expect(TokenKind::RCURL);
+            if rc.kind == TokenKind::RCURL {
+                last_tok_end = rc.end;
+            }
         } else if self.eat(TokenKind::COLON) {
             // `import a.b: X, Y`
             while self.peek() == TokenKind::IDENTIFIER {
