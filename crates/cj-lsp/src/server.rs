@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// LSP server: tracks open documents and computes diagnostics via the
 /// cj-frontend pipeline (lexer -> parser -> sema collector/resolver/dep).
@@ -17,6 +18,11 @@ pub struct LspServer {
     /// rootUri from `initialize` — used to derive the expected package name
     /// of each open file (module name + directory chain under src/).
     root_uri: String,
+    /// project root dir -> parsed same-package sibling scan cache (file path
+    /// -> parsed file). Turns the per-request O(project) cross-file scan into
+    /// an mtime diff: only changed/new sibling files are re-parsed, so a
+    /// medium repo stays fast on every completion/diagnostics request.
+    scan_cache: HashMap<PathBuf, HashMap<PathBuf, CachedSibling>>,
 }
 
 impl LspServer {
@@ -25,6 +31,7 @@ impl LspServer {
             open_docs: HashMap::new(),
             shutdown_received: false,
             root_uri: String::new(),
+            scan_cache: HashMap::new(),
         }
     }
 
@@ -105,21 +112,32 @@ impl LspServer {
         let Some((path, source)) = self.open_docs.get(&uri) else {
             return json!([]);
         };
+        // Copy the path + buffer text out so the scan-cache mutable borrow
+        // below doesn't conflict with the open_docs borrow.
+        let (path, source) = (path.clone(), source.clone());
         // Parse the current buffer to collect visible declarations.
-        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let mut parser = cj_parser::Parser::new(&source, cj_lexer::Lexer::new(&source).tokenize());
         let file = parser.run();
 
         // Resolve the project root so completion can include same-package
-        // sibling file decls (official behavior: cross-file completion).
+        // sibling file decls (official behavior: cross-file completion). The
+        // scan cache re-parses only changed/new siblings (mtime diff), not
+        // the whole package, on every request.
         let cwd = std::env::current_dir().unwrap_or_default();
-        let project_root = resolve_project_root(&cwd, path);
+        let project_root = resolve_project_root(&cwd, &path);
         let siblings = project_root.as_deref().map(|r| {
-            collect_same_package_candidates(r, file.package.as_deref(), &path.to_string_lossy())
+            let cache = self.scan_cache.entry(r.to_path_buf()).or_default();
+            collect_same_package_candidates(
+                cache,
+                r,
+                file.package.as_deref(),
+                &path.to_string_lossy(),
+            )
         });
 
         crate::completion::complete_at(
             &file,
-            source,
+            &source,
             line,
             character,
             siblings.as_deref(),
@@ -250,26 +268,45 @@ impl LspServer {
         let Some((path, text)) = self.open_docs.get(uri) else {
             return Vec::new();
         };
+        // Copy the path + text out so the scan-cache mutable borrow below
+        // doesn't conflict with the open_docs borrow.
+        let (path, text) = (path.clone(), text.clone());
         // The test harness runs us with cwd = <workspace>/sourcecode/cangjieTest
         // and sends a *virtual* uri for the opened file; sibling same-package
         // sources (needed for cross-file call type checking) live on disk under
         // that cwd. Resolve the real project root once per publish.
         let cwd = std::env::current_dir().unwrap_or_default();
-        let project_root = resolve_project_root(&cwd, path);
+        let project_root = resolve_project_root(&cwd, &path);
         let expected = self.expected_package_name(uri);
         let diagnostics = if text.is_empty() {
             // The didOpen uri is a *virtual* path that usually does not exist
             // on disk (content travels in `text`). Only fall back to disk when
             // it actually has content; an empty file (no package decl) must
             // still produce package-name diagnostics (diag_001).
-            match fs::read_to_string(path) {
-                Ok(s) if !s.is_empty() => {
-                    analyze_source(&s, project_root.as_deref(), expected.as_deref(), uri)
-                }
-                _ => analyze_source("", project_root.as_deref(), expected.as_deref(), uri),
+            match fs::read_to_string(&path) {
+                Ok(s) if !s.is_empty() => analyze_source(
+                    &s,
+                    project_root.as_deref(),
+                    expected.as_deref(),
+                    uri,
+                    &mut self.scan_cache,
+                ),
+                _ => analyze_source(
+                    "",
+                    project_root.as_deref(),
+                    expected.as_deref(),
+                    uri,
+                    &mut self.scan_cache,
+                ),
             }
         } else {
-            analyze_source(text, project_root.as_deref(), expected.as_deref(), uri)
+            analyze_source(
+                &text,
+                project_root.as_deref(),
+                expected.as_deref(),
+                uri,
+                &mut self.scan_cache,
+            )
         };
         let msg = json!({
             "jsonrpc": "2.0",
@@ -349,17 +386,57 @@ fn resolve_project_root(cwd: &Path, uri_path: &Path) -> Option<PathBuf> {
             tail.push(c);
         }
         if cwd.join(&tail).exists() {
-            return Some(cwd.join(comps[i]));
+            let root = cwd.join(comps[i]);
+            // The first existing suffix's leading component can be the FILE
+            // itself when cwd already sits inside the file's directory (the
+            // measured 1.9ms illusion: the "project root" resolved to a file,
+            // read_dir silently failed and the cross-file scan never ran).
+            // Only a real directory is a usable project root.
+            if root.is_dir() {
+                return Some(root);
+            }
         }
     }
     None
 }
 
-/// Collect function signatures from all same-package `.cj` sources under the
-/// project root (used for cross-file call type checking). Returns a map of
-/// name -> FuncSig; the opened file's own sigs are merged separately.
-fn collect_same_package_sigs(root: &Path, package: Option<&str>) -> HashMap<String, FuncSig> {
-    let mut sigs = HashMap::new();
+/// One parsed same-package sibling file in the cross-file scan cache.
+///
+/// Holds the file's mtime (to detect disk changes), its package name (for
+/// the spec Ch.03 same-package filter) and both derived payloads: the
+/// completion `Candidate`s and the collected function signatures for
+/// cross-file call type checking.
+struct CachedSibling {
+    mtime: SystemTime,
+    package: Option<String>,
+    candidates: Vec<crate::completion::Candidate>,
+    func_sigs: HashMap<String, FuncSig>,
+}
+
+/// Package-filtered sibling data produced by a cache refresh: completion
+/// candidates + cross-file call signatures.
+struct SiblingData {
+    candidates: Vec<crate::completion::Candidate>,
+    func_sigs: HashMap<String, FuncSig>,
+}
+
+/// Refresh a per-root sibling scan cache against disk and return the merged,
+/// package-filtered data.
+///
+/// Cost model: the directory walk (`read_dir`) is cheap; each `.cj` file's
+/// mtime is diffed against the cache and ONLY changed/new files are re-parsed
+/// (read + lex + parse + collect). Deleted files are dropped. The merge keeps
+/// files whose package matches `package` (spec Ch.03 — only same-package
+/// siblings are visible); `self_path`, when given, excludes the opened file
+/// itself from the candidate list (its decls come from the live buffer).
+fn refresh_sibling_cache(
+    cache: &mut HashMap<PathBuf, CachedSibling>,
+    root: &Path,
+    package: Option<&str>,
+    self_path: Option<&str>,
+) -> SiblingData {
+    // 1. Cheap directory walk: (path, mtime) for every .cj file under root.
+    let mut disk: HashMap<PathBuf, SystemTime> = HashMap::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = fs::read_dir(&dir) else {
@@ -370,71 +447,92 @@ fn collect_same_package_sigs(root: &Path, package: Option<&str>) -> HashMap<Stri
             if p.is_dir() {
                 stack.push(p);
             } else if p.extension().is_some_and(|e| e == "cj") {
-                let Ok(src) = fs::read_to_string(&p) else {
-                    continue;
-                };
-                let mut parser =
-                    cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
-                let f = parser.run();
-                // Only same-package siblings are visible (spec Ch.03). A file
-                // without a package decl is treated as package-less.
-                let same_pkg = match (package, f.package.as_deref()) {
-                    (Some(a), Some(b)) => a == b,
-                    _ => true,
-                };
-                if !same_pkg {
-                    continue;
-                }
-                let r = cj_sema::Collector::new().collect_file(&f);
-                for (name, sig) in r.func_sigs {
-                    sigs.entry(name).or_insert(sig);
+                if let Ok(m) = entry.metadata().and_then(|m| m.modified()) {
+                    disk.insert(p, m);
                 }
             }
         }
     }
-    sigs
+
+    // 2. Re-parse only changed/new files; drop entries for deleted files.
+    for (p, mtime) in &disk {
+        let stale = cache.get(p).is_none_or(|c| c.mtime != *mtime);
+        if stale {
+            match parse_sibling_file(p, *mtime) {
+                Some(f) => {
+                    cache.insert(p.clone(), f);
+                }
+                None => {
+                    cache.remove(p);
+                }
+            }
+        }
+    }
+    cache.retain(|p, _| disk.contains_key(p));
+
+    // 3. Merge same-package payloads (excluding the opened file for candidates).
+    let mut candidates = Vec::new();
+    let mut func_sigs = HashMap::new();
+    for (p, c) in cache.iter() {
+        let same_pkg = match (package, c.package.as_deref()) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        };
+        if !same_pkg {
+            continue;
+        }
+        if self_path.is_none_or(|sp| !p.to_string_lossy().ends_with(sp)) {
+            candidates.extend(c.candidates.iter().cloned());
+        }
+        func_sigs.extend(c.func_sigs.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
+    SiblingData {
+        candidates,
+        func_sigs,
+    }
+}
+
+/// Parse one sibling `.cj` file into its cache entry (package + candidates +
+/// function signatures). Returns `None` when the file cannot be read (mirrors
+/// the old per-file `continue` on read errors).
+fn parse_sibling_file(p: &Path, mtime: SystemTime) -> Option<CachedSibling> {
+    let src = fs::read_to_string(p).ok()?;
+    let mut parser = cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
+    let f = parser.run();
+    let package = f.package.clone();
+    let candidates = crate::completion::sibling_candidates(&f);
+    let r = cj_sema::Collector::new().collect_file(&f);
+    Some(CachedSibling {
+        mtime,
+        package,
+        candidates,
+        func_sigs: r.func_sigs,
+    })
+}
+
+/// Collect function signatures from all same-package `.cj` sources under the
+/// project root (used for cross-file call type checking). Returns a map of
+/// name -> FuncSig; the opened file's own sigs are merged separately. Reuses
+/// the per-file scan cache — only changed/new files are re-parsed.
+fn collect_same_package_sigs(
+    cache: &mut HashMap<PathBuf, CachedSibling>,
+    root: &Path,
+    package: Option<&str>,
+) -> HashMap<String, FuncSig> {
+    refresh_sibling_cache(cache, root, package, None).func_sigs
 }
 
 /// Collect top-level decl candidates from same-package sibling .cj files
 /// under the project root (cross-file completion). Excludes `path` itself.
 /// Returns the candidates (labels/kinds/details) for completion to merge.
+/// Reuses the per-file scan cache — only changed/new files are re-parsed.
 fn collect_same_package_candidates(
+    cache: &mut HashMap<PathBuf, CachedSibling>,
     root: &Path,
     package: Option<&str>,
     self_path: &str,
 ) -> Vec<crate::completion::Candidate> {
-    let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else if p.extension().is_some_and(|e| e == "cj")
-                && !p.to_string_lossy().ends_with(self_path)
-            {
-                let Ok(src) = fs::read_to_string(&p) else {
-                    continue;
-                };
-                let mut parser =
-                    cj_parser::Parser::new(&src, cj_lexer::Lexer::new(&src).tokenize());
-                let f = parser.run();
-                // Only same-package siblings are visible (spec Ch.03).
-                let same_pkg = match (package, f.package.as_deref()) {
-                    (Some(a), Some(b)) => a == b,
-                    _ => true,
-                };
-                if !same_pkg {
-                    continue;
-                }
-                out.extend(crate::completion::sibling_candidates(&f));
-            }
-        }
-    }
-    out
+    refresh_sibling_cache(cache, root, package, Some(self_path)).candidates
 }
 
 /// Convert an LSP 0-based (line, character) position to a byte offset in
@@ -532,6 +630,7 @@ fn analyze_source(
     project_root: Option<&Path>,
     expected: Option<&str>,
     uri: &str,
+    scan_cache: &mut HashMap<PathBuf, HashMap<PathBuf, CachedSibling>>,
 ) -> Vec<Value> {
     // Tokens for quickfix deletion-range computation. Strings/comments are
     // already handled by the lexer, so brace/paren matching below is safe.
@@ -571,10 +670,12 @@ fn analyze_source(
     );
 
     // Cross-file call type checking: merge the opened file's own signatures
-    // with same-package sibling signatures found on disk.
+    // with same-package sibling signatures found on disk (scan-cached: only
+    // changed/new siblings re-parsed).
     let mut func_sigs = sema_result.func_sigs.clone();
     if let Some(root) = project_root {
-        for (name, sig) in collect_same_package_sigs(root, file.package.as_deref()) {
+        let cache = scan_cache.entry(root.to_path_buf()).or_default();
+        for (name, sig) in collect_same_package_sigs(cache, root, file.package.as_deref()) {
             func_sigs.entry(name).or_insert(sig);
         }
     }
@@ -1065,5 +1166,101 @@ mod tests {
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[1]["message"], "/* 2.1 */print ( 42");
         assert_eq!(arr[0]["location"]["uri"], "file:///a.cj");
+    }
+
+    /// A temp project dir used by the scan-cache tests (unique per process).
+    fn temp_repo(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("t33_{tag}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn resolve_project_root_returns_dir_only() {
+        // The trap: cwd sitting INSIDE the file's directory makes the first
+        // existing suffix be the FILE itself. The is_dir() guard must reject
+        // it (a file is not a usable project root), not return it.
+        let dir = temp_repo("root");
+        fs::write(dir.join("cur.cj"), "package p\n").unwrap();
+        let uri = dir.join("cur.cj");
+
+        assert_eq!(resolve_project_root(&dir, &uri), None);
+
+        // cwd = parent directory -> resolves to the directory containing the
+        // file, never the file.
+        let parent = dir.parent().expect("temp dir has a parent");
+        assert_eq!(resolve_project_root(parent, &uri), Some(dir.clone()));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_cache_refreshes_only_changed_files() {
+        let dir = temp_repo("scan");
+        let a = dir.join("a.cj");
+        let b = dir.join("b.cj");
+        fs::write(&a, "package p\nfunc alpha(): Int64 { return 1 }\n").unwrap();
+        fs::write(&b, "package p\nclass Beta {}\n").unwrap();
+
+        let mut cache: HashMap<PathBuf, CachedSibling> = HashMap::new();
+        let root = dir.clone();
+
+        // First refresh parses every sibling: both files cached, alpha sig
+        // visible from a.cj (b.cj has no funcs).
+        let d1 = refresh_sibling_cache(&mut cache, &root, Some("p"), None);
+        assert!(d1.func_sigs.contains_key("alpha"));
+        assert!(cache.contains_key(&a) && cache.contains_key(&b));
+        let d1_count = d1.candidates.len();
+
+        // Unchanged mtime -> cache hit, identical output (no re-parse).
+        let d2 = refresh_sibling_cache(&mut cache, &root, Some("p"), None);
+        assert!(d2.func_sigs.contains_key("alpha"));
+        assert_eq!(d2.candidates.len(), d1_count);
+
+        // Change b.cj (mtime advances) -> only b re-parsed; its new func
+        // signature appears and the cached candidates update.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&b, "package p\nfunc gamma(): Int64 { return 2 }\n").unwrap();
+        let d3 = refresh_sibling_cache(&mut cache, &root, Some("p"), None);
+        assert!(d3.func_sigs.contains_key("gamma"), "changed file re-parsed");
+        assert!(!d3.func_sigs.contains_key("beta"));
+
+        // Delete a.cj -> its cache entry drops and alpha disappears.
+        fs::remove_file(&a).unwrap();
+        let d4 = refresh_sibling_cache(&mut cache, &root, Some("p"), None);
+        assert!(!cache.contains_key(&a), "deleted file dropped from cache");
+        assert!(!d4.func_sigs.contains_key("alpha"));
+        assert!(d4.candidates.len() < d1_count);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_cache_excludes_self_file_for_candidates() {
+        let dir = temp_repo("self");
+        let a = dir.join("a.cj");
+        let b = dir.join("b.cj");
+        fs::write(&a, "package p\nfunc alpha(): Int64 { return 1 }\n").unwrap();
+        fs::write(&b, "package p\nclass Beta {}\n").unwrap();
+
+        let mut cache: HashMap<PathBuf, CachedSibling> = HashMap::new();
+        let root = dir.clone();
+
+        let base = refresh_sibling_cache(&mut cache, &root, Some("p"), None)
+            .candidates
+            .len();
+        // The opened file a.cj is excluded from completion candidates (its
+        // decls come from the live buffer) — but its func sigs are still
+        // collected for the cross-file call checks.
+        let a_str = a.to_string_lossy().to_string();
+        let excl = refresh_sibling_cache(&mut cache, &root, Some("p"), Some(&a_str));
+        assert!(excl.candidates.len() < base && excl.candidates.len() > 0);
+        assert!(
+            excl.func_sigs.contains_key("alpha"),
+            "self sigs still merged"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
