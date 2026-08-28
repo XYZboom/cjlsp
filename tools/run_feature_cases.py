@@ -255,12 +255,19 @@ def main():
     with open(SUMMARY, "w", encoding="utf-8") as fh:
         json.dump(results, fh)
 
-    text = build_baseline(results, commit)
-    with open(BASELINE_OUT, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    print()
-    print(text)
-    print(f"baseline written to {BASELINE_OUT}")
+    # Smoke runs (--limit) must not overwrite the committed authoritative
+    # baseline in tools/feature_baseline.txt; only full runs persist it.
+    if args.limit is None:
+        text = build_baseline(results, commit)
+        with open(BASELINE_OUT, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print()
+        print(text)
+        print(f"baseline written to {BASELINE_OUT}")
+    else:
+        print()
+        print(f"smoke run (--limit {args.limit}): baseline NOT written "
+              f"(tools/feature_baseline.txt left untouched)")
 
 
 if __name__ == "__main__":
