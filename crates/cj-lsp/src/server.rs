@@ -109,6 +109,19 @@ impl LspServer {
         let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
         let file = parser.run();
 
+        self.completion_inner(&file, source, path, &uri, line, character)
+    }
+
+    fn completion_inner(
+        &self,
+        file: &cj_ast::File,
+        source: &str,
+        path: &std::path::Path,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) -> Value {
+        let _ = uri;
         // Resolve the project root so completion can include same-package
         // sibling file decls (official behavior: cross-file completion).
         let cwd = std::env::current_dir().unwrap_or_default();
@@ -118,13 +131,13 @@ impl LspServer {
         });
 
         crate::completion::complete_at(
-            &file,
+            file,
             source,
             line,
             character,
             siblings.as_deref(),
             project_root.as_deref(),
-            &uri,
+            uri,
         )
     }
 
@@ -430,7 +443,7 @@ fn collect_same_package_candidates(
                 if !same_pkg {
                     continue;
                 }
-                out.extend(crate::completion::sibling_candidates(&f));
+                out.extend(crate::completion::sibling_candidates(&f, &src));
             }
         }
     }

@@ -60,7 +60,9 @@ struct ExpandCtx<'a> {
     /// Macro definitions collected from this file (used by the quote-template
     /// fallback when the compiled .so path is unavailable or fails).
     defs: &'a HashMap<String, MacroDef>,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     cache: &'a mut crate::macro_cache::MacroCache,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pkg_dir: Option<&'a std::path::Path>,
     expansions: &'a mut Vec<Expansion>,
     diags: &'a mut Vec<Diag>,
@@ -407,6 +409,9 @@ fn expand_one_cached(name: &str, args: &[cj_ast::Tokenish], pos: &CodePos, ctx: 
     //    On any failure (no SDK, dlopen/dlsym miss, call error) we fall back
     //    gracefully — template expansion if a def is available, else the
     //    previous placeholder text — so the LSP never destabilizes.
+    //    Linux-only: dlopen of macro .so (dylib.rs) is Unix-specific; other
+    //    platforms fall through to template expansion (step 3).
+    #[cfg(target_os = "linux")]
     if let Some(dir) = ctx.pkg_dir {
         if let Ok((so, pkg_name)) = ctx.cache.compile_macro_package(dir) {
             let key = crate::macro_cache::MacroCache::expansion_key(name, &args_text(args));
@@ -456,6 +461,7 @@ fn expand_one_cached(name: &str, args: &[cj_ast::Tokenish], pos: &CodePos, ctx: 
 /// expansion via the macro's quote body (the pre-T11 behavior), else a
 /// placeholder noting the .so + failure. Never returns an unresolved diag —
 /// the caller has already decided this macro has a definition.
+#[cfg(target_os = "linux")]
 fn fallback_expansion(
     name: &str,
     args: &[cj_ast::Tokenish],
@@ -475,6 +481,7 @@ fn fallback_expansion(
     )
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn args_text(args: &[cj_ast::Tokenish]) -> String {
     args.iter()
         .map(|a| a.text.as_str())

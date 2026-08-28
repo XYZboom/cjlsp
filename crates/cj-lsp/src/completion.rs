@@ -14,7 +14,7 @@
 //  14 = Keyword (language keywords, snippet templates, primitive type names)
 //  22 = Struct
 
-use cj_ast::{Body, Decl, Expr, File, Param, Pattern, Type};
+use cj_ast::{Body, Decl, Expr, File, LitKind, Param, Pattern, Type};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -211,7 +211,7 @@ const STD_CORE: &[StdSym] = &[
         ctors: &[(
             "ArrayIterator<T>(data: Array<T>)",
             "public func init(data: Array<T>)",
-            "ArrayIterator<${1:T}>(${2:data: Array<T>})",
+            "ArrayIterator<${1:T}>(${3:data: Array<T>})",
             2,
         )],
     },
@@ -222,7 +222,7 @@ const STD_CORE: &[StdSym] = &[
         ctors: &[(
             "acquireArrayRawData<T>(arr: Array<T>)",
             "public unsafe func acquireArrayRawData<T>(arr: Array<T>): CPointerHandle<T>",
-            "acquireArrayRawData<${1:T}>(${2:arr: Array<T>})",
+            "acquireArrayRawData<${1:T}>(${3:arr: Array<T>})",
             2,
         )],
     },
@@ -233,7 +233,7 @@ const STD_CORE: &[StdSym] = &[
         ctors: &[(
             "releaseArrayRawData<T>(handle: CPointerHandle<T>)",
             "public unsafe func releaseArrayRawData<T>(handle: CPointerHandle<T>): Unit",
-            "releaseArrayRawData<${1:T}>(${2:handle: CPointerHandle<T>})",
+            "releaseArrayRawData<${1:T}>(${3:handle: CPointerHandle<T>})",
             2,
         )],
     },
@@ -1015,14 +1015,6 @@ fn emit_func_items(
         .as_ref()
         .map(display_type)
         .unwrap_or_else(|| "Unit".to_string());
-    let detail = if ret_s == "Unit" {
-        format!("{detail_prefix}func {name}({})", param_strs.join(", "))
-    } else {
-        format!(
-            "{detail_prefix}func {name}({}): {ret_s}",
-            param_strs.join(", ")
-        )
-    };
     let k = type_params.len() as u32;
     let tp_names: Vec<String> = type_params.iter().map(|t| t.name.clone()).collect();
     let tp_s = tp_names.join(", ");
@@ -1039,6 +1031,13 @@ fn emit_func_items(
     } else {
         format!("<{tp_s}>")
     };
+    // Official always renders the return type in the detail, defaulting
+    // missing/Unit returns to `: Unit` (e.g. `internal func test(): Unit`),
+    // and includes generic params (`internal static func bar<U>(x: U): U`).
+    let detail = format!(
+        "{detail_prefix}func {name}{tp_prefix}({}): {ret_s}",
+        param_strs.join(", ")
+    );
     let start_slot = if k == 0 { 1 } else { k + 2 };
 
     // 1. Bare name item (detail empty)
@@ -1200,14 +1199,14 @@ fn emit_ctor_items(
     };
 
     let label = if params.is_empty() {
-        format!("{class_name}(){tp_prefix}")
+        format!("{class_name}{tp_prefix}()")
     } else {
         let param_strs: Vec<String> = params.iter().map(param_label).collect();
-        format!("{class_name}({}){tp_prefix}", param_strs.join(", "))
+        format!("{class_name}{tp_prefix}({})", param_strs.join(", "))
     };
 
     let (fmt, ins) = if params.is_empty() {
-        (1, format!("{class_name}(){tp_insert}"))
+        (1, format!("{class_name}{tp_insert}()"))
     } else {
         // Snippet numbering: type params occupy 1..=tp_num, then a slot is
         // skipped when any type param exists (official starts ctor args at
@@ -1229,7 +1228,7 @@ fn emit_ctor_items(
             detail: detail.clone(),
             insert_text: ins,
             insert_text_format: fmt,
-            filter_text: class_name.to_string(),
+            filter_text: format!("{class_name}{tp_prefix}"),
         },
     );
 
@@ -1289,14 +1288,19 @@ fn emit_ctor_items(
                 detail,
                 insert_text: closure_ins_full,
                 insert_text_format: 2,
-                filter_text: class_name.to_string(),
+                filter_text: format!("{class_name}{tp_prefix}"),
             },
         );
     }
 }
 
 /// Collect top-level decls from a parsed File.
-fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSet<String>) {
+fn collect_file_decls(
+    file: &File,
+    source: &str,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
     for d in &file.decls {
         match d {
             Decl::Class {
@@ -1346,39 +1350,47 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                         filter_text: name.clone(),
                     },
                 );
-                // Constructor items from primary ctor + init() methods
+                // Constructor items from primary ctor + named ctors.
+                // `init(...)` decls parse as PrimaryCtor → detail `func init(...)`;
+                // named ctors `Class(...)` parse as Func named after the class
+                // → detail `func Class(...)`. Detail visibility uses the CTOR's
+                // own `public` flag (a package-private `init` in a public class
+                // renders with no prefix, e.g. `func init(a: Int32)`).
                 for m in members {
                     match m {
-                        Decl::PrimaryCtor { params, .. } => {
+                        Decl::PrimaryCtor {
+                            is_public, params, ..
+                        } => {
                             emit_ctor_items(
                                 name,
                                 params,
                                 cands,
                                 seen,
                                 *is_public,
-                                *is_open,
-                                *is_sealed,
-                                *is_abstract,
+                                false,
+                                false,
+                                false,
                                 type_params,
-                                name,
+                                "init",
                             );
                         }
                         Decl::Func {
                             name: fn_name,
+                            is_public,
                             params,
                             ..
-                        } if fn_name == "init" => {
+                        } if fn_name == name => {
                             emit_ctor_items(
                                 name,
                                 params,
                                 cands,
                                 seen,
                                 *is_public,
-                                *is_open,
-                                *is_sealed,
-                                *is_abstract,
+                                false,
+                                false,
+                                false,
                                 type_params,
-                                "init",
+                                name,
                             );
                         }
                         _ => {}
@@ -1425,36 +1437,39 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                 );
                 for m in members {
                     match m {
-                        Decl::PrimaryCtor { params, .. } => {
+                        Decl::PrimaryCtor {
+                            is_public, params, ..
+                        } => {
                             emit_ctor_items(
                                 name,
                                 params,
                                 cands,
                                 seen,
                                 *is_public,
-                                *is_open,
                                 false,
-                                false,
-                                type_params,
-                                name,
-                            );
-                        }
-                        Decl::Func {
-                            name: fn_name,
-                            params,
-                            ..
-                        } if fn_name == "init" => {
-                            emit_ctor_items(
-                                name,
-                                params,
-                                cands,
-                                seen,
-                                *is_public,
-                                *is_open,
                                 false,
                                 false,
                                 type_params,
                                 "init",
+                            );
+                        }
+                        Decl::Func {
+                            name: fn_name,
+                            is_public,
+                            params,
+                            ..
+                        } if fn_name == name => {
+                            emit_ctor_items(
+                                name,
+                                params,
+                                cands,
+                                seen,
+                                *is_public,
+                                false,
+                                false,
+                                false,
+                                type_params,
+                                name,
                             );
                         }
                         _ => {}
@@ -1611,14 +1626,24 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
                 is_mutable,
                 ty,
                 init,
+                pos,
                 ..
             } => {
                 let vis = vis_prefix(*is_public, false, false, false, false, false);
                 let ty_s = ty.as_ref().map(display_type).unwrap_or_default();
-                let init_s = init
-                    .as_ref()
-                    .map(|_| " = ...".to_string())
-                    .unwrap_or_default();
+                // Official renders the literal initializer source
+                // (`= Data()`, `= [1, 3, 4]`), not `= ...`. Walk the raw source
+                // from the var's line (`=` → end of the init expression).
+                let init_s = if init.is_some() {
+                    let s = var_init_src(source, pos.line);
+                    if s.is_empty() {
+                        " = ...".to_string()
+                    } else {
+                        format!(" = {s}")
+                    }
+                } else {
+                    String::new()
+                };
                 let kw = if *is_mutable { "var" } else { "let" };
                 let detail = if ty_s.is_empty() {
                     format!("{vis}{kw} {name}{init_s}")
@@ -1688,10 +1713,10 @@ fn collect_file_decls(file: &File, cands: &mut Vec<Candidate>, seen: &mut HashSe
 /// file (classes + ctors, structs + ctors, enums, interfaces, funcs, vars,
 /// type aliases, props) — the same shape `collect_file_decls` produces for the
 /// opened file, minus a shared `seen` set so cross-file duplicates collapse.
-pub fn sibling_candidates(file: &File) -> Vec<Candidate> {
+pub fn sibling_candidates(file: &File, source: &str) -> Vec<Candidate> {
     let mut cands: Vec<Candidate> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    collect_file_decls(file, &mut cands, &mut seen);
+    collect_file_decls(file, source, &mut cands, &mut seen);
     cands
 }
 
@@ -1700,16 +1725,99 @@ pub fn sibling_candidates(file: &File) -> Vec<Candidate> {
 // Official detail shows the literal initializer source (`let x: T = <init>`),
 // not `= ...`. Statements are single-line in the test suite, so slice from the
 // first `=` on the statement's line to the end of the statement.
-fn stmt_init_source(source: &str, line_1based: u32) -> String {
-    let line_text = source_line_text(source, line_1based.saturating_sub(1));
-    if let Some(eq) = line_text.find('=') {
-        let rest = line_text[eq + 1..].trim();
-        let rest = rest.split(';').next().unwrap_or(rest).trim();
-        if !rest.is_empty() {
-            return rest.to_string();
+
+/// Slice the exact source text of a top-level/member var initializer.
+///
+/// The parser does NOT set correct byte spans on expression nodes (Call pos
+/// covers only `(`, Match only `match`, ...), so we can't rely on them. Walk
+/// the raw source instead: start right after the first `=` on the var's
+/// declaration line, then scan forward tracking bracket depth and string
+/// literals, stopping at the first `;` or newline at depth 0.
+fn var_init_src(source: &str, line_1based: u32) -> String {
+    let Some(line_text) = source.lines().nth(line_1based.saturating_sub(1) as usize) else {
+        return String::new();
+    };
+    // Var decl line has the type on the same line, so the first `=` is the
+    // init assignment (`var cc1 = Data()`, `let x: Int64 = ...`).
+    let Some(eq) = line_text.find('=') else {
+        return String::new();
+    };
+    let start_byte = line_offset(source, line_1based) + eq + 1;
+    let bytes = source.as_bytes();
+    let mut depth = 0i32;
+    let mut i = start_byte;
+    let n = bytes.len();
+    while i < n {
+        let b = bytes[i];
+        match b {
+            b'"' | b'\'' => {
+                // skip string/char literal (with escapes), respecting r/b prefixes
+                i += 1;
+                while i < n && bytes[i] != b {
+                    if bytes[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                i += 1;
+                continue;
+            }
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                i += 1;
+                // NOTE: don't break here even if depth returns to 0 — a `)`
+                // may close an inner `(r1)` while `{` continues the expr.
+            }
+            b'\n' => {
+                if depth == 0 {
+                    break;
+                }
+                i += 1;
+            }
+            b';' => {
+                if depth == 0 {
+                    break;
+                }
+                i += 1;
+            }
+            b'/' if i + 1 < n && bytes[i + 1] == b'/' => {
+                // line comment: skip to EOL
+                while i < n && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
         }
     }
-    "...".to_string()
+    let end = i.min(n);
+    let s = start_byte.min(n);
+    if end <= s {
+        return String::new();
+    }
+    let mut out = source[s..end].trim().to_string();
+    while out.ends_with(';') || out.ends_with(',') {
+        out.pop();
+        out = out.trim_end().to_string();
+    }
+    out
+}
+
+/// Byte offset of the first byte of the given 1-based line.
+fn line_offset(source: &str, line_1based: u32) -> usize {
+    let mut cur = 1u32;
+    for (i, b) in source.bytes().enumerate() {
+        if cur == line_1based {
+            return i;
+        }
+        if b == b'\n' {
+            cur += 1;
+        }
+    }
+    source.len()
 }
 
 /// Collect local variables/params in scope from the file AST.
@@ -1766,7 +1874,7 @@ fn collect_lets_in_block(
                             // Official detail: `let x: T = <init>` — the
                             // literal initializer text, not `= ...`.
                             let kw = if *is_mutable { "var" } else { "let" };
-                            let init_s = stmt_init_source(source, pos.line);
+                            let init_s = var_init_src(source, pos.line);
                             let detail = if let Some(t) = ty {
                                 format!("{kw} {name}: {} = {init_s}", display_type(t))
                             } else {
@@ -1916,7 +2024,15 @@ fn ctor_param_kind(source: &str, p: &Param) -> Option<bool> {
 /// Infer a display type string from an initializer expression.
 fn infer_expr_type(file: &File, source: &str, e: &Expr) -> Option<String> {
     match e {
-        Expr::Lit { value, .. } => Some(lit_type_str(value)),
+        Expr::Lit { kind, .. } => Some(match kind {
+            LitKind::String | LitKind::JString => "String".to_string(),
+            LitKind::Rune | LitKind::RuneByte => "Rune".to_string(),
+            LitKind::Bool => "Bool".to_string(),
+            LitKind::Float => "Float64".to_string(),
+            LitKind::Unit => "Unit".to_string(),
+            LitKind::None => "None".to_string(),
+            LitKind::Integer => "Int64".to_string(),
+        }),
         Expr::Name { name, .. } => resolve_var_type(file, source, name, u32::MAX),
         Expr::Paren { inner, .. } => infer_expr_type(file, source, inner),
         Expr::Unary { inner, .. } => infer_expr_type(file, source, inner),
@@ -1932,23 +2048,6 @@ fn infer_expr_type(file: &File, source: &str, e: &Expr) -> Option<String> {
         },
         Expr::Array { .. } => Some("Array".to_string()),
         _ => None,
-    }
-}
-
-/// Display type of a literal value string.
-fn lit_type_str(v: &str) -> String {
-    if v.starts_with('"') || v.starts_with("b\"") {
-        "String".to_string()
-    } else if v.starts_with('\'') || v.starts_with("b'") || v.starts_with("r'") {
-        "Rune".to_string()
-    } else if v == "true" || v == "false" {
-        "Bool".to_string()
-    } else if v.contains('.') {
-        "Float64".to_string()
-    } else if v.contains('f') || v.contains('F') {
-        "Float32".to_string()
-    } else {
-        "Int64".to_string()
     }
 }
 
@@ -2319,34 +2418,82 @@ fn collect_std_symbols(cands: &mut Vec<Candidate>, seen: &mut HashSet<String>) {
             );
             continue;
         }
+        // Generic std types render their type params in the LABEL (e.g.
+        // `CPointerResource<T>`) but keep the bare name as filterText.
+        let (label, insert, fmt) = if let Some(tp) = std_generic_suffix(sym.name, sym.detail) {
+            let params = tp.trim_matches(['<', '>']).to_string();
+            (
+                format!("{}{tp}", sym.name),
+                format!("{}<${{1:{params}}}>", sym.name),
+                2,
+            )
+        } else {
+            (sym.name.to_string(), sym.name.to_string(), 1)
+        };
         push_candidate(
             cands,
             seen,
             Candidate {
-                label: sym.name.to_string(),
+                label,
                 kind: sym.kind,
                 detail: sym.detail.to_string(),
-                insert_text: sym.name.to_string(),
-                insert_text_format: 1,
+                insert_text: insert,
+                insert_text_format: fmt,
                 filter_text: sym.name.to_string(),
             },
         );
         // Constructor / overload items share the type's filterText.
+        // Classes/structs get KIND_FUNCTION (3, ctor); std FUNCTIONS keep
+        // their own kind (2) — e.g. `acquireArrayRawData(...)` is a function.
+        let ctor_kind = if sym.kind == KIND_CLASS || sym.kind == KIND_STRUCT {
+            KIND_FUNCTION
+        } else {
+            sym.kind
+        };
+        let ctor_filter = if let Some(tp) = std_generic_suffix(sym.name, sym.detail) {
+            format!("{}{tp}", sym.name)
+        } else {
+            sym.name.to_string()
+        };
         for (label, detail, insert, fmt) in sym.ctors {
             push_candidate(
                 cands,
                 seen,
                 Candidate {
                     label: label.to_string(),
-                    kind: KIND_FUNCTION,
+                    kind: ctor_kind,
                     detail: detail.to_string(),
                     insert_text: insert.to_string(),
                     insert_text_format: *fmt,
-                    filter_text: sym.name.to_string(),
+                    filter_text: ctor_filter.clone(),
                 },
             );
         }
     }
+}
+
+/// If `detail` renders the type as generic (`public struct CPointerResource<T>`),
+/// return the `<...>` type-params text; None for non-generic types.
+fn std_generic_suffix(name: &str, detail: &str) -> Option<String> {
+    let name_end = detail.find(name)? + name.len();
+    let rest = &detail[name_end..];
+    if !rest.starts_with('<') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (i, ch) in rest.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Collect keyword candidates.
@@ -2542,6 +2689,10 @@ struct RcvTarget {
 /// ctor-call → instance members of the variable's type.
 fn resolve_receiver(file: &File, source: &str, recv: &str, line: u32) -> Option<RcvTarget> {
     let mut recv = recv.trim().to_string();
+    // `case TimeUnit.` → the receiver is the enum name after `case `.
+    if recv.starts_with("case ") {
+        recv = recv[5..].trim().to_string();
+    }
     let is_opt = recv.ends_with('?');
     if is_opt {
         recv.pop();
@@ -2626,10 +2777,18 @@ fn resolve_access_step(
             }
             // type alias → resolve to its target base
             if let Some(t) = resolve_alias_base(file, &base) {
+                let access = if is_std_enum(&t) {
+                    AccessKind::Enum
+                } else {
+                    match find_type_decl(file, &t) {
+                        Some(Decl::Enum { .. }) => AccessKind::Enum,
+                        _ => AccessKind::Static,
+                    }
+                };
                 return Some(RcvTarget {
                     base: t,
                     args,
-                    access: AccessKind::Static,
+                    access,
                 });
             }
             if let Some(t) = resolve_var_type(file, source, seg, line) {
@@ -2915,7 +3074,7 @@ fn collect_for_target(
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
 ) {
-    if t.base == "Option" && !t.args.is_empty() && t.access != AccessKind::Enum {
+    if t.base == "Option" && !t.args.is_empty() && t.access == AccessKind::Instance {
         // `?.` / value access unwraps to the inner type's members
         let inner = t.args[0].clone();
         let inner_base = inner.split('<').next().unwrap_or(&inner).trim().to_string();
@@ -2975,7 +3134,7 @@ pub fn complete_at(
         collect_member_access(file, source, &receiver, line, &mut candidates, &mut seen);
     } else {
         // 1. File top-level decls
-        collect_file_decls(file, &mut candidates, &mut seen);
+        collect_file_decls(file, source, &mut candidates, &mut seen);
 
         // 2. Same-package sibling decls (from project root scanning)
         if let Some(sibs) = sibling_decls {
@@ -3382,6 +3541,8 @@ fn collect_option_members(
 }
 
 fn item_json(c: &Candidate) -> Value {
+    // `trimLeft()` / `trimRight()` are deprecated std String members.
+    let deprecated = matches!(c.label.as_str(), "trimLeft()" | "trimRight()");
     json!({
         "label": c.label.clone(),
         "kind": c.kind,
@@ -3391,6 +3552,6 @@ fn item_json(c: &Candidate) -> Value {
         "insertText": c.insert_text.clone(),
         "insertTextFormat": c.insert_text_format,
         "sortText": "",
-        "deprecated": false,
+        "deprecated": deprecated,
     })
 }

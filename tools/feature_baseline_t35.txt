@@ -1,13 +1,14 @@
 ==============================================================================
-cj-lang LSP feature baseline (T16)
-generated: 2026-08-28 21:16:59
+cj-lang LSP feature baseline (T35 private)
+generated: 2026-08-28 20:13:58
 LSPServer: /root/Code/cangjie/cj-lang/.worktrees/t_5ed69d1f/target/debug/LSPServer
 commit:    1d1dd84
 ==============================================================================
 
-[completion]  pass=78  fail=83  total=161  rate=48.4%
+[completion]  pass=75  fail=86  total=161  rate=46.6%
   failed:
     textDocument_completion_007.info  (compare mismatch or no pass marker)
+    textDocument_completion_014.info  (compare mismatch or no pass marker)
     textDocument_completion_023.info  (compare mismatch or no pass marker)
     textDocument_completion_024.info  (compare mismatch or no pass marker)
     textDocument_completion_025.info  (compare mismatch or no pass marker)
@@ -30,6 +31,7 @@ commit:    1d1dd84
     textDocument_completion_061.info  (compare mismatch or no pass marker)
     textDocument_completion_062.info  (compare mismatch or no pass marker)
     textDocument_completion_065.info  (compare mismatch or no pass marker)
+    textDocument_completion_066.info  (compare mismatch or no pass marker)
     textDocument_completion_067.info  (compare mismatch or no pass marker)
     textDocument_completion_074.info  (compare mismatch or no pass marker)
     textDocument_completion_075.info  (compare mismatch or no pass marker)
@@ -44,6 +46,7 @@ commit:    1d1dd84
     textDocument_completion_087.info  (compare mismatch or no pass marker)
     textDocument_completion_088.info  (compare mismatch or no pass marker)
     textDocument_completion_091.info  (compare mismatch or no pass marker)
+    textDocument_completion_093.info  (compare mismatch or no pass marker)
     textDocument_completion_094.info  (compare mismatch or no pass marker)
     textDocument_completion_096.info  (compare mismatch or no pass marker)
     textDocument_completion_097.info  (compare mismatch or no pass marker)
@@ -69,7 +72,6 @@ commit:    1d1dd84
     textDocument_completion_132.info  (compare mismatch or no pass marker)
     textDocument_completion_133.info  (compare mismatch or no pass marker)
     textDocument_completion_135.info  (compare mismatch or no pass marker)
-    textDocument_completion_138.info  (compare mismatch or no pass marker)
     textDocument_completion_139.info  (compare mismatch or no pass marker)
     textDocument_completion_140.info  (compare mismatch or no pass marker)
     textDocument_completion_141.info  (compare mismatch or no pass marker)
@@ -83,6 +85,7 @@ commit:    1d1dd84
     textDocument_completion_152.info  (compare mismatch or no pass marker)
     textDocument_completion_153.info  (compare mismatch or no pass marker)
     textDocument_completion_154.info  (compare mismatch or no pass marker)
+    textDocument_completion_157.info  (compare mismatch or no pass marker)
     textDocument_completion_158.info  (compare mismatch or no pass marker)
     textDocument_completion_159.info  (compare mismatch or no pass marker)
     textDocument_completion_160.info  (compare mismatch or no pass marker)
@@ -90,10 +93,8 @@ commit:    1d1dd84
     textDocument_completion_163.info  (compare mismatch or no pass marker)
     textDocument_completion_165.info  (compare mismatch or no pass marker)
     textDocument_completion_166.info  (compare mismatch or no pass marker)
-  failure clusters (from preserved artifacts):
-    result-nonempty-list: 65  e.g. textDocument_completion_014.info, textDocument_completion_023.info, textDocument_completion_024.info, textDocument_completion_025.info
-    result-null: 44  e.g. textDocument_completion_007.info, textDocument_completion_021.info, textDocument_completion_029.info, textDocument_completion_032.info
-    expected-null-vs-[]-harness-crash: 3  e.g. textDocument_completion_067.info, textDocument_completion_079.info, textDocument_completion_138.info
+  failure clusters:
+    result-nonempty-list: 63  e.g. textDocument_completion_014.info, textDocument_completion_023.info, textDocument_completion_024.info, textDocument_completion_025.info, textDocument_completion_028.info
+    result-null: 21  e.g. textDocument_completion_007.info, textDocument_completion_035.info, textDocument_completion_036.info, textDocument_completion_037.info, textDocument_completion_038.info
+    no-compare-file: 2  e.g. textDocument_completion_067.info, textDocument_completion_079.info
 
-note: judgment = 'testcase pass' marker in compare_result.txt (framework env_info-None crash after writing is ignored).
-note: failed-case artifacts kept under cjlsp/.batch_results/.
