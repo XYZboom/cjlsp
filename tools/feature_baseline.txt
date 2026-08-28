@@ -1,8 +1,8 @@
 ==============================================================================
 cj-lang LSP feature baseline (T16)
-generated: 2026-08-29 01:47:13
+generated: 2026-08-29 01:58:13
 LSPServer: /root/Code/cangjie/cj-lang/.worktrees/t_1333f008/target/debug/LSPServer
-commit:    9ce3650
+commit:    7ad51df
 ==============================================================================
 
 [completion]  pass=105  fail=56  total=161  rate=65.2%
