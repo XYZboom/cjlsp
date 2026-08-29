@@ -20,6 +20,9 @@ use cj_ast::{Decl, File};
 use cj_lexer::{Lexer, Token, TokenKind};
 
 /// Legend indices matching the server's initialize tokenTypes order.
+/// Some are kept for reference completeness even if the current classifier
+/// doesn't emit them yet (parameter/method/macro/...).
+#[allow(dead_code)]
 mod ty {
     pub const NAMESPACE: u32 = 0;
     pub const TYPE: u32 = 1;

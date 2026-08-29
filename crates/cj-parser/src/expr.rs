@@ -176,8 +176,10 @@ fn parse_postfix(p: &mut Parser) -> Expr {
                 let lparen = p.advance();
                 let mut args = Vec::new();
                 while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
-                    let arg_name = if p.peek() == TokenKind::IDENTIFIER
-                        && p.peek_ahead(1) == TokenKind::COLON
+                    // Named arg: `f(x: 1)` — the label may be a contextual
+                    // keyword used as a member name (official Seeing +
+                    // SeeingContextualKeyword): `f(private: 1)`.
+                    let arg_name = if p.peek().is_name_like() && p.peek_ahead(1) == TokenKind::COLON
                     {
                         let name = p.advance().text;
                         p.advance(); // colon
@@ -185,6 +187,12 @@ fn parse_postfix(p: &mut Parser) -> Expr {
                     } else {
                         None
                     };
+                    // `inout` argument marker: `f(inout v)` (official
+                    // ParseFuncArg `Skip(INOUT)`). Consumed and discarded;
+                    // the AST FuncArg has no inout flag.
+                    if p.at(TokenKind::INOUT) {
+                        p.advance();
+                    }
                     let value = parse_expr_prec(p, 1);
                     args.push(cj_ast::FuncArg {
                         name: arg_name,
@@ -882,6 +890,32 @@ fn parse_atom(p: &mut Parser) -> Expr {
                 pos,
             }
         }
+        TokenKind::PERFORM => {
+            // `perform <expr>` — effect-handler perform (official ParsePerformExpr).
+            p.advance();
+            let pos = pos_of(&tok);
+            let inner = parse_expr_prec(p, 0);
+            Expr::Perform {
+                inner: Box::new(inner),
+                pos,
+            }
+        }
+        TokenKind::RESUME => {
+            // `resume` / `resume with <expr>` / `resume throwing <expr>` —
+            // effect-handler resume (official ParseResumeExpr). A bare
+            // resume has no value; withExpr/throwingExpr fold into inner.
+            let pos = pos_of(&tok);
+            p.advance();
+            let inner = if p.eat(TokenKind::WITH) || p.eat(TokenKind::THROWING) {
+                parse_expr_prec(p, 0)
+            } else {
+                Expr::Invalid(pos)
+            };
+            Expr::Resume {
+                inner: Box::new(inner),
+                pos,
+            }
+        }
         TokenKind::DOLLAR => {
             // $identifier — dollar identifier
             p.advance();
@@ -923,7 +957,12 @@ fn parse_atom(p: &mut Parser) -> Expr {
         _ => {
             // unknown atom — emit error, recover
             let found = crate::token_display_text(&tok);
-            p.error_id(&tok, cj_diag::DiagId::PARSE_EXPECTED_EXPRESSION, &[&found]);
+            let after = p.prev_display_text();
+            p.error_id(
+                &tok,
+                cj_diag::DiagId::PARSE_EXPECTED_EXPRESSION,
+                &[&after, &found],
+            );
             p.advance();
             let pos = pos_of(&tok);
             Expr::Invalid(pos)
@@ -1337,6 +1376,34 @@ fn parse_try(p: &mut Parser) -> Expr {
             body: cbody,
             pos: pos_of(&c),
         });
+    }
+    // `try { } handle (e: T) { }` — effect-handler clauses (official
+    // ParseHandleBlock). Handle and catch are sibling post-try clauses; the
+    // handle pattern is a command type pattern: `_`, `e`, `e: T`, `_: T | U`.
+    // Parsed for validation; the AST Try has no handler slot, so the clauses
+    // are consumed and discarded (same as the resource spec above).
+    while p.at(TokenKind::HANDLE) {
+        let h = p.advance();
+        let has_paren = p.eat(TokenKind::LPAREN);
+        if p.peek() == TokenKind::WILDCARD || p.peek().is_name_like() {
+            p.advance();
+            if p.eat(TokenKind::COLON) {
+                let _ = super::ty::parse_type(p);
+                while p.eat(TokenKind::BITOR) {
+                    let _ = super::ty::parse_type(p);
+                }
+            }
+        } else {
+            let t = p.peek_token().clone();
+            let found = crate::token_display_text(&t);
+            let after = p.prev_display_text();
+            p.error_id(&t, cj_diag::DiagId::PARSE_EXPECTED_EXPRESSION, &[&after, &found]);
+        }
+        if has_paren {
+            let _ = p.expect(TokenKind::RPAREN);
+        }
+        let _hbody = parse_block_expr(p);
+        let _ = pos_of(&h);
     }
     let finally = if p.eat(TokenKind::FINALLY) {
         Some(Box::new(parse_block_expr(p)))

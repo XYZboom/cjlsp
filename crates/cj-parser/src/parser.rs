@@ -50,6 +50,24 @@ impl<'a> Parser<'a> {
         self.tokens.last().expect("token stream must end with END")
     }
 
+    /// Display text of the previous consumed (non-trivia) token, for
+    /// diagnostics like "expected expression after X, found Y".
+    pub fn prev_display_text(&self) -> String {
+        let mut i = self.pos.saturating_sub(1);
+        while i > 0 {
+            let t = &self.tokens[i];
+            if t.kind != TokenKind::COMMENT && t.kind != TokenKind::NL {
+                return crate::token_display_text(t);
+            }
+            i -= 1;
+        }
+        if self.tokens.first().is_some_and(|t| t.kind != TokenKind::COMMENT && t.kind != TokenKind::NL) {
+            crate::token_display_text(&self.tokens[0])
+        } else {
+            String::new()
+        }
+    }
+
     /// Peek the k-th non-trivia token ahead (0 = next).
     pub fn peek_ahead(&self, k: usize) -> TokenKind {
         let mut i = self.pos;
@@ -659,6 +677,16 @@ impl<'a> Parser<'a> {
                     let s = self.advance();
                     last_tok_end = s.end;
                     segs.push(s.text);
+                    // `{a.b.C as alias}` / `{C as alias}` — rename the
+                    // selected name (spec Ch.03 importAlias). The aliased
+                    // selector is always the last item in the list.
+                    if self.eat(TokenKind::AS) {
+                        if self.peek().is_name_like() {
+                            let a = self.advance();
+                            last_tok_end = a.end;
+                        }
+                        break;
+                    }
                     if !self.eat(TokenKind::DOT) {
                         break;
                     }
@@ -684,6 +712,12 @@ impl<'a> Parser<'a> {
                     let s = self.advance();
                     last_tok_end = s.end;
                     segs.push(s.text);
+                    // `{X as alias}` — alias renames this selector; the
+                    // comma loop continues with the next selector.
+                    if self.eat(TokenKind::AS) && self.peek().is_name_like() {
+                        let a = self.advance();
+                        last_tok_end = a.end;
+                    }
                 } else {
                     let found = crate::token_display_text(&t);
                     self.error_id(

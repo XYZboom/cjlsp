@@ -14,7 +14,7 @@
 //  14 = Keyword (language keywords, snippet templates, primitive type names)
 //  22 = Struct
 
-use cj_ast::{Body, Decl, Expr, File, LitKind, Param, Pattern, Type};
+use cj_ast::{BinOp, Body, Decl, Expr, File, LitKind, Param, Pattern, Type};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -1005,16 +1005,13 @@ fn emit_func_items(
     name: &str,
     detail_prefix: &str,
     params: &[Param],
-    ret: &Option<Type>,
+    ret_display: Option<&str>,
     type_params: &[cj_ast::TypeParam],
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
 ) {
     let param_strs: Vec<String> = params.iter().map(param_detail).collect();
-    let ret_s = ret
-        .as_ref()
-        .map(display_type)
-        .unwrap_or_else(|| "Unit".to_string());
+    let ret_s = ret_display.unwrap_or("Unit").to_string();
     let k = type_params.len() as u32;
     let tp_names: Vec<String> = type_params.iter().map(|t| t.name.clone()).collect();
     let tp_s = tp_names.join(", ");
@@ -1614,11 +1611,27 @@ fn collect_file_decls(
                 is_abstract,
                 params,
                 ret,
+                body,
                 type_params,
                 ..
             } => {
                 let dp = vis_prefix(*is_public, false, false, *is_abstract, false, true);
-                emit_func_items(name, &dp, params, ret, type_params, cands, seen);
+                // Omitted return type -> infer from the body's tail expression
+                // (single-file context: the body lives in this file).
+                let local: [(&File, &str); 1] = [(file, source)];
+                let ret_display = ret
+                    .as_ref()
+                    .map(display_type)
+                    .or_else(|| infer_func_ret(&local, body, 0));
+                emit_func_items(
+                    name,
+                    &dp,
+                    params,
+                    ret_display.as_deref(),
+                    type_params,
+                    cands,
+                    seen,
+                );
             }
             Decl::Var {
                 name,
@@ -2040,6 +2053,23 @@ fn ctor_param_kind(source: &str, p: &Param) -> Option<bool> {
 
 /// Infer a display type string from an initializer expression.
 fn infer_expr_type(docs: &Docs, e: &Expr) -> Option<String> {
+    infer_expr_type_d(docs, e, 0)
+}
+
+/// Depth-bounded expression type inference (see `infer_expr_type`).
+///
+/// Beyond literals/names/calls/members this resolves the shapes the official
+/// server needs for function-return inference (Cluster B):
+///   - `Return { value }`          -> type of the returned value
+///   - `lhs |> rhs` (pipeline)     -> return type of the pipeline's last fn
+///   - `match { case => body .. }` -> common type of all arm bodies
+///   - block tail / if-both-branches -> last / merged expression type
+///
+/// `depth` bounds the recursion (mutually recursive func-return lookups).
+fn infer_expr_type_d(docs: &Docs, e: &Expr, depth: u32) -> Option<String> {
+    if depth > 6 {
+        return None;
+    }
     match e {
         Expr::Lit { kind, .. } => Some(match kind {
             LitKind::String | LitKind::JString => "String".to_string(),
@@ -2051,19 +2081,159 @@ fn infer_expr_type(docs: &Docs, e: &Expr) -> Option<String> {
             LitKind::Integer => "Int64".to_string(),
         }),
         Expr::Name { name, .. } => resolve_var_type(docs, name, u32::MAX),
-        Expr::Paren { inner, .. } => infer_expr_type(docs, inner),
-        Expr::Unary { inner, .. } => infer_expr_type(docs, inner),
+        Expr::Paren { inner, .. } => infer_expr_type_d(docs, inner, depth + 1),
+        Expr::Unary { inner, .. } => infer_expr_type_d(docs, inner, depth + 1),
+        Expr::Return { value: Some(v), .. } => infer_expr_type_d(docs, v, depth + 1),
         Expr::Call { callee, .. } => match callee.as_ref() {
-            Expr::Name { name, .. } => Some(name.split('<').next().unwrap_or(name).to_string()),
-            Expr::Member { name, .. } => Some(name.clone()),
+            // `Type(...)` / `Type<T>(...)` -> instance of the type (ctor call).
+            Expr::Name { name, .. }
+                if find_type_decl_in(docs, name).is_some()
+                    || is_std_type(name)
+                    || is_std_enum(name) =>
+            {
+                Some(name.split('<').next().unwrap_or(name).to_string())
+            }
+            // `foo(...)` -> the called function's return type when resolvable.
+            Expr::Name { name, .. } => func_ret_type_by_name(docs, name, depth + 1),
+            // `obj.method(...)` -> the method's return type on the receiver.
+            Expr::Member { object, name, .. } => {
+                let ot = infer_expr_type_d(docs, object, depth + 1)?;
+                member_type_of(docs, base_of_type_str(&ot), name, AccessKind::Instance)
+            }
             _ => None,
         },
-        Expr::Member { object, .. } => match object.as_ref() {
+        Expr::Member { object, name, .. } => match object.as_ref() {
             // `Type.EnumCase` / `Type.staticMember` keeps the object's type
-            Expr::Name { name, .. } => Some(name.clone()),
-            _ => infer_expr_type(docs, object),
+            Expr::Name { name: obj, .. }
+                if find_type_decl_in(docs, obj).is_some()
+                    || is_std_type(obj)
+                    || is_std_enum(obj) =>
+            {
+                Some(obj.clone())
+            }
+            // `var.member` -> the member type of the variable's type
+            Expr::Name { name: obj, .. } => {
+                let t = resolve_var_type(docs, obj, u32::MAX)?;
+                member_type_of(docs, base_of_type_str(&t), name, AccessKind::Instance)
+            }
+            _ => infer_expr_type_d(docs, object, depth + 1),
         },
+        Expr::Binary { op, lhs, rhs, .. } => match op {
+            BinOp::Pipe => infer_pipe_result(docs, rhs, depth + 1),
+            // arithmetic / comparison / logic: keep the common operand type
+            _ => {
+                let lt = infer_expr_type_d(docs, lhs, depth + 1);
+                let rt = infer_expr_type_d(docs, rhs, depth + 1);
+                match (lt, rt) {
+                    (Some(a), Some(b)) if a == b => Some(a),
+                    _ => None,
+                }
+            }
+        },
+        Expr::Match { cases, .. } => {
+            let mut common: Option<String> = None;
+            for c in cases {
+                let t = infer_expr_type_d(docs, &c.body, depth + 1)?;
+                match &common {
+                    Some(prev) if prev != &t => return None,
+                    None => common = Some(t),
+                    _ => {}
+                }
+            }
+            common
+        }
+        Expr::If { then, els, .. } => {
+            let tt = infer_expr_type_d(docs, then, depth + 1)?;
+            let et = infer_expr_type_d(docs, els.as_ref()?, depth + 1)?;
+            if tt == et {
+                Some(tt)
+            } else {
+                None
+            }
+        }
+        Expr::Block { stmts, .. } => stmts
+            .last()
+            .and_then(|s| infer_expr_type_d(docs, s, depth + 1)),
         Expr::Array { .. } => Some("Array".to_string()),
+        _ => None,
+    }
+}
+
+/// Base name of a type *string* like `C7<Int64, Int64>` -> `C7`.
+fn base_of_type_str(t: &str) -> &str {
+    t.split('<').next().unwrap_or(t).trim()
+}
+
+/// Display type of a function's return: the declared type, or a type inferred
+/// from the body's tail expression when the return type is omitted.
+fn infer_func_ret(docs: &Docs, body: &Body, depth: u32) -> Option<String> {
+    match body {
+        Body::Block(stmts) => stmts
+            .last()
+            .and_then(|s| infer_expr_type_d(docs, s, depth + 1)),
+        Body::Empty => None,
+    }
+}
+
+/// Resolve the return display type of the function `name` (a top-level decl or
+/// a class/struct/interface member method), inferring it from the body when
+/// the declared return type is omitted.
+fn func_ret_type_by_name(docs: &Docs, name: &str, depth: u32) -> Option<String> {
+    if depth > 6 {
+        return None;
+    }
+    for (file, _) in docs {
+        for d in &file.decls {
+            match d {
+                Decl::Func {
+                    name: n, ret, body, ..
+                } if n == name => {
+                    return ret
+                        .as_ref()
+                        .map(display_type)
+                        .or_else(|| infer_func_ret(docs, body, depth + 1));
+                }
+                Decl::Class { members, .. }
+                | Decl::Struct { members, .. }
+                | Decl::Interface { members, .. } => {
+                    for m in members {
+                        if let Decl::Func {
+                            name: n, ret, body, ..
+                        } = m
+                        {
+                            if n == name {
+                                return ret
+                                    .as_ref()
+                                    .map(display_type)
+                                    .or_else(|| infer_func_ret(docs, body, depth + 1));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// Type produced by the right-hand side of a pipeline `lhs |> rhs`: the return
+/// type of the function the value is piped into.
+fn infer_pipe_result(docs: &Docs, rhs: &Expr, depth: u32) -> Option<String> {
+    match rhs {
+        Expr::Name { name, .. } => func_ret_type_by_name(docs, name, depth + 1),
+        Expr::Call { callee, .. } => match callee.as_ref() {
+            Expr::Name { name, .. } => func_ret_type_by_name(docs, name, depth + 1),
+            Expr::Member { object, name, .. } => {
+                let ot = infer_expr_type_d(docs, object, depth + 1)?;
+                member_type_of(docs, base_of_type_str(&ot), name, AccessKind::Instance)
+            }
+            _ => None,
+        },
+        Expr::Member { object, name, .. } => {
+            let ot = infer_expr_type_d(docs, object, depth + 1)?;
+            member_type_of(docs, base_of_type_str(&ot), name, AccessKind::Instance)
+        }
         _ => None,
     }
 }
@@ -2370,7 +2540,20 @@ fn emit_member_decl(
                 }
                 p
             };
-            emit_func_items(name, &dp, params, ret, type_params, cands, seen);
+            // Omitted return type -> infer from the method body's tail.
+            let ret_display = ret
+                .as_ref()
+                .map(display_type)
+                .or_else(|| infer_func_ret(docs, body, 0));
+            emit_func_items(
+                name,
+                &dp,
+                params,
+                ret_display.as_deref(),
+                type_params,
+                cands,
+                seen,
+            );
         }
         Decl::PrimaryCtor { params, .. } if access == AccessKind::Instance => {
             // `let`/`var`-prefixed primary-ctor params become properties.
@@ -3061,11 +3244,13 @@ fn member_type_of(docs: &Docs, base: &str, member: &str, access: AccessKind) -> 
                         name,
                         is_static,
                         ret,
+                        body,
                         ..
                     } if name == member && static_matches(*is_static, access) => {
                         return Some(
                             ret.as_ref()
                                 .map(display_type)
+                                .or_else(|| infer_func_ret(docs, body, 0))
                                 .unwrap_or_else(|| "Unit".to_string()),
                         );
                     }

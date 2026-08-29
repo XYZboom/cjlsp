@@ -170,8 +170,10 @@ pub fn parse_type(p: &mut Parser) -> Type {
             let mut name_map: std::collections::HashMap<String, ()> =
                 std::collections::HashMap::new();
             while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
-                // detect named field: IDENTIFIER followed by ':'
-                if p.peek() == TokenKind::IDENTIFIER && p.peek_ahead(1) == TokenKind::COLON {
+                // detect named field: name followed by ':' — the field name may be a
+                // contextual keyword used as an identifier: `(public: Int64,
+                // private: Int64)` (official Seeing + SeeingContextualKeyword).
+                if p.peek().is_name_like() && p.peek_ahead(1) == TokenKind::COLON {
                     let name_tok = p.advance(); // name
                     let _ = p.expect(TokenKind::COLON);
                     if name_map.contains_key(&name_tok.text) {
