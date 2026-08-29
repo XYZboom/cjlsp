@@ -15,6 +15,7 @@ mod hover;
 mod references;
 mod semantic;
 mod server;
+mod signature;
 use server::LspServer;
 
 /// Frames: "Content-Length: <N>\r\n\r\n<body>"

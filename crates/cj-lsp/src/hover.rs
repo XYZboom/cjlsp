@@ -285,15 +285,15 @@ fn render_hover(hi: &Hoverable, r: LspRange) -> Value {
 /// A resoluble symbol: a declaration (hit-testable by name span) or a
 /// std.core builtin (reached only through reference resolution).
 #[derive(Clone)]
-struct Hoverable {
-    name: String,
+pub struct Hoverable {
+    pub name: String,
     /// 1-based name token span.
     line: u32,
     col: u32,
     end_col: u32,
     /// Code-fence content of the hover (may carry the `// In <kind> <name>`
     /// member prefix).
-    signature: String,
+    pub signature: String,
     /// Doc comment from the `//` line directly above the decl.
     doc: Option<String>,
     declared_in: String,
@@ -302,10 +302,10 @@ struct Hoverable {
     /// initializer type inference).
     ty: Option<String>,
     /// True when this symbol names a type (class/interface/struct/enum/alias).
-    is_type: bool,
+    pub is_type: bool,
     /// Rendered parameter types for func-like decls; used to pick the right
     /// overload at a call site by matching the inferred argument types.
-    param_tys: Vec<String>,
+    pub param_tys: Vec<String>,
 }
 
 impl Hoverable {
@@ -324,14 +324,14 @@ struct Container {
 }
 
 /// The identifier word (0-based span) at the cursor.
-struct Word {
+pub struct Word {
     text: String,
     line: u32,
     start: u32,
     end: u32,
 }
 
-struct Index<'a> {
+pub struct Index<'a> {
     source: &'a str,
     /// The parsed file (used to walk call args for overload resolution).
     file: &'a File,
@@ -339,14 +339,14 @@ struct Index<'a> {
     package: Option<&'a str>,
     file_name: &'a str,
     /// Every declaration (top-level + members + local decls) — hit-test space.
-    all: Vec<Hoverable>,
+    pub all: Vec<Hoverable>,
     /// Top-level + member decls by name (reference resolution).
-    by_name: HashMap<String, Vec<usize>>,
+    pub by_name: HashMap<String, Vec<usize>>,
     /// Local decls (vars, params, lambda params, local funcs) by name — for
     /// scope-aware reference resolution.
     locals: HashMap<String, Vec<usize>>,
     /// Type name -> index into `all` (classes/interfaces/structs/enums/aliases).
-    types: HashMap<String, usize>,
+    pub types: HashMap<String, usize>,
     /// Type name -> kind label ("class"/"struct"/"interface"/"enum") — used
     /// to render `// In struct A` for extend-block members.
     type_kind: HashMap<String, String>,
@@ -357,13 +357,13 @@ struct Index<'a> {
     parents: HashMap<String, Vec<String>>,
     /// class/struct name -> synthesized default ctor (`public func init()`).
     /// Used when a type name in call position has no declared init member.
-    implicit_inits: HashMap<String, Hoverable>,
+    pub implicit_inits: HashMap<String, Hoverable>,
     /// std.core builtin symbols.
     std: HashMap<String, Hoverable>,
 }
 
 impl<'a> Index<'a> {
-    fn new(file: &'a File, source: &'a str, package: Option<&'a str>, file_name: &'a str) -> Self {
+    pub fn new(file: &'a File, source: &'a str, package: Option<&'a str>, file_name: &'a str) -> Self {
         let mut idx = Index {
             source,
             file,
@@ -1894,7 +1894,7 @@ impl<'a> Index<'a> {
     }
 
     /// Resolve a member-access receiver to a TYPE name (display form).
-    fn receiver_type(&self, recv: &str, line: u32, character: u32) -> Option<String> {
+    pub fn receiver_type(&self, recv: &str, line: u32, character: u32) -> Option<String> {
         if recv == "this" {
             return self
                 .enclosing_container(line, character)
@@ -1929,7 +1929,7 @@ impl<'a> Index<'a> {
             .is_some_and(|hits| hits.iter().any(|&i| !self.all[i].is_type))
     }
 
-    fn member_lookup(&self, container: &str, name: &str) -> Option<&Hoverable> {
+    pub fn member_lookup(&self, container: &str, name: &str) -> Option<&Hoverable> {
         let base = container.split('<').next().unwrap_or(container);
         let idxs = self.members.get(base)?;
         let mut best: Option<&Hoverable> = None;
@@ -2262,7 +2262,7 @@ impl<'a> Index<'a> {
         }
     }
 
-    fn lookup_local(&self, word: &str, line: u32, character: u32) -> Option<&Hoverable> {
+    pub fn lookup_local(&self, word: &str, line: u32, character: u32) -> Option<&Hoverable> {
         let idxs = self.locals.get(word)?;
         let mut best: Option<&Hoverable> = None;
         for i in idxs {
@@ -2308,7 +2308,7 @@ impl<'a> Index<'a> {
             .or_else(|| self.lookup_std(name))
     }
 
-    fn lookup_std(&self, name: &str) -> Option<&Hoverable> {
+    pub fn lookup_std(&self, name: &str) -> Option<&Hoverable> {
         self.std.get(name)
     }
 
@@ -2325,7 +2325,7 @@ impl<'a> Index<'a> {
 // Rendering helpers
 // ================================================================
 
-fn render_type(t: &Type) -> String {
+pub fn render_type(t: &Type) -> String {
     match t {
         Type::Ref { name, args, .. } => {
             if args.is_empty() {

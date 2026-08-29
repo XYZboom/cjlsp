@@ -54,6 +54,7 @@ impl LspServer {
             "textDocument/hover" => self.handle_hover(&params),
             "textDocument/definition" => self.handle_definition(&params),
             "textDocument/references" => self.handle_references(&params),
+            "textDocument/signatureHelp" => self.handle_signature_help(&params),
             "textDocument/semanticTokens/full" => self.handle_semantic_tokens(&params),
             "initialize" => {
                 // Remember rootUri so package-name checks can derive the
@@ -72,6 +73,7 @@ impl LspServer {
                         "referencesProvider": true,
                         "documentSymbolProvider": true,
                         "hoverProvider": true,
+                        "signatureHelpProvider": {"triggerCharacters": ["(", ","]},
                         "renameProvider": {"prepareProvider": true},
                         "documentHighlightProvider": true,
                         "semanticTokensProvider": {
@@ -319,6 +321,23 @@ impl LspServer {
         let file = parser.run();
         let data = crate::semantic::semantic_tokens_full(source, &file);
         json!({ "data": data })
+    }
+
+    /// Handle textDocument/signatureHelp: the parameter list of the function
+    /// / ctor / method whose call parens enclose the cursor.
+    fn handle_signature_help(&mut self, params: &Value) -> Value {
+        let uri = params["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
+        let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
+        let Some((_, source)) = self.open_docs.get(&uri) else {
+            return Value::Null;
+        };
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        crate::signature::signature_help_at(&file, source, line, character)
     }
 
     fn uri_to_path(uri: &str) -> Option<PathBuf> {
