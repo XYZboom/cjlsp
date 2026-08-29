@@ -63,15 +63,18 @@ pub fn document_highlight_at(file: &File, line: u32, character: u32) -> Value {
     }
 
     locs.sort();
+    // Official cangjie LSP emits kind=1 (Text) for *all* occurrences — the
+    // declaration is NOT distinguished as Write(3). Verified across 300
+    // expected highlights in the official documentHighlight suite.
     let out: Vec<Value> = locs
         .iter()
-        .map(|(l0, c0, e0, is_decl)| {
+        .map(|(l0, c0, e0, _)| {
             json!({
                 "range": {
                     "start": {"line": l0, "character": c0},
                     "end": {"line": l0, "character": e0},
                 },
-                "kind": if *is_decl { 3 } else { 1 },
+                "kind": 1,
             })
         })
         .collect();
