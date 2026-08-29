@@ -150,13 +150,16 @@ def main():
     dest = os.path.join(base, ver)
     print(f"Downloading stdlib for SDK version {ver} -> {dest}")
 
-    # Core stdlib from cangjie_runtime/stdlib/libs/std
+    # Core stdlib from cangjie_runtime/stdlib/libs/std — one subdir per module
+    # (std/core/, std/reflect/, ...) so same-named files in different modules
+    # (e.g. core/exception.cj vs reflect/exception.cj) never collide. Keeps the
+    # index paths stable ("std/core/array.cj") for jump targets.
     os.makedirs(dest, exist_ok=True)
     total = 0
     print("  core modules:")
     for mod in STD_MODULES:
         src = f"stdlib/libs/std/{mod}"
-        n = download_module(RUNTIME_REPO, src, os.path.join(dest, "std"))
+        n = download_module(RUNTIME_REPO, src, os.path.join(dest, "std", mod))
         total += n
         print(f"    {mod}: {n} files")
     # top-level std.cj

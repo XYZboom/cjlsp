@@ -1,5 +1,6 @@
 // cj-lsp: LSP server state machine + diagnostics pipeline.
 
+use crate::hover::StdlibIndex;
 use cj_diag::{DiagFix, FixKind};
 use cj_lexer::TokenKind;
 use cj_sema::FuncSig;
@@ -23,6 +24,11 @@ pub struct LspServer {
     /// an mtime diff: only changed/new sibling files are re-parsed, so a
     /// medium repo stays fast on every completion/diagnostics request.
     scan_cache: HashMap<PathBuf, HashMap<PathBuf, CachedSibling>>,
+    /// The downloaded standard-library symbol index (loaded from
+    /// ~/.cangjie-lsp/std/<version>/index.json at startup), used as the last
+    /// fallback for definition jumps into the real stdlib source. Path is
+    /// resolved dynamically — never hardcoded.
+    stdlib: Option<StdlibIndex>,
 }
 
 impl LspServer {
@@ -32,6 +38,7 @@ impl LspServer {
             shutdown_received: false,
             root_uri: String::new(),
             scan_cache: HashMap::new(),
+            stdlib: StdlibIndex::load(),
         }
     }
 
@@ -282,7 +289,15 @@ impl LspServer {
             None => Vec::new(),
         };
 
-        crate::hover::definition_at(&file, &source, &uri, line, character, &siblings)
+        crate::hover::definition_at(
+            &file,
+            &source,
+            &uri,
+            line,
+            character,
+            &siblings,
+            self.stdlib.as_ref(),
+        )
     }
 
     /// Handle textDocument/references: all locations referencing the name at

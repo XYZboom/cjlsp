@@ -1,10 +1,25 @@
-# 标准库支持规划（跳转 + 下载 + 二进制符号）— 第 15 轮待拆
+# 标准库支持规划（跳转 + 下载 + 二进制符号）— T60 已落地 ①索引跳转/②下载③只读待插件
 
 用户需求（2026-08-29 累积）:
 1. **跳转到只读标准库**，且要求是**当前版本**的标准库
 2. **官网下载功能**: 未来 IDE 插件管理仓颉版本, 应从官网下载源码到本机
 3. **二进制符号解析**: 借鉴仓颉编译器源码
 4. ⚠️ **插件不能硬编码本机路径** — 所有标准库路径必须动态解析
+
+## 实现状态（2026-08-30 T60）✅
+- ✅ 下载器 `tools/stdlib_download.py`（gitcode API, 递归拉 .cj → ~/.cangjie-lsp/std/<ver>/std/<mod>/）
+  - ✅ v1.1.3 已下载: 30 核心模块 + std.cj（std/ 下按模块分子目录, 避免同名文件冲突）
+  - ✅ 版本检测: 优先 cjc --version, 回退默认 1.1.3
+- ✅ 索引器 `tools/stdlib_index.py` → ~/.cangjie-lsp/std/<ver>/index.json
+  - ✅ 1.1.3 index.json: 8000+ symbols, 格式 {"version", "symbols": {name: {file,line,col,kind}}}
+- ✅ LSP 跳转落点（hover.rs `definition_at` + server.rs）:
+  - ✅ `StdlibIndex` 启动时加载 ~/.cangjie-lsp/std/<最新版本>/index.json（HOME/USERPROFILE 动态解析, 无硬编码）
+  - ✅ definition_at 本地/兄弟 miss → 查索引 → 返回 file://<std源码> + range
+  - ✅ 修复原有 bug: std.core 内置符号（line=0）definition 不再 underflow 而是查索引
+  - ✅ 单测: definition 对 Array 返回 std/core/array.cj 位置（hover.rs tests）
+  - ✅ clippy 0 / Windows cross-build 0 error / 全 workspace 测试通过
+- ⏳ 只读 std 路径: 插件侧 VSCode 只读配置（后续 T 待办）
+- ⏳ 二进制符号解析（C 节）: 未做（SDK .bc 符号表补充）
 
 ## 调研现状（已确认）
 - 本机 SDK: /root/Code/cangjie/sdk/cangjie-sdk-linux-x64-1.1.3.tar.gz (1.1.3)
@@ -19,6 +34,7 @@
 - 官网下载页: https://cangjie-lang.cn/download/<version> (JS 渲染, 无直接链接;
   但 gitcode API 可直接拉取)
 - 现有 STD_SYMS: hover.rs 硬编码 8 个核心类型符号, 无位置, 无函数 → 无法跳转
+  （T60 前 definition 对 Array 等 std 符号返回的是 underflow 错误位置）
 
 ## 下载实现（gitcode API, 不硬编码本机路径）
 ```

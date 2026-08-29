@@ -25,6 +25,8 @@
 use cj_ast::{Body, CodePos, Decl, Expr, File, Pattern, PrimitiveKind, Type};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 
 // ================================================================
 // Public entry
@@ -118,6 +120,7 @@ pub fn definition_at(
     line: u32,
     character: u32,
     siblings: &[(std::path::PathBuf, &File, &str)],
+    stdlib: Option<&StdlibIndex>,
 ) -> Value {
     let idx = Index::new(file, source, None, "");
     // 1) The cursor is on a declared name span — jump straight there.
@@ -154,15 +157,18 @@ pub fn definition_at(
         }
     }
     // A type name: jump to the type declaration (constructor calls resolve
-    // through this, not to `init`).
+    // through this, not to `init`). std.core builtins (line == 0, no real
+    // source position in this file) fall through to the stdlib index below.
     if let Some(hi) = idx.lookup_type(&name) {
-        return json!({
-            "uri": uri,
-            "range": {
-                "start": {"line": hi.line - 1, "character": hi.col - 1},
-                "end": {"line": hi.line - 1, "character": hi.end_col - 1},
-            }
-        });
+        if hi.line > 0 {
+            return json!({
+                "uri": uri,
+                "range": {
+                    "start": {"line": hi.line - 1, "character": hi.col - 1},
+                    "end": {"line": hi.line - 1, "character": hi.end_col - 1},
+                }
+            });
+        }
     }
     // A value / function: first by_name entry is the declaration.
     if let Some(hi) = idx
@@ -227,7 +233,31 @@ pub fn definition_at(
             });
         }
     }
+    // Standard library: the symbol (Array/String/print/...) is declared in
+    // the locally downloaded stdlib source. Look it up in the symbol index
+    // and jump into the real .cj file (read-only stdlib).
+    if let Some(std) = stdlib {
+        if let Some(sym) = std.lookup(&name) {
+            return json!({
+                "uri": stdlib_file_uri(std, sym),
+                "range": {
+                    "start": {"line": sym.line - 1, "character": sym.col - 1},
+                    "end": {
+                        "line": sym.line - 1,
+                        "character": sym.col - 1 + name.chars().count() as u32,
+                    },
+                }
+            });
+        }
+    }
     Value::Null
+}
+
+/// file:// URI of a stdlib symbol's source file, resolved against the
+/// stdlib version root (absolute path on disk, dynamically resolved).
+fn stdlib_file_uri(std: &StdlibIndex, sym: &StdlibSym) -> String {
+    let abs = std.root.join(&sym.file);
+    sibling_uri(&abs)
 }
 
 fn sibling_uri(path: &std::path::Path) -> String {
@@ -253,6 +283,97 @@ fn sibling_uri(path: &std::path::Path) -> String {
     } else {
         s.to_string()
     }
+}
+
+// ================================================================
+// Standard-library jump index (T60)
+// ================================================================
+
+/// One entry of the stdlib symbol index: a symbol name mapped to the
+/// declaration site in the downloaded stdlib source.
+pub struct StdlibSym {
+    /// Path relative to the stdlib version root, e.g. "std/core/array.cj".
+    pub file: String,
+    /// 1-based line of the declaration.
+    pub line: u32,
+    /// 1-based column of the name token.
+    pub col: u32,
+}
+
+/// The downloaded standard-library symbol index. Maps a stdlib symbol
+/// (Array/String/print/...) to the file+position of its declaration in the
+/// locally downloaded source, so Ctrl+Click can jump into the real stdlib
+/// .cj file. The index is loaded once at server startup from
+/// ~/.cangjie-lsp/std/<version>/index.json (path resolved dynamically from
+/// the user's home — never hardcoded).
+pub struct StdlibIndex {
+    /// Absolute path of the version root (parent of `file` entries).
+    pub root: PathBuf,
+    /// symbol name -> declaration site (first occurrence wins).
+    symbols: HashMap<String, StdlibSym>,
+}
+
+impl StdlibIndex {
+    /// Load the newest downloaded stdlib version's index from
+    /// ~/.cangjie-lsp/std/<version>/index.json. Returns None when nothing is
+    /// downloaded yet, or the file is unreadable/corrupt.
+    pub fn load() -> Option<StdlibIndex> {
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+        let base = PathBuf::from(home).join(".cangjie-lsp").join("std");
+        let mut versions: Vec<PathBuf> = fs::read_dir(&base)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.is_dir() && p.join("index.json").is_file())
+            .collect();
+        if versions.is_empty() {
+            return None;
+        }
+        // Pick the highest version (semver-ish compare on the dir name).
+        versions.sort_by(|a, b| {
+            let va = a.file_name().and_then(|f| f.to_str()).unwrap_or("");
+            let vb = b.file_name().and_then(|f| f.to_str()).unwrap_or("");
+            version_cmp(va, vb)
+        });
+        let root = versions.pop()?;
+        StdlibIndex::from_root(root)
+    }
+
+    /// Build from an explicit version root (used by load() and tests).
+    pub fn from_root(root: PathBuf) -> Option<StdlibIndex> {
+        let data = fs::read_to_string(root.join("index.json")).ok()?;
+        let v: Value = serde_json::from_str(&data).ok()?;
+        let symbols = v.get("symbols")?.as_object()?;
+        let mut map = HashMap::new();
+        for (name, s) in symbols {
+            let file = s.get("file")?.as_str()?.to_string();
+            let line = s.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as u32;
+            let col = s.get("col").and_then(|c| c.as_u64()).unwrap_or(0) as u32;
+            map.insert(name.clone(), StdlibSym { file, line, col });
+        }
+        Some(StdlibIndex { root, symbols: map })
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<&StdlibSym> {
+        self.symbols.get(name)
+    }
+}
+
+/// Compare two version strings ("1.1.3" vs "1.2.0"); returns Ordering so a
+/// sort can put higher versions last (Ord on the tuple).
+fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let ta = version_tuple(a);
+    let tb = version_tuple(b);
+    ta.cmp(&tb)
+}
+
+fn version_tuple(v: &str) -> (u32, u32, u32) {
+    let mut it = v.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+    (
+        it.next().unwrap_or(0),
+        it.next().unwrap_or(0),
+        it.next().unwrap_or(0),
+    )
 }
 // ================================================================
 
@@ -2857,4 +2978,83 @@ fn container_type_name(label: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A temp stdlib version root with an index.json + a fake array.cj.
+    fn temp_stdlib_root(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("t60_stdlib_{tag}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("std/core")).unwrap();
+        fs::write(dir.join("std/core/array.cj"), "public struct Array<T> {}\n").unwrap();
+        let idx = json!({
+            "version": "1.1.3",
+            "symbols": {
+                "Array": {"file": "std/core/array.cj", "line": 1, "col": 15, "kind": "struct"},
+                "String": {"file": "std/core/string.cj", "line": 27, "col": 15, "kind": "struct"},
+                "print": {"file": "std/core/print.cj", "line": 12, "col": 13, "kind": "func"},
+            }
+        });
+        fs::write(dir.join("index.json"), idx.to_string()).unwrap();
+        dir
+    }
+
+    fn parse(src: &str) -> (cj_ast::File, String) {
+        let source = src.to_string();
+        let file = cj_parser::Parser::new(&source, cj_lexer::Lexer::new(&source).tokenize()).run();
+        (file, source)
+    }
+
+    /// definition on `Array` (a std.core builtin, NOT declared in the file)
+    /// must jump into the downloaded stdlib source file (T60).
+    #[test]
+    fn definition_jumps_to_stdlib_source() {
+        let root = temp_stdlib_root("array");
+        let stdlib = StdlibIndex::from_root(root.clone()).expect("index loads");
+        let (file, source) = parse("func main() {\n    let a = Array<Int64>([])\n}\n");
+        // Cursor on "Array" (line 1, char 12).
+        let loc = definition_at(
+            &file,
+            &source,
+            "file:///proj/main.cj",
+            1,
+            12,
+            &[],
+            Some(&stdlib),
+        );
+        let uri = loc["uri"].as_str().expect("uri present");
+        let expected = format!("file://{}/std/core/array.cj", root.to_string_lossy());
+        assert_eq!(uri, expected);
+        // Range is the name token in array.cj: line 1 -> 0-based 0, col 15 -> 14.
+        assert_eq!(loc["range"]["start"]["line"], 0);
+        assert_eq!(loc["range"]["start"]["character"], 14);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Without a downloaded stdlib, definition on a std.core builtin must NOT
+    /// emit a bogus location (the old line==0 underflow) — it returns Null.
+    #[test]
+    fn definition_stdlib_absent_returns_null() {
+        let (file, source) = parse("func main() {\n    let a = Array<Int64>([])\n}\n");
+        let loc = definition_at(&file, &source, "file:///proj/main.cj", 1, 12, &[], None);
+        assert_eq!(loc, Value::Null);
+    }
+
+    /// version_cmp: "1.2.0" > "1.1.3" > "1.1.3-alpha" (tuple compare).
+    #[test]
+    fn version_cmp_orders_semver() {
+        assert_eq!(version_cmp("1.1.3", "1.2.0"), std::cmp::Ordering::Less);
+        assert_eq!(version_cmp("1.2.0", "1.1.3"), std::cmp::Ordering::Greater);
+        assert_eq!(version_cmp("1.1.3", "1.1.3"), std::cmp::Ordering::Equal);
+        // A pre-release suffix ("3-alpha") fails the numeric parse -> 0, so a
+        // released 1.1.3 outranks 1.1.3-alpha (the downloaded dirs are plain
+        // "1.1.3"-style; pre-release tags never reach the version root).
+        assert_eq!(
+            version_cmp("1.1.3-alpha", "1.1.3"),
+            std::cmp::Ordering::Less
+        );
+    }
 }
