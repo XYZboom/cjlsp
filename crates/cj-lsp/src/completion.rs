@@ -183,7 +183,12 @@ const STD_CORE: &[StdSym] = &[
         name: "Box",
         kind: KIND_CLASS,
         detail: "public class Box<T>",
-        ctors: &[],
+        ctors: &[(
+            "Box<T>(v: T)",
+            "public func init(v: T)",
+            "Box<${1:T}>(${3:v: T})",
+            2,
+        )],
     },
     StdSym {
         name: "AB",
@@ -687,7 +692,6 @@ const KEYWORDS: &[(&str, &str, u32, &str)] = &[
     ("let", "", 1, "let"),
     ("this", "", 1, "this"),
     ("super", "", 1, "super"),
-    ("new", "", 1, "new"),
     ("operator", "", 1, "operator"),
     ("except", "", 1, "except"),
     ("forward", "", 1, "forward"),
@@ -990,6 +994,21 @@ fn type_params_str(tp: &[cj_ast::TypeParam]) -> String {
         .join(", ")
 }
 
+/// Snippet text for generic params: `<${1:T}, ${2:U}>` (one slot per param).
+/// Matches the official engine's per-type-param slot numbering.
+fn type_params_insert(tp: &[cj_ast::TypeParam]) -> String {
+    if tp.is_empty() {
+        String::new()
+    } else {
+        let slots: Vec<String> = tp
+            .iter()
+            .enumerate()
+            .map(|(i, t)| format!("${{{}:{}}}", i + 1, t.name))
+            .collect();
+        format!("<{}>", slots.join(", "))
+    }
+}
+
 /// Emit function items (bare + overload variants + optional closure form).
 ///
 /// Matches the official completion engine exactly:
@@ -1179,11 +1198,7 @@ fn emit_ctor_items(
     } else {
         format!("<{tp}>")
     };
-    let tp_insert = if tp.is_empty() {
-        String::new()
-    } else {
-        format!("<${{1:{tp}}}>")
-    };
+    let tp_insert = type_params_insert(type_params);
     let tp_num = type_params.len() as u32;
 
     // Detail uses the declared ctor name: primary ctor → class name, else
@@ -1329,12 +1344,13 @@ fn collect_file_decls(
                 } else {
                     format!("{name}<{tp}>")
                 };
-                let ins = if tp.is_empty() {
+                let tp_insert = type_params_insert(type_params);
+                let ins = if type_params.is_empty() {
                     name.clone()
                 } else {
-                    format!("{name}<${{1:{tp}}}>")
+                    format!("{name}{tp_insert}")
                 };
-                let fmt = if tp.is_empty() { 1 } else { 2 };
+                let fmt = if type_params.is_empty() { 1 } else { 2 };
                 push_candidate(
                     cands,
                     seen,
@@ -1377,6 +1393,10 @@ fn collect_file_decls(
                             params,
                             ..
                         } if fn_name == name => {
+                            // A PUBLIC named ctor normalizes to `func init(...)`
+                            // in the detail (`public Test(...) { }` → `public func
+                            // init(...)`); a package-internal named ctor keeps the
+                            // class name (`func Test(...)`).
                             emit_ctor_items(
                                 name,
                                 params,
@@ -1387,7 +1407,7 @@ fn collect_file_decls(
                                 false,
                                 false,
                                 type_params,
-                                name,
+                                if *is_public { "init" } else { name.as_str() },
                             );
                         }
                         _ => {}
@@ -1414,12 +1434,13 @@ fn collect_file_decls(
                 } else {
                     format!("{vis}struct {name}<{tp}>")
                 };
-                let ins = if tp.is_empty() {
+                let tp_insert = type_params_insert(type_params);
+                let ins = if type_params.is_empty() {
                     name.clone()
                 } else {
-                    format!("{name}<${{1:{tp}}}>")
+                    format!("{name}{tp_insert}")
                 };
-                let fmt = if tp.is_empty() { 1 } else { 2 };
+                let fmt = if type_params.is_empty() { 1 } else { 2 };
                 push_candidate(
                     cands,
                     seen,
@@ -1456,6 +1477,10 @@ fn collect_file_decls(
                             params,
                             ..
                         } if fn_name == name => {
+                            // A PUBLIC named ctor normalizes to `func init(...)`
+                            // in the detail (`public Test(...) { }` → `public func
+                            // init(...)`); a package-internal named ctor keeps the
+                            // class name (`func Test(...)`).
                             emit_ctor_items(
                                 name,
                                 params,
@@ -1466,7 +1491,7 @@ fn collect_file_decls(
                                 false,
                                 false,
                                 type_params,
-                                name,
+                                if *is_public { "init" } else { name.as_str() },
                             );
                         }
                         _ => {}
@@ -1498,6 +1523,12 @@ fn collect_file_decls(
                 } else {
                     format!("{vis}interface {name}<{tp}>{p}")
                 };
+                let tp_insert = type_params_insert(type_params);
+                let (ins, fmt) = if type_params.is_empty() {
+                    (name.clone(), 1)
+                } else {
+                    (format!("{name}{tp_insert}"), 2)
+                };
                 push_candidate(
                     cands,
                     seen,
@@ -1505,17 +1536,14 @@ fn collect_file_decls(
                         label,
                         kind: KIND_INTERFACE,
                         detail,
-                        insert_text: name.clone(),
-                        insert_text_format: 1,
+                        insert_text: ins,
+                        insert_text_format: fmt,
                         filter_text: name.clone(),
                     },
                 );
             }
             Decl::Enum {
-                name,
-                is_public,
-                cases,
-                ..
+                name, is_public, ..
             } => {
                 let vis = vis_prefix(*is_public, false, false, false, false, false);
                 let detail = format!("{vis}enum {name}");
@@ -1531,79 +1559,48 @@ fn collect_file_decls(
                         filter_text: name.clone(),
                     },
                 );
-                // Enum members
-                for ec in cases {
-                    let qname = format!("{name}.{}", ec.name);
-                    if ec.payloads.is_empty() {
-                        push_candidate(
-                            cands,
-                            seen,
-                            Candidate {
-                                label: qname.clone(),
-                                kind: KIND_VARIABLE,
-                                detail: qname.clone(),
-                                insert_text: ec.name.clone(),
-                                insert_text_format: 1,
-                                filter_text: qname,
-                            },
-                        );
-                    } else {
-                        let payload_strs: Vec<String> =
-                            ec.payloads.iter().map(display_type).collect();
-                        let detail = format!("{name}.{}({})", ec.name, payload_strs.join(", "));
-                        let ins = format!("{}({})", ec.name, payload_strs.join(", "));
-                        push_candidate(
-                            cands,
-                            seen,
-                            Candidate {
-                                label: qname,
-                                kind: KIND_METHOD,
-                                detail,
-                                insert_text: ins,
-                                insert_text_format: 2,
-                                filter_text: format!("{name}.{}", ec.name),
-                            },
-                        );
-                    }
-                }
+                // Note: enum CASE members (`Enum.Name`) are ONLY offered in
+                // member-access context (`EE.`), never in plain prefix — the
+                // official engine drops them there (a `match (t) { case Yea|`
+                // prefix yields types only). collect_type_members emits them.
             }
             Decl::TypeAlias {
                 name,
                 is_public,
+                type_params,
                 target,
                 ..
             } => {
                 let vis = vis_prefix(*is_public, false, false, false, false, false);
                 let target_s = display_type(target);
-                let has_generic = matches!(target, Type::Ref { args, .. } if !args.is_empty());
-                let detail = format!("{vis}type {name} = {target_s}");
-                if has_generic {
-                    push_candidate(
-                        cands,
-                        seen,
-                        Candidate {
-                            label: format!("{name}<T>"),
-                            kind: KIND_CLASS,
-                            detail,
-                            insert_text: format!("{name}<${{1:T}}>"),
-                            insert_text_format: 2,
-                            filter_text: name.clone(),
-                        },
-                    );
+                // Generic params belong to the ALIAS's own declaration
+                // (`type A<T> = ...`), not to the target (`type A = Vec<T>`
+                // stays a bare name — insert `A`, not `A<T>`).
+                let tp = type_params_str(type_params);
+                let name_s = if tp.is_empty() {
+                    name.clone()
                 } else {
-                    push_candidate(
-                        cands,
-                        seen,
-                        Candidate {
-                            label: name.clone(),
-                            kind: KIND_CLASS,
-                            detail,
-                            insert_text: name.clone(),
-                            insert_text_format: 1,
-                            filter_text: name.clone(),
-                        },
-                    );
-                }
+                    format!("{name}<{tp}>")
+                };
+                let detail = format!("{vis}type {name_s} = {target_s}");
+                let tp_insert = type_params_insert(type_params);
+                let (ins, fmt) = if type_params.is_empty() {
+                    (name.clone(), 1)
+                } else {
+                    (format!("{name}{tp_insert}"), 2)
+                };
+                push_candidate(
+                    cands,
+                    seen,
+                    Candidate {
+                        label: name_s,
+                        kind: KIND_CLASS,
+                        detail,
+                        insert_text: ins,
+                        insert_text_format: fmt,
+                        filter_text: name.clone(),
+                    },
+                );
             }
             Decl::Func {
                 name,
@@ -1669,12 +1666,38 @@ fn collect_file_decls(
                     Candidate {
                         label: name.clone(),
                         kind: KIND_VARIABLE,
-                        detail,
+                        detail: detail.clone(),
                         insert_text: name.clone(),
                         insert_text_format: 1,
                         filter_text: name.clone(),
                     },
                 );
+                // A var of function type gets an extra callable item
+                // (`sum1(Int32, Int32)` → `sum1(${1:Int32}, ${2:Int32})`),
+                // matching the official completion engine.
+                if let Some(Type::Func {
+                    params: fparams, ..
+                }) = ty.as_ref()
+                {
+                    let ts: Vec<String> = fparams.iter().map(display_type).collect();
+                    let slots: Vec<String> = ts
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| format!("${{{}:{}}}", i + 1, t))
+                        .collect();
+                    push_candidate(
+                        cands,
+                        seen,
+                        Candidate {
+                            label: format!("{name}({})", ts.join(", ")),
+                            kind: KIND_VARIABLE,
+                            detail: detail.clone(),
+                            insert_text: format!("{name}({})", slots.join(", ")),
+                            insert_text_format: 2,
+                            filter_text: name.clone(),
+                        },
+                    );
+                }
             }
             Decl::Prop {
                 name,
@@ -1844,13 +1867,15 @@ fn collect_local_scope(
     for d in &file.decls {
         if let Decl::Func { params, body, .. } = d {
             for p in params {
+                // Official renders function params in scope as `let <name>:
+                // <type>` (kind 6), e.g. `let cdab: Int1`.
                 push_candidate(
                     cands,
                     seen,
                     Candidate {
                         label: p.name.clone(),
                         kind: KIND_VARIABLE,
-                        detail: format!("{}: {}", p.name, display_type(&p.ty)),
+                        detail: format!("let {}: {}", p.name, display_type(&p.ty)),
                         insert_text: p.name.clone(),
                         insert_text_format: 1,
                         filter_text: p.name.clone(),

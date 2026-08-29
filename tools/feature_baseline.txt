@@ -1,47 +1,34 @@
 ==============================================================================
 cj-lang LSP feature baseline (T16)
-generated: 2026-08-29 19:50:37
+generated: 2026-08-29 21:51:57
 LSPServer: /root/Code/cangjie/cj-lang/target/debug/LSPServer
-commit:    cb686a7
+commit:    39822a5
 ==============================================================================
 
-[completion]  pass=125  fail=36  total=161  rate=77.6%
+[completion]  pass=138  fail=23  total=161  rate=85.7%
   failed:
     textDocument_completion_006.info  (compare mismatch or no pass marker)
     textDocument_completion_007.info  (compare mismatch or no pass marker)
     textDocument_completion_048.info  (compare mismatch or no pass marker)
     textDocument_completion_051.info  (compare mismatch or no pass marker)
     textDocument_completion_052.info  (compare mismatch or no pass marker)
-    textDocument_completion_054.info  (compare mismatch or no pass marker)
     textDocument_completion_065.info  (compare mismatch or no pass marker)
     textDocument_completion_067.info  (compare mismatch or no pass marker)
-    textDocument_completion_074.info  (compare mismatch or no pass marker)
-    textDocument_completion_076.info  (compare mismatch or no pass marker)
     textDocument_completion_079.info  (compare mismatch or no pass marker)
     textDocument_completion_080.info  (compare mismatch or no pass marker)
     textDocument_completion_087.info  (compare mismatch or no pass marker)
     textDocument_completion_094.info  (compare mismatch or no pass marker)
     textDocument_completion_101.info  (compare mismatch or no pass marker)
-    textDocument_completion_109.info  (compare mismatch or no pass marker)
-    textDocument_completion_116.info  (compare mismatch or no pass marker)
-    textDocument_completion_117.info  (compare mismatch or no pass marker)
     textDocument_completion_120.info  (compare mismatch or no pass marker)
     textDocument_completion_123.info  (compare mismatch or no pass marker)
     textDocument_completion_130.info  (compare mismatch or no pass marker)
-    textDocument_completion_132.info  (compare mismatch or no pass marker)
     textDocument_completion_138.info  (compare mismatch or no pass marker)
     textDocument_completion_140.info  (compare mismatch or no pass marker)
     textDocument_completion_143.info  (compare mismatch or no pass marker)
     textDocument_completion_144.info  (compare mismatch or no pass marker)
     textDocument_completion_145.info  (compare mismatch or no pass marker)
-    textDocument_completion_150.info  (compare mismatch or no pass marker)
-    textDocument_completion_154.info  (compare mismatch or no pass marker)
-    textDocument_completion_158.info  (compare mismatch or no pass marker)
-    textDocument_completion_159.info  (compare mismatch or no pass marker)
-    textDocument_completion_160.info  (compare mismatch or no pass marker)
     textDocument_completion_162.info  (compare mismatch or no pass marker)
     textDocument_completion_163.info  (compare mismatch or no pass marker)
-    textDocument_completion_165.info  (compare mismatch or no pass marker)
     textDocument_completion_166.info  (compare mismatch or no pass marker)
   failure clusters (from preserved artifacts):
     result-nonempty-list: 72  e.g. textDocument_completion_014.info, textDocument_completion_023.info, textDocument_completion_024.info, textDocument_completion_025.info
