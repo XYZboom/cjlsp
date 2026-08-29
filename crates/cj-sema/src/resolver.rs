@@ -82,6 +82,18 @@ impl<'a> Resolver<'a> {
                 self.resolve_expr(init, &locals, &seen, &mut diags);
                 let _ = pos;
             }
+            // Bare `main() { ... }` / `main(): Int64 { ... }` (MAIN_DECL) is a
+            // distinct Decl variant. Its body must be resolved like a Func body
+            // (undeclared names inside main were previously never reported).
+            Decl::Main { body, .. } => {
+                let mut locals = LocalScope::new();
+                if let Body::Block(stmts) = body {
+                    let mut seen: Vec<String> = Vec::new();
+                    for s in stmts {
+                        self.resolve_stmt(s, &mut locals, &mut seen, &mut diags);
+                    }
+                }
+            }
             _ => {}
         }
         diags
@@ -190,8 +202,9 @@ impl<'a> Resolver<'a> {
 }
 
 /// A small set of names the resolver treats as predefined (std functions /
-/// literals). Expanded as type checking matures.
-fn is_known_builtin(name: &str) -> bool {
+/// literals). Expanded as type checking matures. Shared with the call checker
+/// so a known std builtin never turns into a spurious `undeclared identifier`.
+pub(crate) fn is_known_builtin(name: &str) -> bool {
     matches!(
         name,
         "print"
@@ -237,6 +250,35 @@ mod tests {
         let diags = file_resolver.take_diags();
         assert!(!diags.is_empty(), "expected unresolved: {:?}", diags);
         assert!(diags[0].message.contains("undeclared identifier 'z'"));
+    }
+
+    #[test]
+    fn bare_main_body_resolved() {
+        // MAIN_DECL (`main() { ... }`) has a body that must be resolved like a
+        // Func body — undeclared names inside it were previously never reported
+        // because resolve_decl only handled Decl::Func / Decl::Var.
+        let (file, _) = parse_source("main() { print(undeclared_var) }\n");
+        let pkg = PackageTable::default();
+        let mut r = Resolver::new(&pkg);
+        r.resolve_file(&file);
+        let diags = r.take_diags();
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("undeclared identifier 'undeclared_var'")),
+            "expected undeclared in bare main body: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn bare_main_body_locals_resolve() {
+        // A `let` inside bare main introduces a local that later statements see.
+        let (file, _) = parse_source("main() { let a = 1\n print(a) }\n");
+        let pkg = PackageTable::default();
+        let mut r = Resolver::new(&pkg);
+        r.resolve_file(&file);
+        let diags = r.take_diags();
+        assert!(diags.is_empty(), "expected no unresolved: {diags:?}");
     }
 
     #[test]

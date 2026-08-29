@@ -1001,6 +1001,15 @@ impl<'a> Lexer<'a> {
             _ => {
                 self.bump();
                 let end = self.cur_pos();
+                // Unknown start-of-token (control char, stray byte, ...): the
+                // official compiler reports "unknown start of token: \u{00XX}"
+                // and the lexer keeps going (recovery). Record the error so
+                // LSP/CLI diagnostics surface it instead of a silent ILLEGAL.
+                self.errors.push(LexError {
+                    message: format!("unknown start of token: \\u{{{c:04X}}}", c = c),
+                    pos: begin,
+                    is_warning: false,
+                });
                 return Token::new(TokenKind::ILLEGAL, (c as char).to_string(), begin, end);
             }
         };
@@ -1371,6 +1380,19 @@ mod t15_probe {
         // token should be a single ILLEGAL
         let toks = kinds("package 1diagnosticsTest.pkg_error");
         assert_eq!(toks[1], TokenKind::ILLEGAL);
+    }
+
+    #[test]
+    fn probe_t55_unknown_start_of_token() {
+        // \x01 is an unknown start-of-token: the lexer recovers (ILLEGAL token)
+        // but records an error matching the official message, so diagnostics
+        // surface it instead of a silent ILLEGAL.
+        let errs = lex_errors("let a = \u{1}bad");
+        assert_eq!(errs[0].0, "unknown start of token: \\u{0001}");
+        assert_eq!(errs[0].1, 1);
+        // lexing still recovers: `bad` after the ILLEGAL char is an identifier
+        let toks = kinds("let a = \u{1}bad");
+        assert_eq!(toks[4], TokenKind::IDENTIFIER);
     }
 
     #[test]

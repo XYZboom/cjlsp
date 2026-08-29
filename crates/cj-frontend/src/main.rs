@@ -98,7 +98,16 @@ fn dump_ast(src: &str) -> ExitCode {
 
 /// Default: parse + sema and report diagnostics (SCAN-format text).
 fn parse_and_report(src: &str, path: &str) -> ExitCode {
-    let mut parser = Parser::new(src, Lexer::new(src).tokenize());
+    // Lexer errors (unknown token, illegal number suffix...) surface as
+    // diagnostics, matching the LSP pipeline (lexer runs before the parser).
+    let mut lexer = Lexer::new(src);
+    let toks = lexer.tokenize();
+    let lex_diags: Vec<cj_diag::Diag> = lexer
+        .errors
+        .iter()
+        .map(|e| cj_diag::Diag::error(e.pos.line, e.pos.column, e.message.clone()))
+        .collect();
+    let mut parser = Parser::new(src, toks);
     let file = parser.run();
     // semantic analysis: symbol collection (redefinition) + dependency graph
     let collector = cj_sema::Collector::new();
@@ -110,6 +119,8 @@ fn parse_and_report(src: &str, path: &str) -> ExitCode {
     let resolve_diags = resolver.take_diags();
     let dep_graph = cj_sema::dep_graph::DepGraph::build(&[&file]);
     let dep_diags = dep_graph.detect_cycles();
+    // Bare-name call checks (undeclared callee, arity, argument literals).
+    let call_diags = cj_sema::typecheck::check_calls(&file, &sema_result.func_sigs);
     let source_lines: Vec<String> = src.lines().map(String::from).collect();
     let fmt = cj_diag::TextFormatter {
         file_name: path,
@@ -117,12 +128,13 @@ fn parse_and_report(src: &str, path: &str) -> ExitCode {
     };
     let mut errors = 0;
     let mut warnings = 0;
-    for d in parser
-        .diags
+    for d in lex_diags
         .iter()
+        .chain(parser.diags.iter())
         .chain(sema_result.diags.iter())
         .chain(resolve_diags.iter())
         .chain(dep_diags.iter())
+        .chain(call_diags.iter())
     {
         match d.severity {
             cj_diag::Severity::Warning => warnings += 1,
@@ -132,7 +144,11 @@ fn parse_and_report(src: &str, path: &str) -> ExitCode {
     }
     if errors > 0 {
         eprint!("{}", cj_diag::render_summary(errors, warnings));
-    } else if parser.diags.is_empty() && sema_result.diags.is_empty() && dep_diags.is_empty() {
+    } else if lex_diags.is_empty()
+        && parser.diags.is_empty()
+        && sema_result.diags.is_empty()
+        && dep_diags.is_empty()
+    {
         eprintln!("// parse OK");
     } else {
         eprintln!("// warnings only");

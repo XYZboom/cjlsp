@@ -15,11 +15,11 @@
 //   mismatched types expected 'Int8', found 'Struct-String'
 //   the number '999999' exceeds the value range of type 'Int8'
 
+use crate::resolver::is_known_builtin;
+use crate::FuncSig;
 use cj_ast::{Body, Decl, Expr, File, InterpPart, Type};
 use cj_diag::Diag;
 use std::collections::HashMap;
-
-use crate::FuncSig;
 
 /// Literal type: what an expression's literal is (for display).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,7 +228,22 @@ fn check_call(
         Expr::Name { name, .. } => name,
         _ => return, // member/method calls are out of scope here
     };
-    let Some(sig) = funcs.get(name) else { return };
+    let Some(sig) = funcs.get(name) else {
+        // Bare-name callee not found anywhere in the package (current file +
+        // same-package siblings merged into `funcs`): genuinely undeclared —
+        // report it, unless it's a known std builtin (print/println/Int64...).
+        // Cross-file sibling functions ARE in `funcs`, so they never hit this.
+        if !is_known_builtin(name) {
+            if let Expr::Name { pos, .. } = callee {
+                diags.push(Diag::error(
+                    pos.line,
+                    pos.col,
+                    format!("undeclared identifier '{name}'"),
+                ));
+            }
+        }
+        return;
+    };
 
     // Arity: too few arguments -> official "missing arguments for parameter
     // list '(T1, T2)' in call" reported at the call's '(' position.
@@ -595,10 +610,30 @@ mod tests {
     }
 
     #[test]
-    fn call_unknown_function_skipped() {
+    fn call_unknown_function_reported() {
         let (file, _) = parse_source("func caller() { ghost(1) }\n");
         let funcs = sigs_of("func target(a: Int8) {}\n");
         let diags = check_calls(&file, &funcs);
-        assert!(diags.is_empty(), "unknown callee must not be checked");
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("undeclared identifier 'ghost'")),
+            "unknown bare-name callee must be reported as undeclared: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn call_known_builtin_not_undeclared() {
+        // print/println are std builtins — calling them must NOT report
+        // `undeclared identifier` even though they are not in the funcs table.
+        let (file, _) = parse_source("func caller() { println(1) }\n");
+        let funcs = sigs_of("func target(a: Int8) {}\n");
+        let diags = check_calls(&file, &funcs);
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.message.contains("undeclared identifier 'println'")),
+            "{diags:?}"
+        );
     }
 }
