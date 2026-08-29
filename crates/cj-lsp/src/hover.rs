@@ -231,7 +231,23 @@ pub fn definition_at(
 }
 
 fn sibling_uri(path: &std::path::Path) -> String {
-    let s = path.to_string_lossy();
+    // Normalize away `../` segments so the returned uri is canonical
+    // (`/proj/main/../lib/x.cj` -> `/proj/lib/x.cj`). VSCode tolerates
+    // non-normalized URIs but jump targets should be clean.
+    let norm = path
+        .components()
+        .fold(std::path::PathBuf::new(), |mut acc, c| match c {
+            std::path::Component::ParentDir => {
+                acc.pop();
+                acc
+            }
+            std::path::Component::CurDir => acc,
+            other => {
+                acc.push(other.as_os_str());
+                acc
+            }
+        });
+    let s = norm.to_string_lossy();
     if s.starts_with('/') {
         format!("file://{s}")
     } else {
