@@ -100,6 +100,36 @@ fn classify_token(t: &Token) -> Option<Sem> {
     ) {
         return Some(sem(t, ty::NUMBER, 0));
     }
+    // Boolean / unit literals (true/false/()) render as keywords.
+    if matches!(k, TokenKind::BOOL_LITERAL | TokenKind::UNIT_LITERAL) {
+        return Some(sem(t, ty::KEYWORD, 0));
+    }
+    // Primitive types: Int8..Unit, VArray, This — render as `type` so they
+    // take the type color, not the keyword color.
+    if matches!(
+        k,
+        TokenKind::INT8
+            | TokenKind::INT16
+            | TokenKind::INT32
+            | TokenKind::INT64
+            | TokenKind::INTNATIVE
+            | TokenKind::UINT8
+            | TokenKind::UINT16
+            | TokenKind::UINT32
+            | TokenKind::UINT64
+            | TokenKind::UINTNATIVE
+            | TokenKind::FLOAT16
+            | TokenKind::FLOAT32
+            | TokenKind::FLOAT64
+            | TokenKind::RUNE
+            | TokenKind::BOOLEAN
+            | TokenKind::NOTHING
+            | TokenKind::UNIT
+            | TokenKind::VARRAY
+            | TokenKind::THISTYPE
+    ) {
+        return Some(sem(t, ty::TYPE, 0));
+    }
     // Keywords (control flow etc.) and modifiers (visibility).
     if k.is_keyword() {
         if matches!(
@@ -117,6 +147,11 @@ fn classify_token(t: &Token) -> Option<Sem> {
                 | TokenKind::FOREIGN
                 | TokenKind::REDEF
                 | TokenKind::CONST
+                | TokenKind::INOUT
+                | TokenKind::UNSAFE
+                | TokenKind::OPERATOR
+                | TokenKind::SPAWN
+                | TokenKind::SYNCHRONIZED
         ) {
             return Some(sem(t, ty::MODIFIER, 0));
         }
