@@ -6,14 +6,31 @@
 3. **二进制符号解析**: 借鉴仓颉编译器源码
 4. ⚠️ **插件不能硬编码本机路径** — 所有标准库路径必须动态解析
 
-## 调研现状
+## 调研现状（已确认）
 - 本机 SDK: /root/Code/cangjie/sdk/cangjie-sdk-linux-x64-1.1.3.tar.gz (1.1.3)
   - std 只有预编译模块: modules/linux_x86_64_cjnative/std/libstd.*.bc (LLVM bitcode)
   - **无 .cj 源码** → 跳转目标必须从官网下载的源码包获取
-- 本机 CangjieCorpus/libs/std/core 只有 core_package_api 文档/corpus 样本, 无完整源码
-- 官网: https://cangjie-lang.cn (下载页 /zh-CN/download 等, 需确认具体 URL 结构)
-- 现有 STD_SYMS: hover.rs 硬编码 8 个核心类型符号 (String/Array/VArray/...),
-  无位置信息 (line 0), 无函数符号 (print 等) → 无法跳转
+- ✅ **官方标准库源码位置确认**:
+  - gitcode.com/Cangjie/cangjie_runtime → `stdlib/libs/std/` 含全部核心模块
+    (core 60 .cj 文件: array.cj/string.cj/comparable.cj...; console/collection/
+    convert/io/math/net/fs/...)
+  - gitcode.com/Cangjie/cangjie_stdx → `src/stdx/` 扩展模块 (网络/安全等)
+  - 版本 tag 存在 (v1.2.0, v1.3.0-alpha...; SDK 1.1.3 对应 tag 需映射确认)
+- 官网下载页: https://cangjie-lang.cn/download/<version> (JS 渲染, 无直接链接;
+  但 gitcode API 可直接拉取)
+- 现有 STD_SYMS: hover.rs 硬编码 8 个核心类型符号, 无位置, 无函数 → 无法跳转
+
+## 下载实现（gitcode API, 不硬编码本机路径）
+```
+1. 版本检测: SDK 包名 (cangjie-sdk-linux-x64-<ver>) 或 cjc --version
+2. 下载: gitcode API /api/v5/repos/Cangjie/cangjie_runtime/contents/stdlib/libs/std
+   递归拉取 .cj 源码 → ~/.cangjie-lsp/std/<version>/
+   (或 git clone --depth 1 --branch <tag> https://gitcode.com/Cangjie/cangjie_runtime.git)
+3. 符号索引: 解析 .cj 生成 symbol -> (file, line, col) 存 index.json
+4. LSP 加载: ~/.cangjie-lsp/std/<version>/index.json (启动时按 SDK 版本选择)
+5. 跳转: definition/hover 本地/兄弟 miss -> 查索引 -> file://<std源码> + range
+6. 只读: 插件对 std 路径设置只读
+```
 
 ## 实现方案（草稿）
 
