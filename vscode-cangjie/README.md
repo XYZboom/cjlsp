@@ -14,6 +14,23 @@
 - 跳转定义（definition）
 - 查找引用（references）
 
+## 标准库源码只读
+
+Ctrl+Click 跳转到标准库符号（如 `Array` / `String` / `print`）时，打开的是
+下载到本机的标准库源码（`~/.cangjie-lsp/std/<版本>/`，由仓库内
+`tools/stdlib_download.py` 拉取，只读数据，勿手改）。为防误编辑这些下载的
+源码，插件激活时会自动把该目录并入 VSCode 内置只读规则
+`files.readonlyInclude`（VSCode >= 1.85，即本插件 engines 下限）：
+
+- 打开的 std 源码标签页带只读锁标识，编辑会被拒绝（"File is read-only"）
+- 不影响跳转功能（跳转只是打开文件）
+- 标准库根目录在运行时按用户主目录动态解析（HOME / USERPROFILE，不做任何
+  本机路径硬编码），与 LSP 侧 `StdlibIndex` 解析一致
+- 若用户已配置过 `files.readonlyInclude`，其中的既有规则会被保留（合并而非覆盖）
+- 幂等：已配置过一次后不会重复写入；若尚未下载标准库（目录不存在），则不
+  改动用户设置
+- 想恢复可编辑：在设置里把 `files.readonlyInclude` 中对应条目移除即可
+
 > 注：`LSPServer` 的 initialize 响应里声明了语义高亮 / 文档符号 / 重命名 /
 > 文档高亮等能力，但当前 dispatch 尚未实现；扩展已在客户端把这些未实现项
 > 屏蔽，避免编辑时出现 "Request ... failed" 报错噪音。以上五项是当前真正可用

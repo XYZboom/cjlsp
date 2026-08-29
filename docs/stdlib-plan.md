@@ -1,4 +1,4 @@
-# 标准库支持规划（跳转 + 下载 + 二进制符号）— T60 已落地 ①索引跳转/②下载③只读待插件
+# 标准库支持规划（跳转 + 下载 + 只读）— T60 ①索引跳转/②下载 ✅，T61 ③插件侧只读 ✅
 
 用户需求（2026-08-29 累积）:
 1. **跳转到只读标准库**，且要求是**当前版本**的标准库
@@ -18,7 +18,11 @@
   - ✅ 修复原有 bug: std.core 内置符号（line=0）definition 不再 underflow 而是查索引
   - ✅ 单测: definition 对 Array 返回 std/core/array.cj 位置（hover.rs tests）
   - ✅ clippy 0 / Windows cross-build 0 error / 全 workspace 测试通过
-- ⏳ 只读 std 路径: 插件侧 VSCode 只读配置（后续 T 待办）
+- ✅ 只读 std 路径: 插件侧 VSCode 只读配置（T61）— out/extension.js 的
+  `configureStdReadonly()` 把 ~/.cangjie-lsp/std/** 并入 files.readonlyInclude
+  （Global，VSCode>=1.85）；根目录按 os.homedir() 动态解析，无硬编码；合并保留
+  用户既有规则、幂等、std 未下载时不动用户设置。README 已说明（只读锁标识 /
+  恢复可编辑方法）。
 - ⏳ 二进制符号解析（C 节）: 未做（SDK .bc 符号表补充）
 
 ## 调研现状（已确认）

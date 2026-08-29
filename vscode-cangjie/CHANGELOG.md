@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+- Standard library sources read-only: Ctrl+Click jump targets under
+  ~/.cangjie-lsp/std/** are auto-folded into `files.readonlyInclude` (Global,
+  VSCode >= 1.85) so downloaded std sources can't be accidentally edited; the
+  root is resolved at runtime from the home directory (no hard-coded path),
+  existing user patterns are preserved, and the write is idempotent (T61).
+
 ## 0.1.3
 - Signature help: parameter list for func/ctor/method calls (add( → shows
   signature + active parameter)

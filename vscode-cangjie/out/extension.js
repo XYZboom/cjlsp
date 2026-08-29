@@ -68,6 +68,49 @@ function serverCommand(context) {
 }
 
 /**
+ * Mark the downloaded standard-library sources read-only.
+ *
+ * Ctrl+Click on std symbols (Array/String/print, T60) opens file:// URIs under
+ * ~/.cangjie-lsp/std/<version>/... Those files are downloaded by
+ * tools/stdlib_download.py and must not be hand-edited. This merges a
+ * `<stdRoot>/**` glob into the core `files.readonlyInclude` setting (VSCode
+ * >= 1.85, the same floor as this plugin's engines), so every std file tab
+ * shows a lock and rejects edits — while definition jump keeps working (it
+ * only opens the file).
+ *
+ * The root is resolved at runtime from the home directory (HOME / USERPROFILE,
+ * via os.homedir()), exactly like the LSP's StdlibIndex — never hard-coded to
+ * a machine path. Existing globs the user configured are preserved, and the
+ * call is idempotent (once the glob is present nothing more is written). If
+ * no std library has been downloaded yet, the setting is left untouched.
+ */
+function configureStdReadonly(log) {
+  const os = require('os');
+  const path = require('path');
+  const fs = require('fs');
+  const stdRoot = path.join(os.homedir(), '.cangjie-lsp', 'std');
+  if (!fs.existsSync(stdRoot)) {
+    return; // nothing downloaded yet — don't touch user settings
+  }
+  // Forward slashes so the glob matches on Windows too (VSCode globs
+  // normalise separators; a backslash-built pattern would not match).
+  const glob = stdRoot.split(path.sep).join('/') + '/**';
+  const files = vscode.workspace.getConfiguration('files');
+  const current = /** @type {Record<string, boolean>} */ (files.get('readonlyInclude', {})) || {};
+  if (current[glob]) {
+    return; // already configured
+  }
+  const merged = Object.assign({}, current, { [glob]: true });
+  return files
+    .update('readonlyInclude', merged, vscode.ConfigurationTarget.Global)
+    .then(
+      () => log('std sources read-only: ' + glob),
+      (err) =>
+        log('ERROR failed to set std read-only: ' + (err && err.message ? err.message : err))
+    );
+}
+
+/**
  * @param {import('vscode').ExtensionContext} context
  */
 function activate(context) {
@@ -81,6 +124,11 @@ function activate(context) {
   // a hand-made vscode OutputChannel does not provide).
   const startup = vscode.window.createOutputChannel('Cangjie LSP startup');
   const log = (m) => startup.appendLine('[vscode-cangjie] ' + m);
+
+  // Mark downloaded std sources read-only so Ctrl+Click targets can't be
+  // accidentally edited. This is independent of the LSPServer binary, so do
+  // it up front.
+  configureStdReadonly(log);
 
   if (!command || !fs.existsSync(command)) {
     const msg = "Cangjie: LSPServer binary not found at '" + (command || '(none)') +
