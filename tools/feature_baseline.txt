@@ -1,11 +1,11 @@
 ==============================================================================
 cj-lang LSP feature baseline (T16)
-generated: 2026-08-29 08:01:00
+generated: 2026-08-29 19:50:37
 LSPServer: /root/Code/cangjie/cj-lang/target/debug/LSPServer
-commit:    6e9fd94
+commit:    cb686a7
 ==============================================================================
 
-[completion]  pass=120  fail=41  total=161  rate=74.5%
+[completion]  pass=125  fail=36  total=161  rate=77.6%
   failed:
     textDocument_completion_006.info  (compare mismatch or no pass marker)
     textDocument_completion_007.info  (compare mismatch or no pass marker)
@@ -13,9 +13,6 @@ commit:    6e9fd94
     textDocument_completion_051.info  (compare mismatch or no pass marker)
     textDocument_completion_052.info  (compare mismatch or no pass marker)
     textDocument_completion_054.info  (compare mismatch or no pass marker)
-    textDocument_completion_057.info  (compare mismatch or no pass marker)
-    textDocument_completion_060.info  (compare mismatch or no pass marker)
-    textDocument_completion_062.info  (compare mismatch or no pass marker)
     textDocument_completion_065.info  (compare mismatch or no pass marker)
     textDocument_completion_067.info  (compare mismatch or no pass marker)
     textDocument_completion_074.info  (compare mismatch or no pass marker)
@@ -32,9 +29,7 @@ commit:    6e9fd94
     textDocument_completion_123.info  (compare mismatch or no pass marker)
     textDocument_completion_130.info  (compare mismatch or no pass marker)
     textDocument_completion_132.info  (compare mismatch or no pass marker)
-    textDocument_completion_135.info  (compare mismatch or no pass marker)
     textDocument_completion_138.info  (compare mismatch or no pass marker)
-    textDocument_completion_139.info  (compare mismatch or no pass marker)
     textDocument_completion_140.info  (compare mismatch or no pass marker)
     textDocument_completion_143.info  (compare mismatch or no pass marker)
     textDocument_completion_144.info  (compare mismatch or no pass marker)
