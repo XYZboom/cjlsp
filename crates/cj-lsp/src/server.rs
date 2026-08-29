@@ -216,13 +216,41 @@ impl LspServer {
         let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
         let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
 
-        let Some((_, source)) = self.open_docs.get(&uri) else {
+        let Some((path, source)) = self.open_docs.get(&uri).cloned() else {
             return Value::Null;
         };
-        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let mut parser = cj_parser::Parser::new(&source, cj_lexer::Lexer::new(&source).tokenize());
         let file = parser.run();
 
-        crate::hover::definition_at(&file, source, &uri, line, character)
+        // Cross-file definition: refresh the sibling scan cache (same-package
+        // + imported packages) so a symbol defined in another file of the
+        // project can be jumped to. Mirrors completion/hover wiring.
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let project_root = resolve_project_root(&cwd, &path);
+        let mut imported: Vec<String> = Vec::new();
+        for imp in &file.imports {
+            let pkg = imp.path.join(".");
+            if !pkg.is_empty() && !imported.contains(&pkg) {
+                imported.push(pkg);
+            }
+        }
+        let siblings: Vec<(std::path::PathBuf, &cj_ast::File, &str)> = match &project_root {
+            Some(r) => {
+                let cache = self.scan_cache.entry(r.to_path_buf()).or_default();
+                // Refresh first (drop the borrow) so collect_* sees fresh data.
+                let _ = collect_same_package_candidates(
+                    cache,
+                    r,
+                    file.package.as_deref(),
+                    &imported,
+                    &path.to_string_lossy(),
+                );
+                collect_sibling_docs_with_path(cache, r, file.package.as_deref(), &imported)
+            }
+            None => Vec::new(),
+        };
+
+        crate::hover::definition_at(&file, &source, &uri, line, character, &siblings)
     }
 
     /// Handle textDocument/references: all locations referencing the name at
@@ -626,6 +654,29 @@ fn collect_visible_sibling_docs<'a>(
             }
         })
         .map(|(_, c)| (&c.file, c.source.as_str()))
+        .collect()
+}
+
+/// Collect parsed sibling `File`s (+ sources + paths) whose package is
+/// visible to the opened file. Used by cross-file definition (jump to a
+/// declaration in another file of the same project).
+fn collect_sibling_docs_with_path<'a>(
+    cache: &'a HashMap<PathBuf, CachedSibling>,
+    root: &Path,
+    package: Option<&str>,
+    imported: &[String],
+) -> Vec<(PathBuf, &'a cj_ast::File, &'a str)> {
+    let visible = crate::cjpm::visible_packages(root);
+    cache
+        .iter()
+        .filter(|(_, c)| {
+            let pkg = c.package.as_deref().unwrap_or_default();
+            match package {
+                Some(a) => a == pkg || imported.iter().any(|i| i == pkg) || visible.contains(pkg),
+                None => true,
+            }
+        })
+        .map(|(p, c)| (p.clone(), &c.file, c.source.as_str()))
         .collect()
 }
 

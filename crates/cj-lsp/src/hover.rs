@@ -57,7 +57,14 @@ pub fn hover_at(
     Value::Null
 }
 
-pub fn definition_at(file: &File, source: &str, uri: &str, line: u32, character: u32) -> Value {
+pub fn definition_at(
+    file: &File,
+    source: &str,
+    uri: &str,
+    line: u32,
+    character: u32,
+    siblings: &[(std::path::PathBuf, &File, &str)],
+) -> Value {
     let idx = Index::new(file, source, None, "");
     // 1) The cursor is on a declared name span — jump straight there.
     // 2) Otherwise it's a use site: read the identifier word and resolve it
@@ -77,17 +84,19 @@ pub fn definition_at(file: &File, source: &str, uri: &str, line: u32, character:
     };
     // Member access `recv.name`: resolve the receiver to its type, then find
     // the member declaration on that type (also handles this.name/super.name).
-    if let Some(recv) = idx.receiver_before(line, character) {
-        if let Some(recv_ty) = idx.receiver_type(&recv, line, character) {
-            if let Some(hi) = idx.member_lookup(&recv_ty, &name) {
-                return json!({
-                    "uri": uri,
-                    "range": {
-                        "start": {"line": hi.line - 1, "character": hi.col - 1},
-                        "end": {"line": hi.line - 1, "character": hi.end_col - 1},
-                    }
-                });
-            }
+    let recv_ty = match idx.receiver_before(line, character) {
+        Some(recv) => idx.receiver_type(&recv, line, character),
+        None => None,
+    };
+    if let Some(rt) = &recv_ty {
+        if let Some(hi) = idx.member_lookup(rt, &name) {
+            return json!({
+                "uri": uri,
+                "range": {
+                    "start": {"line": hi.line - 1, "character": hi.col - 1},
+                    "end": {"line": hi.line - 1, "character": hi.end_col - 1},
+                }
+            });
         }
     }
     // A type name: jump to the type declaration (constructor calls resolve
@@ -127,7 +136,53 @@ pub fn definition_at(file: &File, source: &str, uri: &str, line: u32, character:
             }
         });
     }
+    // Cross-file: the declaration lives in a sibling file of the same
+    // project. Search visible siblings for the name (type, top-level decl, or
+    // member of the receiver's type), returning the sibling's file uri.
+    for (path, sfile, ssrc) in siblings {
+        let sidx = Index::new(sfile, ssrc, None, "");
+        // Member access: the receiver type is defined in this sibling, or the
+        // member itself lives here — look up the member on the receiver type.
+        if let Some(rt) = &recv_ty {
+            if let Some(hi) = sidx.member_lookup(rt, &name) {
+                return json!({
+                    "uri": sibling_uri(path),
+                    "range": {
+                        "start": {"line": hi.line - 1, "character": hi.col - 1},
+                        "end": {"line": hi.line - 1, "character": hi.end_col - 1},
+                    }
+                });
+            }
+        }
+        let found = if sidx.types.contains_key(&name) {
+            sidx.lookup_type(&name)
+        } else {
+            sidx
+                .by_name
+                .get(&name)
+                .and_then(|v| v.first())
+                .map(|&i| &sidx.all[i])
+        };
+        if let Some(hi) = found {
+            return json!({
+                "uri": sibling_uri(path),
+                "range": {
+                    "start": {"line": hi.line - 1, "character": hi.col - 1},
+                    "end": {"line": hi.line - 1, "character": hi.end_col - 1},
+                }
+            });
+        }
+    }
     Value::Null
+}
+
+fn sibling_uri(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    if s.starts_with('/') {
+        format!("file://{s}")
+    } else {
+        s.to_string()
+    }
 }
 // ================================================================
 
@@ -797,7 +852,7 @@ impl<'a> Index<'a> {
                 };
                 self.push(hi, !member);
             }
-            Decl::Main { pos, .. } => {
+            Decl::Main { body, pos, .. } => {
                 let hi = Hoverable {
                     name: "main".to_string(),
                     line: pos.line,
@@ -812,6 +867,13 @@ impl<'a> Index<'a> {
                     param_tys: Vec::new(),
                 };
                 self.push(hi, true);
+                // Collect locals of the bare `main()` entry function (the
+                // parser represents `main() { ... }` as Decl::Main, not
+                // Decl::Func) so hover/definition work on its local vars,
+                // params and lambdas.
+                if let Body::Block(stmts) = body {
+                    self.collect_locals(stmts, pos.line);
+                }
             }
             _ => {}
         }
@@ -1787,6 +1849,16 @@ impl<'a> Index<'a> {
         None
     }
 
+    /// True when `name` is a known top-level/member FUNCTION (a `by_name`
+    /// entry that is not a type). Used by init-type inference to tell a
+    /// plain function call `foo()` from a (possibly cross-file) type
+    /// constructor `Greeter()`.
+    fn is_known_func(&self, name: &str) -> bool {
+        self.by_name
+            .get(name)
+            .is_some_and(|hits| hits.iter().any(|&i| !self.all[i].is_type))
+    }
+
     fn member_lookup(&self, container: &str, name: &str) -> Option<&Hoverable> {
         let base = container.split('<').next().unwrap_or(container);
         let idxs = self.members.get(base)?;
@@ -2386,6 +2458,13 @@ fn infer_init_expr_at(e: &Expr, idx: &Index, line: u32, character: u32) -> Optio
                         ))
                     } else if idx.lookup_type(name).is_some() {
                         // type constructor `C7()` → `C7`
+                        Some(name.clone())
+                    } else if !idx.is_known_func(name) {
+                        // Cross-file type constructor: the type is defined in a
+                        // sibling file (not in this file's `types`), so we can't
+                        // see it here — but `X()` is still a type construction
+                        // whose result type is `X`. Distinguish from a plain
+                        // function call by checking `by_name`.
                         Some(name.clone())
                     } else {
                         // a plain function call → its declared return type
