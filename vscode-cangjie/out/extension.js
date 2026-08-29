@@ -74,36 +74,25 @@ function activate(context) {
   const fs = require('fs');
   const command = serverCommand(context);
 
-  // Always create the output channel up front (even if the binary is missing
-  // or the server later fails to start), so "View -> Output -> Cangjie LSP
-  // (cj-lang)" is always present and shows the diagnostics.
-  const outputChannel = vscode.window.createOutputChannel('Cangjie LSP (cj-lang)');
-  // vscode-languageclient expects a Logger interface (error/info/warn/trace)
-  // on the channel it receives; the bare vscode OutputChannel lacks those, so
-  // wire them to appendLine (this is how languageclient's own OutputChannel
-  // wrapper behaves).
-  outputChannel.trace = (m, ...a) => outputChannel.appendLine('[trace] ' + fmtArgs(m, a));
-  outputChannel.debug = (m, ...a) => outputChannel.appendLine('[debug] ' + fmtArgs(m, a));
-  outputChannel.info = (m, ...a) => outputChannel.appendLine('[info] ' + fmtArgs(m, a));
-  outputChannel.warn = (m, ...a) => outputChannel.appendLine('[warn] ' + fmtArgs(m, a));
-  outputChannel.error = (m, ...a) => outputChannel.appendLine('[error] ' + fmtArgs(m, a));
-
-  function fmtArgs(m, a) {
-    const body = typeof m === 'string' ? m : JSON.stringify(m);
-    return a && a.length ? body + ' ' + a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ') : body;
-  }
+  // Startup diagnostics channel: always created up front so a missing binary
+  // or a failed start is visible even before the languageclient's own channel
+  // exists. The languageclient gets its own channel via outputChannelName
+  // below (it requires the full Logger + onDidChangeLogLevel interface that
+  // a hand-made vscode OutputChannel does not provide).
+  const startup = vscode.window.createOutputChannel('Cangjie LSP startup');
+  const log = (m) => startup.appendLine('[vscode-cangjie] ' + m);
 
   if (!command || !fs.existsSync(command)) {
     const msg = "Cangjie: LSPServer binary not found at '" + (command || '(none)') +
       "'. This extension bundles builds for Windows/Linux/macOS; if yours is " +
       "missing, set 'cangjie.lsp.serverPath' (or the CANGJIE_LSPSERVER env var) " +
       'to a built cj-lsp binary (cargo build -p cj-lsp).';
-    outputChannel.appendLine('[vscode-cangjie] ' + msg);
-    outputChannel.show(true);
+    log(msg);
+    startup.show(true);
     vscode.window.showErrorMessage(msg);
     return;
   }
-  outputChannel.appendLine('[vscode-cangjie] server command = ' + command);
+  log('server command = ' + command);
 
   const settings = vscode.workspace.getConfiguration('cangjie');
   const extraArgs = /** @type {string[]} */ (settings.get('lsp.extraArgs', []));
@@ -130,8 +119,12 @@ function activate(context) {
 
   const clientOptions = {
     documentSelector: [{ scheme: 'file', language: 'cangjie' }],
-    // Use the channel we created ourselves so it exists even on failure.
-    outputChannel,
+    // Let the languageclient create its own channels (it needs the full
+    // Logger + onDidChangeLogLevel interface its OutputChannel wrapper
+    // provides; a hand-made channel breaks hookLogLevelChanged). By passing
+    // only outputChannelName the client builds both the log and trace
+    // channels itself.
+    outputChannelName: 'Cangjie LSP (cj-lang)',
     revealOutputChannelOn: RevealOutputChannelOn.Never,
     synchronize: { configurationSection: 'cangjie' },
     // Mask capabilities the server advertises but does not implement.
@@ -154,14 +147,14 @@ function activate(context) {
   // (bad binary, spawn error) instead of failing silently.
   client.start().then(
     () => {
-      outputChannel.appendLine('[vscode-cangjie] client started');
+      log('client started');
       console.log('[vscode-cangjie] client started, command = ' + command);
       vscode.window.setStatusBarMessage('Cangjie LSP: started', 3000);
     },
     (err) => {
       const msg = 'Cangjie LSP failed to start: ' + (err && err.message ? err.message : err);
-      outputChannel.appendLine('[vscode-cangjie] ERROR ' + msg);
-      outputChannel.show(true);
+      log('ERROR ' + msg);
+      startup.show(true);
       console.error('[vscode-cangjie]', msg);
       vscode.window.showErrorMessage(msg);
     }
