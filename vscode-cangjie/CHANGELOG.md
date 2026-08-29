@@ -20,3 +20,7 @@
 
 ## 0.1.0
 - Initial release
+
+## 0.1.4
+- Strip release binaries: LSPServer 2.27→1.86MB, .exe 3.25→2.38MB (faster
+  plugin startup, issue #1)
