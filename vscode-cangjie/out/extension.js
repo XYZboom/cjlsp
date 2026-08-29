@@ -75,9 +75,23 @@ function activate(context) {
   const command = serverCommand(context);
 
   // Always create the output channel up front (even if the binary is missing
-  // or the server later fails to start), so "View -> Output -> Cangjie
-  // Language Server" is always present and shows the diagnostics.
+  // or the server later fails to start), so "View -> Output -> Cangjie LSP
+  // (cj-lang)" is always present and shows the diagnostics.
   const outputChannel = vscode.window.createOutputChannel('Cangjie LSP (cj-lang)');
+  // vscode-languageclient expects a Logger interface (error/info/warn/trace)
+  // on the channel it receives; the bare vscode OutputChannel lacks those, so
+  // wire them to appendLine (this is how languageclient's own OutputChannel
+  // wrapper behaves).
+  outputChannel.trace = (m, ...a) => outputChannel.appendLine('[trace] ' + fmtArgs(m, a));
+  outputChannel.debug = (m, ...a) => outputChannel.appendLine('[debug] ' + fmtArgs(m, a));
+  outputChannel.info = (m, ...a) => outputChannel.appendLine('[info] ' + fmtArgs(m, a));
+  outputChannel.warn = (m, ...a) => outputChannel.appendLine('[warn] ' + fmtArgs(m, a));
+  outputChannel.error = (m, ...a) => outputChannel.appendLine('[error] ' + fmtArgs(m, a));
+
+  function fmtArgs(m, a) {
+    const body = typeof m === 'string' ? m : JSON.stringify(m);
+    return a && a.length ? body + ' ' + a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ') : body;
+  }
 
   if (!command || !fs.existsSync(command)) {
     const msg = "Cangjie: LSPServer binary not found at '" + (command || '(none)') +
