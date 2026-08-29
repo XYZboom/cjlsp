@@ -8,3 +8,5 @@
 
 [build]
 jobs = 12
+[profile.release]
+strip = true
