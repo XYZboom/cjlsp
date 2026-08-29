@@ -84,35 +84,17 @@ pub(crate) fn name_at(file: &File, line: u32, character: u32) -> Option<String> 
             }
         }
     }
-    // Fall back: any Name expression at the cursor.
+    // Fall back: any Name expression at the cursor — walk *every* statement
+    // of every declaration (not just the first stmt, which misses calls that
+    // appear later in a function body).
     for d in &file.decls {
-        if let Some(init) = decl_first_expr(d) {
-            let mut hit = None;
-            expr_name_at(init, line, character, &mut hit);
-            if let Some(n) = hit {
-                return Some(n);
-            }
+        let mut hit = None;
+        expr_name_at_anywhere(d, line, character, &mut hit);
+        if let Some(n) = hit {
+            return Some(n);
         }
     }
     None
-}
-
-/// First expression of a declaration (initializer or first body statement).
-fn decl_first_expr(d: &Decl) -> Option<&Expr> {
-    match d {
-        Decl::Var {
-            init: Some(init), ..
-        } => Some(init),
-        Decl::Func {
-            body: Body::Block(stmts),
-            ..
-        }
-        | Decl::Macro {
-            body: Body::Block(stmts),
-            ..
-        } => stmts.first(),
-        _ => None,
-    }
 }
 
 /// Position of a declaration's name (1-based). Returns (name, name_pos).
@@ -207,6 +189,39 @@ pub(crate) fn expr_name_refs(e: &Expr, target: &str, locs: &mut Vec<(u32, u32, u
         Expr::Assign { lhs, rhs, .. } => {
             expr_name_refs(lhs, target, locs);
             expr_name_refs(rhs, target, locs);
+        }
+        _ => {}
+    }
+}
+
+/// Walk every statement of a declaration looking for a Name expression at the
+/// cursor (unlike decl_first_expr, this covers calls later in a body).
+fn expr_name_at_anywhere(d: &Decl, line: u32, character: u32, hit: &mut Option<String>) {
+    match d {
+        Decl::Var {
+            init: Some(init), ..
+        }
+        | Decl::VarWithPattern {
+            init: Some(init), ..
+        } => expr_name_at(init, line, character, hit),
+        Decl::Func {
+            body: Body::Block(stmts),
+            ..
+        }
+        | Decl::Macro {
+            body: Body::Block(stmts),
+            ..
+        }
+        | Decl::Main {
+            body: Body::Block(stmts),
+            ..
+        } => {
+            for s in stmts {
+                expr_name_at(s, line, character, hit);
+                if hit.is_some() {
+                    return;
+                }
+            }
         }
         _ => {}
     }
