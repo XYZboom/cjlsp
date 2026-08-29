@@ -1,18 +1,22 @@
 # Changelog
 
-## 0.1.1 - 2026-08-29
+## 0.1.2
+- Error recovery: lex/syntax errors no longer stop later analysis (T55)
+- Cross-file hover (cjpm projects): hover on cross-file type/function/member
+  shows its declaration info (T54)
+- Semantic highlighting enhanced: primitive types (Int64/Float64/...) as
+  `type`, soft keywords (mut/unsafe/operator/...) as `modifier`
+- Completion improved to 85.7% (138/161) (T57)
+- Normalized cross-package jump URIs (no ../ segments)
+- Stdlib tooling: tools/stdlib_download.py + tools/stdlib_index.py
 
-Cross-platform regression (Linux + Windows GNU cross-build) + refreshed bundled LSPServer binaries.
+## 0.1.1
+- Cross-file definition (cjpm projects): jump to symbols in other files
+- Bare main() entry: locals now hoverable/jumpable
+- Semantic highlighting (semanticTokens/full)
+- Plugin startup fixes (output channel + Logger interface)
+- Renamed to cj-lang-oss.cangjie-lsp to avoid conflict with official ext
 
-- Refreshed both bundled binaries from committed master (T46 LLT 86.8%, T48 Windows macro dynamic loading, T47 completion 74.5%): linux `LSPServer`, win32 `LSPServer.exe` (previously stale).
-- Renamed extension to `cj-lang-oss.cangjie-lsp` to avoid clashing with the official `cangjie-lang.vscode-cangjie` extension.
-- Verified with the full 13-step CI gate (tools/ci.sh) — 13/13 green, including Windows GNU cross-build and clippy on both targets.
-
-## 0.1.0 - 2026-08-29
-
-Initial release.
-
-- Cangjie language support for VSCode via the Rust cj-lsp LSPServer (stdio).
-- Features: diagnostics, completion, hover, definition, references.
-- Bundles per-platform LSPServer binaries (linux / win32), zero-config install.
-- Customizable via `cangjie.lsp.serverPath` / `cangjie.lsp.extraArgs` / `cangjie.lsp.env` (override the bundled default only).
+## 0.1.0
+- Initial release: completion/hover/definition/references, dual-platform
+  bundled binaries

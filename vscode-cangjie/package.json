@@ -2,7 +2,7 @@
   "name": "cangjie-lsp",
   "displayName": "Cangjie LSP (cj-lang Rust)",
   "description": "Cangjie language services via the cj-lang Rust LSPServer (diagnostics, completion, hover, definition, references). Independent of the official cangjie extension.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "cj-lang-oss",
   "license": "MIT",
   "repository": {
