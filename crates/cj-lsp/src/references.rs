@@ -164,6 +164,16 @@ pub(crate) fn expr_name_refs(e: &Expr, target: &str, locs: &mut Vec<(u32, u32, u
         }
         Expr::Unary { inner, .. } => expr_name_refs(inner, target, locs),
         Expr::Paren { inner, .. } => expr_name_refs(inner, target, locs),
+        // `dabc[0][0]` — the indexed object may reference the target.
+        Expr::Subscript { object, index, .. } => {
+            expr_name_refs(object, target, locs);
+            expr_name_refs(index, target, locs);
+        }
+        // `obj.member` — the receiver may reference the target. (Member has
+        // no separate name_pos; only the receiver is a Name-reference site.)
+        Expr::Member { object, .. } => {
+            expr_name_refs(object, target, locs);
+        }
         Expr::Block { stmts, .. } => {
             for s in stmts {
                 expr_name_refs(s, target, locs);
@@ -244,9 +254,38 @@ fn expr_name_at(e: &Expr, line: u32, character: u32, hit: &mut Option<String>) {
                 expr_name_at(&a.value, line, character, hit);
             }
         }
+        // `dabc[0]` — the indexed object name under the cursor.
+        Expr::Subscript { object, index, .. } => {
+            expr_name_at(object, line, character, hit);
+            expr_name_at(index, line, character, hit);
+        }
+        Expr::Member { object, .. } => expr_name_at(object, line, character, hit),
         Expr::Binary { lhs, rhs, .. } => {
             expr_name_at(lhs, line, character, hit);
             expr_name_at(rhs, line, character, hit);
+        }
+        Expr::Assign { lhs, rhs, .. } => {
+            expr_name_at(lhs, line, character, hit);
+            expr_name_at(rhs, line, character, hit);
+        }
+        // `var a1 = dabc[0]...` — the initializer may reference the target.
+        Expr::LetPatternDestructor {
+            initializer, patterns, ..
+        } => {
+            expr_name_at(initializer, line, character, hit);
+            for p in patterns {
+                if let cj_ast::Pattern::Var {
+                    name, name_pos, ..
+                } = p
+                {
+                    let l0 = name_pos.line.saturating_sub(1);
+                    let c0 = name_pos.col.saturating_sub(1);
+                    let e0 = name_pos.end_col.saturating_sub(1);
+                    if line == l0 && character >= c0 && character < e0 {
+                        *hit = Some(name.clone());
+                    }
+                }
+            }
         }
         Expr::Block { stmts, .. } => {
             for s in stmts {
