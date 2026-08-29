@@ -77,7 +77,7 @@ function activate(context) {
   // Always create the output channel up front (even if the binary is missing
   // or the server later fails to start), so "View -> Output -> Cangjie
   // Language Server" is always present and shows the diagnostics.
-  const outputChannel = vscode.window.createOutputChannel('Cangjie Language Server');
+  const outputChannel = vscode.window.createOutputChannel('Cangjie LSP (cj-lang)');
 
   if (!command || !fs.existsSync(command)) {
     const msg = "Cangjie: LSPServer binary not found at '" + (command || '(none)') +
@@ -130,8 +130,8 @@ function activate(context) {
   };
 
   client = new LanguageClient(
-    'cangjie-lsp',
-    'Cangjie Language Server',
+    'cangjie-lsp-rust',
+    'Cangjie LSP (cj-lang)',
     serverOptions,
     clientOptions
   );

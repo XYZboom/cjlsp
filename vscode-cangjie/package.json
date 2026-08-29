@@ -1,9 +1,9 @@
 {
-  "name": "vscode-cangjie",
-  "displayName": "Cangjie Language (LSP)",
-  "description": "Cangjie language services (diagnostics, completion, hover, definition, references) via the Rust LSPServer (cj-lsp).",
-  "version": "0.1.0",
-  "publisher": "cangjie-lang",
+  "name": "cangjie-lsp",
+  "displayName": "Cangjie LSP (cj-lang Rust)",
+  "description": "Cangjie language services via the cj-lang Rust LSPServer (diagnostics, completion, hover, definition, references). Independent of the official cangjie extension.",
+  "version": "0.1.1",
+  "publisher": "cj-lang-oss",
   "license": "MIT",
   "repository": {
     "type": "git",
