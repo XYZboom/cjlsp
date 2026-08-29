@@ -1,0 +1,105 @@
+==============================================================================
+cj-lang LLT frontend regression baseline (T19)
+generated: 2026-08-29 07:58:33
+frontend:  /root/Code/cangjie/cj-lang/target/release/cj-frontend
+commit:    6e9fd94
+llt dir:   /root/Code/cangjie/cangjie_test/testsuites/LLT/compiler
+scope:     LLT/compiler/{Frontend,Lexer,Parser,Sema,Diagnose} (5351 .cj files)
+mode:      cj-frontend --dump-ast
+==============================================================================
+
+total=5351  success=4646  fail=705  crash=0  success-rate=86.8%
+
+[by directory]
+  Frontend      22  success=   20  fail=    2  crash=  0
+  Lexer         28  success=   23  fail=    5  crash=  0
+  Parser       576  success=  413  fail=  163  crash=  0
+  Sema        3863  success= 3647  fail=  216  crash=  0
+  Diagnose     862  success=  543  fail=  319  crash=  0
+
+[crash clusters]
+  none — zero crash files
+
+[failure samples — first 50 (sorted by path)]
+  Diagnose/Driver/json/driver_source_file_empty.cj  | error: unclosed delimiter: '{' at 10:10
+  Diagnose/JsonFormat/DiagCategory/lex.cj  | error: unclosed delimiter: '{' at 12:2
+  Diagnose/JsonFormat/DiagCategory/parse.cj  | error: expected identifier or pattern after 'var', found '<EOF>' at 12:1
+  Diagnose/JsonFormat/Format/errorWithHelp.cj  | error: expected identifier or pattern after 'var', found keyword 'this' at 10:5
+  Diagnose/JsonFormat/Format/messageAndHints.cj  | error: expected expression after '=>', found %s at 11:11
+  Diagnose/JsonFormat/Format/withNotesAndHelps.cj  | error: expected declaration, found literal '0b1_' at 10:1
+  Diagnose/JsonFormat/Helps/multHelps.cj  | error: expected declaration, found literal '0b1_' at 10:1
+  Diagnose/JsonFormat/Helps/noHelp.cj  | error: expected func name, found '<EOF>' at 15:1
+  Diagnose/JsonFormat/Helps/oneHelp.cj  | error: expected declaration, found keyword 'as' at 10:21
+  Diagnose/JsonFormat/Hints/hasMainHint.cj  | error: expected class name at 27:3
+  Diagnose/JsonFormat/Location/range.cj  | error: expected identifier or pattern after 'var', found '<EOF>' at 13:1
+  Diagnose/JsonFormat/Notes/noNotes.cj  | error: expected type name after '::', found literal '1' at 9:9
+  Diagnose/JsonFormat/Notes/oneNote.cj  | error: expected declaration, found literal '1' at 10:1
+  Diagnose/JsonFormat/Notes/onlyMessage.cj  | error: expected declaration, found 'a' at 12:1
+  Diagnose/lex_test/lex_expected_back_quote/case1.cj  | error: expected expression after '', found %s at 15:2
+  Diagnose/lex_test/lex_expected_back_quote/case2.cj  | error: expected expression after '', found %s at 14:2
+  Diagnose/lex_test/lex_expected_back_quote/case3.cj  | error: expected expression after '', found %s at 14:11
+  Diagnose/lex_test/lex_expected_back_quote/case5.cj  | error: expected expression after '', found %s at 14:2
+  Diagnose/lex_test/lex_expected_back_quote/lex_illegal_backquote.cj  | error: expected expression after '', found %s at 13:13
+  Diagnose/lex_test/lex_expected_character/case6.cj  | error: unclosed delimiter: '{' at 13:2
+  Diagnose/lex_test/lex_expected_character_in_char_literal/case1.cj  | error: expected 'l_curl', found 'end' at 33:1
+  Diagnose/lex_test/lex_expected_digit/case1.cj  | error: expected expression after '', found %s at 14:13
+  Diagnose/lex_test/lex_expected_digit/case10.cj  | error: expected declaration, found literal '1e' at 13:1
+  Diagnose/lex_test/lex_expected_digit/case11.cj  | error: expected declaration, found '}' at 13:1
+  Diagnose/lex_test/lex_expected_digit/case12.cj  | error: expected declaration, found '}' at 13:1
+  Diagnose/lex_test/lex_expected_digit/case13.cj  | error: expected expression after '', found %s at 14:13
+  Diagnose/lex_test/lex_expected_digit/case14.cj  | error: expected expression after '', found %s at 16:10
+  Diagnose/lex_test/lex_expected_digit/case2.cj  | error: expected expression after '', found %s at 14:10
+  Diagnose/lex_test/lex_expected_digit/case4.cj  | error: expected expression after '', found %s at 14:10
+  Diagnose/lex_test/lex_expected_digit/case6.cj  | error: expected expression after '.', found %s at 15:10
+  Diagnose/lex_test/lex_expected_exponent_part/case1.cj  | error: expected expression after '', found %s at 16:10
+  Diagnose/lex_test/lex_expected_exponent_part/case3.cj  | error: expected expression after '', found %s at 14:2
+  Diagnose/lex_test/lex_expected_exponent_part/case4.cj  | error: expected member name, found '}' at 15:30
+  Diagnose/lex_test/lex_expected_exponent_part/lex_expected_hexadecimal_exponent.cj  | error: expected expression after '', found %s at 15:13
+  Diagnose/lex_test/lex_expected_identifier/case1.cj  | error: expected expression after '', found %s at 14:2
+  Diagnose/lex_test/lex_expected_identifier/case2.cj  | error: expected expression after '', found %s at 14:2
+  Diagnose/lex_test/lex_expected_identifier/case3.cj  | error: expected expression after '', found %s at 14:2
+  Diagnose/lex_test/lex_expected_identifier/case4.cj  | error: expected expression after '', found %s at 14:2
+  Diagnose/lex_test/lex_expected_identifier/case6.cj  | error: unclosed delimiter: '{' at 16:13
+  Diagnose/lex_test/lex_expected_identifier/case_back_quote.cj  | error: expected expression after '', found %s at 11:9
+  Diagnose/lex_test/lex_expected_identifier/terminated.cj  | error: expected declaration, found '' at 11:1
+  Diagnose/lex_test/lex_expected_identifier_after_dollar/case1.cj  | error: expected func name, found '$' at 20:3
+  Diagnose/lex_test/lex_expected_identifier_after_dollar/case4.cj  | error: expected pattern, found '}' at 16:17
+  Diagnose/lex_test/lex_expected_identifier_after_dollar/found_wildcard.cj  | error: expected declaration, found '$' at 10:1
+  Diagnose/lex_test/lex_expected_identifier_after_dollar/lex_unexpected_dollar_identifier.cj  | error: expected pattern, found keyword 'var' at 15:5
+  Diagnose/lex_test/lex_expected_left_bracket/case11.cj  | error: expected expression after '', found %s at 16:2
+  Diagnose/lex_test/lex_expected_left_bracket/case13.cj  | error: expected expression after '', found %s at 16:1
+  Diagnose/lex_test/lex_expected_left_bracket/case14.cj  | error: expected expression after '', found %s at 16:1
+  Diagnose/lex_test/lex_expected_left_bracket/case15.cj  | error: expected expression after '', found %s at 16:1
+  Diagnose/lex_test/lex_expected_left_bracket/case16.cj  | error: expected declaration, found 'char_literal' at 12:1
+
+[failure message clusters — top 25 (normalized first diag)]
+    59  error: expected expression after '', found %s   e.g. Lexer/Unicode/illegal.cj
+    49  error: unclosed delimiter: '{'   e.g. Lexer/Unicode/Diagnostic/emoji_in_multistring.cj
+    22  error: expected expression after 'handle', found %s   e.g. Sema/effect/command_class_not_available.cj
+    18  error: expected declaration, found '.'   e.g. Parser/ar/parse_support_keyword_context/decl/function.cj
+    14  error: expected expression after ',', found %s   e.g. Parser/expr/tuplelit2.cj
+    14  error: expected declaration, found '{'   e.g. Parser/native/block_error_line.cj
+    11  error: expected 'r_paren', found 'end'   e.g. Parser/expr/end/paramlist.cj
+    11  error: expected 'r_paren', found 'identifier'   e.g. Parser/lex/lex_support_three_kinds_of_terminator/escape_n/interpolation2.cj
+    10  error: expected 'r_paren', found '='   e.g. Parser/ar/support_tuple_left_value/normal/negative/left_tuple_literal.cj
+    10  error: expected declaration, found '('   e.g. Parser/const/const_variable.cj
+    10  error: expected 'l_curl', found 'end'   e.g. Parser/modifiers/unsafe_modifier.cj
+    10  error: expected declaration, found keyword 'unsafe'   e.g. Parser/unsafe/class01.cj
+     9  error: expected property name   e.g. Parser/expr/illegal_prop.cj
+     9  error: expected 'upperbound', found '{'   e.g. Parser/others/testcase2.cj
+     9  error: expected expression after keyword 'init', found %s   e.g. Sema/class/class10.cj
+     8  error: expected expression after ']', found %s   e.g. Parser/ar/parser_support_wildcard/negative/wildcard_quest_newline.cj
+     8  error: expected macro name   e.g. Parser/new_package/new_package_err_10.cj
+     8  error: expected 'r_curl', found 'as'   e.g. Sema/unusedImport/unusedImport001/unused007.cj
+     7  error: expected declaration, found ':'   e.g. Parser/class/constructor_ret.cj
+     7  error: expected expression after ':', found %s   e.g. Parser/expr/end/lambdaparamlist.cj
+     7  error: expected 'r_paren', found '{'   e.g. Sema/forin/forin16.cj
+     6  error: expected 'r_paren', found ':'   e.g. Parser/ar/parse_support_keyword_context/decl/class.cj
+     6  error: expected expression after ')', found %s   e.g. Parser/expr/quote/quoteDollarInterpolation/quoteDollarInterpolation1.cj
+     6  error: expected expression after keyword 'class', found %s   e.g. Parser/function/block_error.cj
+     6  error: expected declaration, found '}'   e.g. Sema/PatternMatching/MatchExpression/match022.cj
+
+note: success = exit 0 + no parser diagnostic; fail = exit 0 + diagnostic(s); crash = non-zero exit/timeout.
+note: dump-ast renders every parser diag (incl. warnings) as 'error:' on stderr; fail may include warning-only files.
+note: 2 non-regular '.cj' paths excluded (directories, not files): /root/Code/cangjie/cangjie_test/testsuites/LLT/compiler/Sema/generics/instantiation_rearrange/cache_lifecycle_reset.cj, /root/Code/cangjie/cangjie_test/testsuites/LLT/compiler/Sema/generics/instantiation_rearrange/rearrange10.cj
+note: evaluation task — no cj-frontend core logic changed (T19).

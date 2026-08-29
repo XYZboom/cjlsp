@@ -1,18 +1,14 @@
 ==============================================================================
 cj-lang LSP feature baseline (T16)
-generated: 2026-08-29 04:16:40
+generated: 2026-08-29 08:01:00
 LSPServer: /root/Code/cangjie/cj-lang/target/debug/LSPServer
-commit:    3ffee99
+commit:    6e9fd94
 ==============================================================================
 
-[completion]  pass=112  fail=49  total=161  rate=69.6%
+[completion]  pass=120  fail=41  total=161  rate=74.5%
   failed:
     textDocument_completion_006.info  (compare mismatch or no pass marker)
     textDocument_completion_007.info  (compare mismatch or no pass marker)
-    textDocument_completion_035.info  (compare mismatch or no pass marker)
-    textDocument_completion_036.info  (compare mismatch or no pass marker)
-    textDocument_completion_037.info  (compare mismatch or no pass marker)
-    textDocument_completion_038.info  (compare mismatch or no pass marker)
     textDocument_completion_048.info  (compare mismatch or no pass marker)
     textDocument_completion_051.info  (compare mismatch or no pass marker)
     textDocument_completion_052.info  (compare mismatch or no pass marker)
@@ -33,20 +29,16 @@ commit:    3ffee99
     textDocument_completion_116.info  (compare mismatch or no pass marker)
     textDocument_completion_117.info  (compare mismatch or no pass marker)
     textDocument_completion_120.info  (compare mismatch or no pass marker)
-    textDocument_completion_122.info  (compare mismatch or no pass marker)
     textDocument_completion_123.info  (compare mismatch or no pass marker)
-    textDocument_completion_125.info  (compare mismatch or no pass marker)
     textDocument_completion_130.info  (compare mismatch or no pass marker)
     textDocument_completion_132.info  (compare mismatch or no pass marker)
     textDocument_completion_135.info  (compare mismatch or no pass marker)
     textDocument_completion_138.info  (compare mismatch or no pass marker)
     textDocument_completion_139.info  (compare mismatch or no pass marker)
     textDocument_completion_140.info  (compare mismatch or no pass marker)
-    textDocument_completion_142.info  (compare mismatch or no pass marker)
     textDocument_completion_143.info  (compare mismatch or no pass marker)
     textDocument_completion_144.info  (compare mismatch or no pass marker)
     textDocument_completion_145.info  (compare mismatch or no pass marker)
-    textDocument_completion_147.info  (compare mismatch or no pass marker)
     textDocument_completion_150.info  (compare mismatch or no pass marker)
     textDocument_completion_154.info  (compare mismatch or no pass marker)
     textDocument_completion_158.info  (compare mismatch or no pass marker)

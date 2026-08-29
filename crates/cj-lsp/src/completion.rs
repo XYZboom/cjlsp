@@ -2083,10 +2083,13 @@ fn collect_type_members(
     seen: &mut HashSet<String>,
 ) {
     let (_, source) = docs[idx];
+    let cross_pkg = docs[idx].0.package != docs[0].0.package;
     match decl {
         Decl::Class { members, name, .. } | Decl::Struct { members, name, .. } => {
             for m in members {
-                emit_member_decl(docs, source, m, access, name, false, false, cands, seen);
+                emit_member_decl(
+                    docs, source, m, access, name, false, false, cross_pkg, cands, seen,
+                );
             }
             // parents: base class / interfaces (instance members)
             if access == AccessKind::Instance {
@@ -2108,7 +2111,9 @@ fn collect_type_members(
         }
         Decl::Interface { members, name, .. } => {
             for m in members {
-                emit_member_decl(docs, source, m, access, name, false, true, cands, seen);
+                emit_member_decl(
+                    docs, source, m, access, name, false, true, cross_pkg, cands, seen,
+                );
             }
             collect_extend_members(docs, name, access, cands, seen);
         }
@@ -2129,6 +2134,7 @@ fn collect_extend_members(
     seen: &mut HashSet<String>,
 ) {
     for (file, source) in docs {
+        let cross_pkg = file.package != docs[0].0.package;
         for d in &file.decls {
             if let Decl::Extend {
                 target,
@@ -2144,7 +2150,9 @@ fn collect_extend_members(
                     continue;
                 }
                 for m in members {
-                    emit_member_decl(docs, source, m, access, base, true, false, cands, seen);
+                    emit_member_decl(
+                        docs, source, m, access, base, true, false, cross_pkg, cands, seen,
+                    );
                 }
             }
         }
@@ -2190,6 +2198,7 @@ fn emit_member_decl(
     type_name: &str,
     in_extend: bool,
     from_interface: bool,
+    cross_pkg: bool,
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
 ) {
@@ -2202,6 +2211,20 @@ fn emit_member_decl(
             return;
         }
         _ => {}
+    }
+    // Members of a type declared in a DIFFERENT package are only visible when
+    // they are `public` (official: cross-package member access exposes the
+    // public surface only).
+    if cross_pkg {
+        let is_public = match m {
+            Decl::Var { is_public, .. }
+            | Decl::Func { is_public, .. }
+            | Decl::Prop { is_public, .. } => *is_public,
+            _ => false,
+        };
+        if !is_public {
+            return;
+        }
     }
     match m {
         Decl::Var {
@@ -2222,12 +2245,17 @@ fn emit_member_decl(
                 .map(display_type)
                 .or_else(|| init.as_ref().and_then(|i| infer_expr_type(docs, i)))
                 .unwrap_or_default();
-            let init_s = init
-                .as_ref()
-                .map(expr_lit_src)
-                .filter(|s| !s.is_empty())
-                .map(|s| format!(" = {s}"))
-                .unwrap_or_default();
+            // The official server has no initializer source for cross-package
+            // members: `public var b: B = B()` renders as `public var b: B`.
+            let init_s = if cross_pkg {
+                String::new()
+            } else {
+                init.as_ref()
+                    .map(expr_lit_src)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| format!(" = {s}"))
+                    .unwrap_or_default()
+            };
             let kw = if *is_mutable { "var" } else { "let" };
             let detail = if ty_s.is_empty() {
                 format!("{vis}{kw} {name}{init_s}")
@@ -2273,6 +2301,11 @@ fn emit_member_decl(
             let is_mut = decl_line_has(source, pos.offset, "mut");
             if is_mut {
                 vis.push_str("mut ");
+            }
+            // `open` on a prop (recovered from source) renders after `mut`
+            // (official: `public mut open var i: Int64`).
+            if decl_line_has(source, pos.offset, "open") {
+                vis.push_str("open ");
             }
             let kw = if is_mut { "var" } else { "let" };
             let detail = format!("{vis}{kw} {name}: {}", display_type(ty));
@@ -2329,7 +2362,13 @@ fn emit_member_decl(
                 }
                 p
             } else {
-                vis_prefix(*is_public, false, false, *is_abstract, *is_static, true)
+                // Recover parser-dropped `mut` (class/struct member methods:
+                // `public mut func f()` renders with `mut ` after visibility).
+                let mut p = vis_prefix(*is_public, false, false, *is_abstract, *is_static, true);
+                if decl_line_has(source, pos.offset, "mut") {
+                    p.push_str("mut ");
+                }
+                p
             };
             emit_func_items(name, &dp, params, ret, type_params, cands, seen);
         }
