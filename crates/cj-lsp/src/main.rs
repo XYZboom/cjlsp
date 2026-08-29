@@ -10,6 +10,7 @@ use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
 mod cjpm;
+mod code_lens;
 mod completion;
 mod document_highlight;
 mod document_symbol;

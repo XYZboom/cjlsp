@@ -61,6 +61,7 @@ impl LspServer {
             "textDocument/hover" => self.handle_hover(&params),
             "textDocument/definition" => self.handle_definition(&params),
             "textDocument/references" => self.handle_references(&params),
+            "textDocument/codeLens" => self.handle_code_lens(&params),
             "textDocument/documentHighlight" => self.handle_document_highlight(&params),
             "textDocument/signatureHelp" => self.handle_signature_help(&params),
             "textDocument/documentSymbol" => self.handle_document_symbol(&params),
@@ -79,6 +80,7 @@ impl LspServer {
                     "capabilities": {
                         "textDocumentSync": {"openClose": true, "change": 1, "save": {"includeText": true}},
                         "completionProvider": {"triggerCharacters": [".", ":", "!", "(", "[", "{", "@", "$"]},
+                        "codeLensProvider": true,
                         "definitionProvider": true,
                         "referencesProvider": true,
                         "documentSymbolProvider": true,
@@ -324,6 +326,23 @@ impl LspServer {
         let file = parser.run();
 
         crate::references::references_at(&file, &uri, line, character, include_decl)
+    }
+
+    /// Handle textDocument/codeLens: a "N references" lens above every
+    /// top-level declaration. Reuses the references collection (code_lens.rs
+    /// walks the file once, grouping Name expressions by name) so the count
+    /// equals what textDocument/references would return for that decl.
+    fn handle_code_lens(&mut self, params: &Value) -> Value {
+        let uri = params["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let Some((_, source)) = self.open_docs.get(&uri) else {
+            return json!([]);
+        };
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        crate::code_lens::code_lenses(&file, &uri)
     }
 
     /// Handle textDocument/documentSymbol: the file outline — a hierarchical
