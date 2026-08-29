@@ -75,6 +75,21 @@ pub fn definition_at(file: &File, source: &str, uri: &str, line: u32, character:
     let Some(name) = target else {
         return Value::Null;
     };
+    // Member access `recv.name`: resolve the receiver to its type, then find
+    // the member declaration on that type (also handles this.name/super.name).
+    if let Some(recv) = idx.receiver_before(line, character) {
+        if let Some(recv_ty) = idx.receiver_type(&recv, line, character) {
+            if let Some(hi) = idx.member_lookup(&recv_ty, &name) {
+                return json!({
+                    "uri": uri,
+                    "range": {
+                        "start": {"line": hi.line - 1, "character": hi.col - 1},
+                        "end": {"line": hi.line - 1, "character": hi.end_col - 1},
+                    }
+                });
+            }
+        }
+    }
     // A type name: jump to the type declaration (constructor calls resolve
     // through this, not to `init`).
     if let Some(hi) = idx.lookup_type(&name) {
