@@ -128,8 +128,9 @@ function activate(context) {
     revealOutputChannelOn: RevealOutputChannelOn.Never,
     synchronize: { configurationSection: 'cangjie' },
     // Mask capabilities the server advertises but does not implement.
+    // semanticTokens/full IS implemented (syntax highlighting) so it is NOT
+    // masked; the others remain masked to avoid "Request ... failed" noise.
     middleware: {
-      provideDocumentSemanticTokens: () => null,
       provideDocumentSymbols: () => null,
       provideRenameEdits: () => null,
       provideDocumentHighlights: () => null,

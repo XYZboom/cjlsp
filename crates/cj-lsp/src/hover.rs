@@ -57,13 +57,53 @@ pub fn hover_at(
     Value::Null
 }
 
-/// Find the declaration at the cursor and return it as an LSP Location
-/// (uri + name span). Reuses the hover index's span matching.
-pub fn definition_at(file: &File, uri: &str, line: u32, character: u32) -> Value {
-    // definition only needs name-span matching; source text is not required
-    // for span matching (we match against the parsed decl spans).
-    let idx = Index::new(file, "", None, "");
-    if let Some(hi) = idx.hit_test(line, character) {
+pub fn definition_at(file: &File, source: &str, uri: &str, line: u32, character: u32) -> Value {
+    let idx = Index::new(file, source, None, "");
+    // 1) The cursor is on a declared name span — jump straight there.
+    // 2) Otherwise it's a use site: read the identifier word and resolve it
+    //    LIGHTLY (type name -> lookup_type, value -> first by_name entry).
+    //    We deliberately avoid the full `resolve()` (it runs overload /
+    //    pipeline/this-super analysis for hover and can be too heavy on
+    //    constructor calls) — definition only needs the declaration.
+    let target = match idx.hit_test(line, character) {
+        Some(hi) => Some(hi.name.clone()),
+        None => match word_at(source, line, character) {
+            Some(word) => Some(word.text),
+            None => None,
+        },
+    };
+    let Some(name) = target else {
+        return Value::Null;
+    };
+    // A type name: jump to the type declaration (constructor calls resolve
+    // through this, not to `init`).
+    if let Some(hi) = idx.lookup_type(&name) {
+        return json!({
+            "uri": uri,
+            "range": {
+                "start": {"line": hi.line - 1, "character": hi.col - 1},
+                "end": {"line": hi.line - 1, "character": hi.end_col - 1},
+            }
+        });
+    }
+    // A value / function: first by_name entry is the declaration.
+    if let Some(hi) = idx
+        .by_name
+        .get(&name)
+        .and_then(|v| v.first())
+        .map(|&i| &idx.all[i])
+    {
+        return json!({
+            "uri": uri,
+            "range": {
+                "start": {"line": hi.line - 1, "character": hi.col - 1},
+                "end": {"line": hi.line - 1, "character": hi.end_col - 1},
+            }
+        });
+    }
+    // A local variable / parameter / lambda binding (e.g. `ii1.a1` on a local
+    // `var ii1`): resolve via the scope-aware locals map.
+    if let Some(hi) = idx.lookup_local(&name, line, character) {
         return json!({
             "uri": uri,
             "range": {
@@ -74,9 +114,6 @@ pub fn definition_at(file: &File, uri: &str, line: u32, character: u32) -> Value
     }
     Value::Null
 }
-
-// ================================================================
-// Rendering
 // ================================================================
 
 #[derive(Clone, Copy)]

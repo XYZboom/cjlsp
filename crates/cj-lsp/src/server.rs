@@ -54,6 +54,7 @@ impl LspServer {
             "textDocument/hover" => self.handle_hover(&params),
             "textDocument/definition" => self.handle_definition(&params),
             "textDocument/references" => self.handle_references(&params),
+            "textDocument/semanticTokens/full" => self.handle_semantic_tokens(&params),
             "initialize" => {
                 // Remember rootUri so package-name checks can derive the
                 // expected package name for each opened file.
@@ -221,7 +222,7 @@ impl LspServer {
         let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
         let file = parser.run();
 
-        crate::hover::definition_at(&file, &uri, line, character)
+        crate::hover::definition_at(&file, source, &uri, line, character)
     }
 
     /// Handle textDocument/references: all locations referencing the name at
@@ -244,6 +245,22 @@ impl LspServer {
         let file = parser.run();
 
         crate::references::references_at(&file, &uri, line, character, include_decl)
+    }
+
+    /// Handle textDocument/semanticTokens/full: syntax-highlight the whole
+    /// buffer. Returns LSP-encoded semantic tokens (relative deltas).
+    fn handle_semantic_tokens(&mut self, params: &Value) -> Value {
+        let uri = params["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let Some((_, source)) = self.open_docs.get(&uri) else {
+            return json!({ "data": [] });
+        };
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let data = crate::semantic::semantic_tokens_full(source, &file);
+        json!({ "data": data })
     }
 
     fn uri_to_path(uri: &str) -> Option<PathBuf> {

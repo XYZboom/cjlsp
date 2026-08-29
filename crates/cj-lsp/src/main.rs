@@ -13,6 +13,7 @@ mod cjpm;
 mod completion;
 mod hover;
 mod references;
+mod semantic;
 mod server;
 use server::LspServer;
 
