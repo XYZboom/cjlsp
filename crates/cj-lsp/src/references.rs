@@ -73,7 +73,7 @@ pub fn references_at(
 }
 
 /// Name of the declaration at the cursor, or the Name-expression at the cursor.
-fn name_at(file: &File, line: u32, character: u32) -> Option<String> {
+pub(crate) fn name_at(file: &File, line: u32, character: u32) -> Option<String> {
     for d in &file.decls {
         if let Some((name, npos)) = decl_name_pos(d) {
             let l0 = npos.line.saturating_sub(1);
@@ -116,7 +116,7 @@ fn decl_first_expr(d: &Decl) -> Option<&Expr> {
 }
 
 /// Position of a declaration's name (1-based). Returns (name, name_pos).
-fn decl_name_pos(d: &Decl) -> Option<(String, cj_ast::CodePos)> {
+pub(crate) fn decl_name_pos(d: &Decl) -> Option<(String, cj_ast::CodePos)> {
     match d {
         Decl::Func { name, name_pos, .. }
         | Decl::Class { name, name_pos, .. }
@@ -130,7 +130,7 @@ fn decl_name_pos(d: &Decl) -> Option<(String, cj_ast::CodePos)> {
 }
 
 /// Walk a declaration's body, collecting Name references equal to `target`.
-fn collect_name_refs(d: &Decl, target: &str, locs: &mut Vec<(u32, u32, u32, u32)>) {
+pub(crate) fn collect_name_refs(d: &Decl, target: &str, locs: &mut Vec<(u32, u32, u32, u32)>) {
     match d {
         Decl::Var {
             init: Some(init), ..
@@ -144,6 +144,10 @@ fn collect_name_refs(d: &Decl, target: &str, locs: &mut Vec<(u32, u32, u32, u32)
         | Decl::Macro {
             body: Body::Block(stmts),
             ..
+        }
+        | Decl::Main {
+            body: Body::Block(stmts),
+            ..
         } => {
             for s in stmts {
                 expr_name_refs(s, target, locs);
@@ -154,7 +158,7 @@ fn collect_name_refs(d: &Decl, target: &str, locs: &mut Vec<(u32, u32, u32, u32)
 }
 
 /// Collect Name expressions equal to `target` in an expression tree.
-fn expr_name_refs(e: &Expr, target: &str, locs: &mut Vec<(u32, u32, u32, u32)>) {
+pub(crate) fn expr_name_refs(e: &Expr, target: &str, locs: &mut Vec<(u32, u32, u32, u32)>) {
     match e {
         Expr::Name { name, pos, .. } => {
             if name == target {
@@ -191,6 +195,18 @@ fn expr_name_refs(e: &Expr, target: &str, locs: &mut Vec<(u32, u32, u32, u32)>) 
             if let Some(e2) = els {
                 expr_name_refs(e2, target, locs);
             }
+        }
+        // `let x = add(...)` / `var y = foo(...)`: the initializer may
+        // reference the target name.
+        Expr::LetPatternDestructor { initializer, .. } => {
+            expr_name_refs(initializer, target, locs);
+        }
+        Expr::Return { value: Some(v), .. } => {
+            expr_name_refs(v, target, locs);
+        }
+        Expr::Assign { lhs, rhs, .. } => {
+            expr_name_refs(lhs, target, locs);
+            expr_name_refs(rhs, target, locs);
         }
         _ => {}
     }

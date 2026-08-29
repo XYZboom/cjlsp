@@ -11,11 +11,14 @@ use std::process::ExitCode;
 
 mod cjpm;
 mod completion;
+mod document_highlight;
+mod document_symbol;
 mod hover;
 mod references;
 mod semantic;
 mod server;
 mod signature;
+mod workspace_symbol;
 use server::LspServer;
 
 /// Frames: "Content-Length: <N>\r\n\r\n<body>"

@@ -35,10 +35,7 @@ pub fn signature_help_at(file: &File, source: &str, line: u32, character: u32) -
     };
 
     // 4. Build SignatureHelp.
-    let param_objs: Vec<Value> = params
-        .iter()
-        .map(|p| json!({ "label": p }))
-        .collect();
+    let param_objs: Vec<Value> = params.iter().map(|p| json!({ "label": p })).collect();
     json!({
         "signatures": [{
             "label": label,
@@ -93,7 +90,12 @@ fn enclosing_call(src: &str, line: u32, character: u32) -> Option<(u32, u32, Str
 /// Extract the callee word immediately before the open paren. Handles
 /// `name(`, `recv.name(` and `name<T>(`. Returns 1-based (line, col) of the
 /// open paren plus the callee display text.
-fn callee_before(src: &str, lines: &[&str], open_line: u32, open_col: u32) -> Option<(u32, u32, String)> {
+fn callee_before(
+    src: &str,
+    lines: &[&str],
+    open_line: u32,
+    open_col: u32,
+) -> Option<(u32, u32, String)> {
     let line = lines.get(open_line as usize)?;
     let before = &line[..open_col as usize];
     let trimmed = before.trim_end();
@@ -145,7 +147,12 @@ fn count_commas(src: &str, open_line: u32, open_col: u32, cur_line: u32, cur_cha
 
 /// Resolve the callee to (label, param_labels). Reuses the hover Index for
 /// type/member/local/std resolution.
-fn resolve_signature(idx: &Index, callee: &str, line: u32, character: u32) -> Option<(String, Vec<String>)> {
+fn resolve_signature(
+    idx: &Index,
+    callee: &str,
+    line: u32,
+    character: u32,
+) -> Option<(String, Vec<String>)> {
     // member access `recv.name`
     if let Some(dot) = callee.rfind('.') {
         let recv = &callee[..dot];
@@ -163,15 +170,12 @@ fn resolve_signature(idx: &Index, callee: &str, line: u32, character: u32) -> Op
         return Some((format!("{callee}()"), Vec::new()));
     }
     // local value / top-level func
-    if let Some(hi) = idx
-        .lookup_local(callee, line, character)
-        .or_else(|| {
-            idx.by_name
-                .get(callee)
-                .and_then(|hits| hits.iter().find(|&&i| !idx.all[i].is_type))
-                .map(|&i| &idx.all[i])
-        })
-    {
+    if let Some(hi) = idx.lookup_local(callee, line, character).or_else(|| {
+        idx.by_name
+            .get(callee)
+            .and_then(|hits| hits.iter().find(|&&i| !idx.all[i].is_type))
+            .map(|&i| &idx.all[i])
+    }) {
         return Some((hi.signature.clone(), hi.param_tys.clone()));
     }
     // stdlib symbol (STD_SYMS has sig only for types; funcs fall through)

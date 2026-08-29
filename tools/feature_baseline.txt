@@ -1,8 +1,8 @@
 ==============================================================================
 cj-lang LSP feature baseline (T16)
-generated: 2026-08-29 21:51:57
+generated: 2026-08-30 01:52:51
 LSPServer: /root/Code/cangjie/cj-lang/target/debug/LSPServer
-commit:    39822a5
+commit:    abc8661
 ==============================================================================
 
 [completion]  pass=138  fail=23  total=161  rate=85.7%
@@ -34,6 +34,8 @@ commit:    39822a5
     result-nonempty-list: 72  e.g. textDocument_completion_014.info, textDocument_completion_023.info, textDocument_completion_024.info, textDocument_completion_025.info
     result-null: 37  e.g. textDocument_completion_007.info, textDocument_completion_021.info, textDocument_completion_029.info, textDocument_completion_032.info
     expected-null-vs-[]-harness-crash: 4  e.g. textDocument_completion_006.info, textDocument_completion_067.info, textDocument_completion_079.info, textDocument_completion_138.info
+
+[hover]  pass=181  fail=0  total=181  rate=100.0%
 
 note: judgment = 'testcase pass' marker in compare_result.txt (framework env_info-None crash after writing is ignored).
 note: failed-case artifacts kept under cjlsp/.batch_results/.

@@ -761,6 +761,8 @@ pub enum Decl {
         is_public: bool,
         /// generic parameters
         type_params: Vec<TypeParam>,
+        /// parent types (<: A, B)
+        parents: Vec<Type>,
         /// enum cases
         cases: Vec<EnumCase>,
         pos: CodePos,
@@ -777,6 +779,8 @@ pub enum Decl {
         is_open: bool,
         /// generic parameters
         type_params: Vec<TypeParam>,
+        /// parent types (<: A, B)
+        parents: Vec<Type>,
         /// struct members
         members: Vec<Decl>,
         pos: CodePos,

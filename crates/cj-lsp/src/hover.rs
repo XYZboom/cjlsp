@@ -217,8 +217,7 @@ pub fn definition_at(
         let found = if sidx.types.contains_key(&name) {
             sidx.lookup_type(&name)
         } else {
-            sidx
-                .by_name
+            sidx.by_name
                 .get(&name)
                 .and_then(|v| v.first())
                 .map(|&i| &sidx.all[i])
@@ -484,7 +483,12 @@ pub struct Index<'a> {
 }
 
 impl<'a> Index<'a> {
-    pub fn new(file: &'a File, source: &'a str, package: Option<&'a str>, file_name: &'a str) -> Self {
+    pub fn new(
+        file: &'a File,
+        source: &'a str,
+        package: Option<&'a str>,
+        file_name: &'a str,
+    ) -> Self {
         let mut idx = Index {
             source,
             file,
@@ -2601,6 +2605,13 @@ fn render_default_expr(e: &Expr) -> String {
     }
 }
 
+/// Known std.core builtin FUNCTIONS (as opposed to types). These return
+/// `Unit` when called in an inferred-return-type position (`print("…")`-last
+/// func body), so they must not be mis-read as cross-file type constructors.
+fn is_known_std_func(name: &str) -> bool {
+    matches!(name, "print" | "println" | "assert")
+}
+
 /// Infer a literal's type from its kind.
 fn lit_type(kind: &cj_ast::LitKind) -> String {
     match kind {
@@ -2655,8 +2666,15 @@ fn infer_init_expr_at(e: &Expr, idx: &Index, line: u32, character: u32) -> Optio
                         // sibling file (not in this file's `types`), so we can't
                         // see it here — but `X()` is still a type construction
                         // whose result type is `X`. Distinguish from a plain
-                        // function call by checking `by_name`.
-                        Some(name.clone())
+                        // function call by checking `by_name`. Std builtin
+                        // FUNCTIONS (print/println/assert) are not types — a
+                        // `print("…")`-terminated func body must infer `Unit`,
+                        // not a bogus `print` return type.
+                        if is_known_std_func(name) {
+                            Some("Unit".to_string())
+                        } else {
+                            Some(name.clone())
+                        }
                     } else {
                         // a plain function call → its declared return type
                         if let Some(hits) = idx.by_name.get(name) {

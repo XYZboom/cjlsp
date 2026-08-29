@@ -61,7 +61,10 @@ impl LspServer {
             "textDocument/hover" => self.handle_hover(&params),
             "textDocument/definition" => self.handle_definition(&params),
             "textDocument/references" => self.handle_references(&params),
+            "textDocument/documentHighlight" => self.handle_document_highlight(&params),
             "textDocument/signatureHelp" => self.handle_signature_help(&params),
+            "textDocument/documentSymbol" => self.handle_document_symbol(&params),
+            "workspace/symbol" => self.handle_workspace_symbol(&params),
             "textDocument/semanticTokens/full" => self.handle_semantic_tokens(&params),
             "initialize" => {
                 // Remember rootUri so package-name checks can derive the
@@ -79,6 +82,7 @@ impl LspServer {
                         "definitionProvider": true,
                         "referencesProvider": true,
                         "documentSymbolProvider": true,
+                        "workspaceSymbolProvider": true,
                         "hoverProvider": true,
                         "signatureHelpProvider": {"triggerCharacters": ["(", ","]},
                         "renameProvider": {"prepareProvider": true},
@@ -322,6 +326,23 @@ impl LspServer {
         crate::references::references_at(&file, &uri, line, character, include_decl)
     }
 
+    /// Handle textDocument/documentSymbol: the file outline — a hierarchical
+    /// symbol tree (name/kind/range/selectionRange/children) for every
+    /// top-level decl, with class/struct/interface/extend members nested and
+    /// enum cases as children of their enum.
+    fn handle_document_symbol(&mut self, params: &Value) -> Value {
+        let uri = params["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let Some((_, source)) = self.open_docs.get(&uri) else {
+            return Value::Null;
+        };
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        crate::document_symbol::document_symbols(&file, source)
+    }
+
     /// Handle textDocument/semanticTokens/full: syntax-highlight the whole
     /// buffer. Returns LSP-encoded semantic tokens (relative deltas).
     fn handle_semantic_tokens(&mut self, params: &Value) -> Value {
@@ -353,6 +374,70 @@ impl LspServer {
         let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
         let file = parser.run();
         crate::signature::signature_help_at(&file, source, line, character)
+    }
+
+    /// Handle textDocument/documentHighlight: highlight all occurrences of
+    /// the symbol under the cursor in the current file.
+    fn handle_document_highlight(&mut self, params: &Value) -> Value {
+        let uri = params["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
+        let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
+        let Some((_, source)) = self.open_docs.get(&uri) else {
+            return json!([]);
+        };
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        crate::document_highlight::document_highlight_at(&file, line, character)
+    }
+
+    /// Handle workspace/symbol: Ctrl+T project-wide symbol search. Reuses the
+    /// sibling scan cache (all packages under the project root) so every
+    /// file.decls is collected, filters by `query` (case-insensitive fuzzy
+    /// subsequence on the raw identifier), and returns WorkspaceSymbol
+    /// (name/kind/location/containerName). Also includes the current files.
+    fn handle_workspace_symbol(&mut self, params: &Value) -> Value {
+        let query = params["query"].as_str().unwrap_or("").to_string();
+        let cwd = std::env::current_dir().unwrap_or_default();
+        // Project root: rootUri from initialize when present, else cwd. Then
+        // normalize to the nearest cjpm root so scan_dirs covers src-dir.
+        let mut root: PathBuf = if self.root_uri.is_empty() {
+            cwd
+        } else {
+            let p = self.root_uri.strip_prefix("file://").unwrap_or(&self.root_uri);
+            PathBuf::from(p)
+        };
+        if let Some(r) = crate::cjpm::find_project_root(&root) {
+            root = r;
+        }
+        // Refresh the sibling scan cache for this root with package=None so
+        // EVERY .cj file under the project is parsed (workspace-wide search).
+        let cache = self.scan_cache.entry(root.clone()).or_default();
+        let _ = refresh_sibling_cache(cache, &root, None, &[], None);
+        // Collect all cached files (no package/import visibility filter).
+        let mut files: Vec<(std::path::PathBuf, cj_ast::File, String)> = cache
+            .iter()
+            .map(|(p, c)| (p.clone(), c.file.clone(), c.source.clone()))
+            .collect();
+        // Merge the currently open docs (live buffers) so unsaved edits are
+        // reflected; an open doc not yet on disk is added as well.
+        for (path, text) in self.open_docs.values() {
+            let mut parser = cj_parser::Parser::new(text, cj_lexer::Lexer::new(text).tokenize());
+            let file = parser.run();
+            if let Some(existing) = files.iter_mut().find(|(p, _, _)| p == path) {
+                existing.1 = file;
+                existing.2 = text.clone();
+            } else {
+                files.push((path.clone(), file, text.clone()));
+            }
+        }
+        let refs: Vec<(std::path::PathBuf, &cj_ast::File, &str)> = files
+            .iter()
+            .map(|(p, f, s)| (p.clone(), f, s.as_str()))
+            .collect();
+        crate::workspace_symbol::collect_workspace_symbols(&refs, &query)
     }
 
     fn uri_to_path(uri: &str) -> Option<PathBuf> {
