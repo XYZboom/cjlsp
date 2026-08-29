@@ -195,15 +195,45 @@ impl LspServer {
         let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
         let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
 
-        let Some((_, source)) = self.open_docs.get(&uri) else {
+        let Some((path, source)) = self.open_docs.get(&uri).cloned() else {
             return Value::Null;
         };
-        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let mut parser = cj_parser::Parser::new(&source, cj_lexer::Lexer::new(&source).tokenize());
         let file = parser.run();
 
         let file_name = uri.rsplit('/').next().unwrap_or("").to_string();
         let pkg = file.package.as_deref();
-        crate::hover::hover_at(&file, source, pkg, &file_name, line, character)
+
+        // Cross-file hover: refresh the sibling scan cache (same-package +
+        // imported packages) so a symbol declared in another file of the
+        // project gets a rendered declaration (mirrors handle_definition
+        // wiring — completion/hover/definition all share the scan cache).
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let project_root = resolve_project_root(&cwd, &path);
+        let mut imported: Vec<String> = Vec::new();
+        for imp in &file.imports {
+            let pkg = imp.path.join(".");
+            if !pkg.is_empty() && !imported.contains(&pkg) {
+                imported.push(pkg);
+            }
+        }
+        let siblings: Vec<(std::path::PathBuf, &cj_ast::File, &str)> = match &project_root {
+            Some(r) => {
+                let cache = self.scan_cache.entry(r.to_path_buf()).or_default();
+                // Refresh first (drop the borrow) so collect_* sees fresh data.
+                let _ = collect_same_package_candidates(
+                    cache,
+                    r,
+                    file.package.as_deref(),
+                    &imported,
+                    &path.to_string_lossy(),
+                );
+                collect_sibling_docs_with_path(cache, r, file.package.as_deref(), &imported)
+            }
+            None => Vec::new(),
+        };
+
+        crate::hover::hover_at(&file, &source, pkg, &file_name, line, character, &siblings)
     }
 
     /// Handle textDocument/definition: return the declaration location at the

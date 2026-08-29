@@ -32,6 +32,11 @@ use std::collections::HashMap;
 
 /// Find the declaration or reference at (line, character) — LSP 0-based —
 /// and return the LSP Hover result (or Value::Null when nothing is there).
+///
+/// `siblings` are the parsed same-package/imported sibling files of the same
+/// project (path + file + source). When the local index misses, the symbol is
+/// looked up across the siblings so cross-file types/functions/members get a
+/// rendered declaration too.
 pub fn hover_at(
     file: &File,
     source: &str,
@@ -39,6 +44,7 @@ pub fn hover_at(
     file_name: &str,
     line: u32,
     character: u32,
+    siblings: &[(std::path::PathBuf, &File, &str)],
 ) -> Value {
     let idx = Index::new(file, source, package, file_name);
     // 1) Hit-test the cursor against every known name span. The end is
@@ -53,6 +59,54 @@ pub fn hover_at(
     };
     if let Some(hi) = idx.resolve(&word.text, line, character, word.start) {
         return render_hover(hi, LspRange(word.line, word.start, word.end));
+    }
+    // 3) Cross-file: the declaration lives in a sibling file of the same
+    //    project (type, top-level decl, or member of the receiver's type).
+    //    Search the visible siblings and render that declaration's info.
+    hover_at_sibling(&idx, &word, line, character, siblings)
+}
+
+/// Cross-file hover fallback: the symbol under the cursor is declared in a
+/// sibling file of the same project. Search each visible sibling (path, file,
+/// source) for the name — a type, a top-level decl, or a member of the
+/// receiver's type — and render that declaration's hover info, using the
+/// sibling's own file name for the "Declared in:" line.
+fn hover_at_sibling(
+    idx: &Index,
+    word: &Word,
+    line: u32,
+    character: u32,
+    siblings: &[(std::path::PathBuf, &File, &str)],
+) -> Value {
+    // Member access `recv.name`: resolve the receiver to its type (which may
+    // itself be a cross-file type), then find the member on that type.
+    let recv_ty = idx
+        .receiver_before(line, character)
+        .and_then(|recv| idx.receiver_type(&recv, line, character));
+    for (path, sfile, ssrc) in siblings {
+        let sname = path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let sidx = Index::new(sfile, ssrc, sfile.package.as_deref(), &sname);
+        // Member access: the receiver type is defined in this sibling, or the
+        // member itself lives here — look up the member on the receiver type.
+        if let Some(rt) = &recv_ty {
+            if let Some(hi) = sidx.member_lookup(rt, &word.text) {
+                return render_hover(hi, LspRange(word.line, word.start, word.end));
+            }
+        }
+        let found = if sidx.types.contains_key(&word.text) {
+            sidx.lookup_type(&word.text)
+        } else {
+            sidx.by_name
+                .get(&word.text)
+                .and_then(|v| v.first())
+                .map(|&i| &sidx.all[i])
+        };
+        if let Some(hi) = found {
+            return render_hover(hi, LspRange(word.line, word.start, word.end));
+        }
     }
     Value::Null
 }
