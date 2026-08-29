@@ -789,6 +789,8 @@ pub enum Decl {
     TypeAlias {
         /// alias name
         name: String,
+        /// position of the alias name token
+        name_pos: CodePos,
         /// public modifier
         is_public: bool,
         /// type parameters (generic alias: `type A<T> = ...`)

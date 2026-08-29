@@ -106,7 +106,9 @@ pub(crate) fn decl_name_pos(d: &Decl) -> Option<(String, cj_ast::CodePos)> {
         | Decl::Struct { name, name_pos, .. }
         | Decl::Enum { name, name_pos, .. }
         | Decl::Var { name, name_pos, .. } => Some((name.clone(), *name_pos)),
-        Decl::Macro { name, pos, .. } => Some((name.clone(), *pos)),
+        Decl::Macro { name, pos, .. }
+        | Decl::Prop { name, pos, .. } => Some((name.clone(), *pos)),
+        Decl::TypeAlias { name, name_pos, .. } => Some((name.clone(), *name_pos)),
         _ => None,
     }
 }

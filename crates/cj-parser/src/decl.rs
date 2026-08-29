@@ -472,6 +472,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let target = parse_type(p);
             Some(Decl::TypeAlias {
                 name,
+                name_pos: pos_of(&name_tok),
                 is_public,
                 type_params: _type_params,
                 target,
