@@ -1,22 +1,22 @@
 # Changelog
 
+## 0.1.3
+- Signature help: parameter list for func/ctor/method calls (add( → shows
+  signature + active parameter)
+- LLT improved to 88.2% (crash=0)
+
 ## 0.1.2
-- Error recovery: lex/syntax errors no longer stop later analysis (T55)
-- Cross-file hover (cjpm projects): hover on cross-file type/function/member
-  shows its declaration info (T54)
-- Semantic highlighting enhanced: primitive types (Int64/Float64/...) as
-  `type`, soft keywords (mut/unsafe/operator/...) as `modifier`
-- Completion improved to 85.7% (138/161) (T57)
-- Normalized cross-package jump URIs (no ../ segments)
-- Stdlib tooling: tools/stdlib_download.py + tools/stdlib_index.py
+- Error recovery: lex/syntax errors no longer stop later analysis
+- Cross-file hover (cjpm projects): hover on cross-file symbols
+- Semantic highlighting enhanced: primitive types + soft keywords
+- Completion improved to 85.7% (138/161)
+- Normalized cross-package jump URIs
 
 ## 0.1.1
 - Cross-file definition (cjpm projects): jump to symbols in other files
 - Bare main() entry: locals now hoverable/jumpable
 - Semantic highlighting (semanticTokens/full)
-- Plugin startup fixes (output channel + Logger interface)
-- Renamed to cj-lang-oss.cangjie-lsp to avoid conflict with official ext
+- Plugin startup fixes
 
 ## 0.1.0
-- Initial release: completion/hover/definition/references, dual-platform
-  bundled binaries
+- Initial release
