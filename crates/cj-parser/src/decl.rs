@@ -78,6 +78,20 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             TokenKind::OPERATOR => {
                 mods.push(p.advance());
             }
+            // `unsafe func ...` / `unsafe main()` / `unsafe operator func ...` —
+            // unsafe context modifier (spec Ch.15 interop / Ch.13). `unsafe`
+            // only prefixes a function definition (`unsafeFunction :: 'unsafe'
+            // functionDefinition`); on a class/struct/ctor/var (`unsafe class`,
+            // `unsafe init()`) official emits `unexpected modifier 'unsafe'`,
+            // so only consume when the following token starts a function.
+            TokenKind::UNSAFE
+                if matches!(
+                    p.peek_ahead(1),
+                    TokenKind::FUNC | TokenKind::MAIN | TokenKind::OPERATOR
+                ) =>
+            {
+                mods.push(p.advance());
+            }
             _ => break,
         }
     }
@@ -90,6 +104,39 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
         is_member,
     };
     check_modifier_usage(p, &mod_info, &tok);
+    // Foreign block: `foreign { func a() ... func b() ... }` — a braced group
+    // of foreign declarations (spec Ch.15 / official ParseForeignDecls). The
+    // `foreign` keyword was consumed as a modifier above; when the next token
+    // is `{`, all contained declarations inherit the foreign modifier. Parse
+    // them as individual decls and flatten them into the parent (the AST has
+    // no foreign-block node; official flattens too).
+    if mods.iter().any(|m| m.kind == TokenKind::FOREIGN) && p.at(TokenKind::LCURL) {
+        p.advance(); // {
+        let mut inner = Vec::new();
+        while !p.at(TokenKind::RCURL) && !p.at(TokenKind::END) {
+            while p.eat(TokenKind::SEMI) {}
+            if let Some(d) = parse_decl(p, is_member) {
+                // The inner decl parses as a normal (non-foreign) decl; mark
+                // variadic-array foreign members need no parser action here.
+                inner.push(d);
+            } else {
+                let t = p.peek_token().clone();
+                let found = crate::token_display_text(&t);
+                p.error_id(&t, cj_diag::DiagId::PARSE_EXPECTED_DECL, &[&found]);
+                p.advance();
+            }
+        }
+        let _ = p.expect(TokenKind::RCURL);
+        if inner.is_empty() {
+            // empty foreign block — emit a placeholder so the top-level loop
+            // doesn't treat the consumed tokens as a failed decl
+            return Some(Decl::Builtin {
+                name: String::new(),
+                pos: cj_ast::CodePos::default(),
+            });
+        }
+        return Some(inner.remove(0));
+    }
     match tok.kind {
         // Type-named constructor: `[mods] TypeName(params) { body }` inside a
         // class-like body. Official reports it as an unused *function*.
@@ -189,6 +236,18 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             } else {
                 None
             };
+            // Foreign functions MUST declare a return type (official
+            // parse_foreign_func_must_declare_return_type): `foreign func f()`
+            // without `: T` is rejected, as is the conflict-ridden
+            // `foreign unsafe func foo() {}`.
+            if mods.iter().any(|m| m.kind == TokenKind::FOREIGN) && ret.is_none() {
+                let t = p.peek_token().clone();
+                p.error_id(
+                    &t,
+                    cj_diag::DiagId::PARSE_FOREIGN_FUNC_MUST_DECLARE_RETURN_TYPE,
+                    &[],
+                );
+            }
             // generic constraints: `func foo<T>(a: T) where T <: C { ... }`
             parse_where_clause(p);
             let body = parse_body(p);
@@ -289,6 +348,14 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let parents = parse_parents(p);
             // class body { ... } or `:` inheritance then body
             parse_where_clause(p);
+            // Official ParseClassBody emits parse_expected_left_brace when the
+            // `{` is missing (`class B <: A & A.C` at EOF) — a body is
+            // mandatory for a class declaration.
+            if !p.at(TokenKind::LCURL) && !p.at(TokenKind::COLON) {
+                let t = p.peek_token().clone();
+                let found = crate::token_display_text(&t);
+                p.error_id(&t, cj_diag::DiagId::PARSE_EXPECTED_LEFT_BRACE, &[&found]);
+            }
             let members = if p.at(TokenKind::LCURL) || p.at(TokenKind::COLON) {
                 parse_class_body(p)
             } else {
@@ -317,6 +384,11 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             // (Decl::Struct has no parents slot yet; discard at parser layer.)
             let _parents = parse_parents(p);
             parse_where_clause(p);
+            if !p.at(TokenKind::LCURL) {
+                let t = p.peek_token().clone();
+                let found = crate::token_display_text(&t);
+                p.error_id(&t, cj_diag::DiagId::PARSE_EXPECTED_LEFT_BRACE, &[&found]);
+            }
             let members = if p.at(TokenKind::LCURL) {
                 parse_class_body(p)
             } else {
@@ -468,6 +540,8 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             })
         }
         // Top-level macro invocation expanding to a declaration: `@M(...)`
+        // (plus qualified custom-annotation names like `@pkg.M` / `@a.Derive[...]`,
+        // official ParseCustomAnnotation consumes a DOT chain after `@`).
         TokenKind::AT | TokenKind::AT_EXCL => {
             p.advance();
             let name_tok = p.peek_token().clone();
@@ -475,7 +549,14 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
                 // bare `@`/`@!` — let top-level recovery report it
                 return None;
             }
-            let name = p.advance().text;
+            let mut name = p.advance().text;
+            // qualified annotation / macro name: `@labels.Hide`,
+            // `@macro_definition.ModifyFunc`, `@a.Derive[...]`
+            while p.peek() == TokenKind::DOT && p.peek_ahead(1).is_name_like() {
+                p.advance(); // dot
+                name.push('.');
+                name.push_str(&p.advance().text);
+            }
             let mut args: Vec<cj_ast::Tokenish> = Vec::new();
             if p.eat(TokenKind::LPAREN) {
                 while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {

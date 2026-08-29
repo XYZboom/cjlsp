@@ -322,6 +322,46 @@ fn parse_postfix(p: &mut Parser) -> Expr {
                 );
                 break;
             }
+            TokenKind::LCURL => {
+                // Trailing closure: `f {a => ...}`, `a.foo<Int64>(3) {i => i}`
+                // (official ParseTrailingClosureExpr — a `{` immediately after a
+                // name/call/member/array base is a lambda argument). Only
+                // consume when the brace is actually a lambda body; a plain
+                // block after a name (`if x {}` is handled elsewhere) stays a
+                // block. The base kinds official accepts: RefExpr, MemberAccess,
+                // CallExpr, ArrayExpr, OptionalExpr, MacroExpandExpr.
+                if !lambda_brace_ahead(p) {
+                    break;
+                }
+                let is_valid_base = matches!(
+                    e,
+                    Expr::Name { .. }
+                        | Expr::Member { .. }
+                        | Expr::Call { .. }
+                        | Expr::ArrayLit { .. }
+                        | Expr::Optional { .. }
+                        | Expr::MacroExpand { .. }
+                );
+                if !is_valid_base {
+                    break;
+                }
+                let lb = p.peek_token().clone();
+                // Tail closure may omit `=>` when the param list is empty
+                // (official ParseFuncBodyInLambdaExpr isTailClosure=true): both
+                // `f {a => ...}` and `f { stmts }` are valid. Mirror the
+                // `?{...}` branch: lambda when the brace has `=>`, block else.
+                let closure = if lambda_brace_ahead(p) {
+                    parse_lambda(p)
+                } else {
+                    parse_block_expr(p)
+                };
+                let pos = pos_of(&lb);
+                e = Expr::TrailingClosure {
+                    call: Box::new(e),
+                    closure: Box::new(closure),
+                    pos,
+                };
+            }
             _ => break,
         }
     }
@@ -354,9 +394,13 @@ fn lt_is_generic_args(p: &Parser) -> bool {
                     while i < p.token_len() {
                         let n = p.raw_kind_at(i);
                         i += 1;
-                        if n == TokenKind::COMMENT || n == TokenKind::NL {
+                        if n == TokenKind::COMMENT {
                             continue;
                         }
+                        // NL after the matching `>` is itself a valid generic-args
+                        // follower: `A<Int64>` at end of line must parse as generic
+                        // args, NOT `A < Int64` comparison — otherwise the next
+                        // declaration gets swallowed as the comparison RHS.
                         return matches!(
                             n,
                             TokenKind::LPAREN
@@ -373,6 +417,8 @@ fn lt_is_generic_args(p: &Parser) -> bool {
                                 | TokenKind::ASSIGN
                                 | TokenKind::QUEST
                                 | TokenKind::DOUBLE_ARROW
+                                | TokenKind::IS
+                                | TokenKind::AS
                                 | TokenKind::NL
                         );
                     }
@@ -391,9 +437,13 @@ fn lt_is_generic_args(p: &Parser) -> bool {
                     while i < p.token_len() {
                         let n = p.raw_kind_at(i);
                         i += 1;
-                        if n == TokenKind::COMMENT || n == TokenKind::NL {
+                        if n == TokenKind::COMMENT {
                             continue;
                         }
+                        // NL after the matching `>` is itself a valid generic-args
+                        // follower: `A<Int64>` at end of line must parse as generic
+                        // args, NOT `A < Int64` comparison — otherwise the next
+                        // declaration gets swallowed as the comparison RHS.
                         return matches!(
                             n,
                             TokenKind::LPAREN
@@ -410,6 +460,8 @@ fn lt_is_generic_args(p: &Parser) -> bool {
                                 | TokenKind::ASSIGN
                                 | TokenKind::QUEST
                                 | TokenKind::DOUBLE_ARROW
+                                | TokenKind::IS
+                                | TokenKind::AS
                                 | TokenKind::NL
                         );
                     }
@@ -425,9 +477,13 @@ fn lt_is_generic_args(p: &Parser) -> bool {
                     while i < p.token_len() {
                         let n = p.raw_kind_at(i);
                         i += 1;
-                        if n == TokenKind::COMMENT || n == TokenKind::NL {
+                        if n == TokenKind::COMMENT {
                             continue;
                         }
+                        // NL after the matching `>` is itself a valid generic-args
+                        // follower: `A<Int64>` at end of line must parse as generic
+                        // args, NOT `A < Int64` comparison — otherwise the next
+                        // declaration gets swallowed as the comparison RHS.
                         return matches!(
                             n,
                             TokenKind::LPAREN
@@ -444,6 +500,8 @@ fn lt_is_generic_args(p: &Parser) -> bool {
                                 | TokenKind::ASSIGN
                                 | TokenKind::QUEST
                                 | TokenKind::DOUBLE_ARROW
+                                | TokenKind::IS
+                                | TokenKind::AS
                                 | TokenKind::NL
                         );
                     }
@@ -459,9 +517,13 @@ fn lt_is_generic_args(p: &Parser) -> bool {
                     while i < p.token_len() {
                         let n = p.raw_kind_at(i);
                         i += 1;
-                        if n == TokenKind::COMMENT || n == TokenKind::NL {
+                        if n == TokenKind::COMMENT {
                             continue;
                         }
+                        // NL after the matching `>` is itself a valid generic-args
+                        // follower: `A<Int64>` at end of line must parse as generic
+                        // args, NOT `A < Int64` comparison — otherwise the next
+                        // declaration gets swallowed as the comparison RHS.
                         return matches!(
                             n,
                             TokenKind::LPAREN
@@ -478,6 +540,8 @@ fn lt_is_generic_args(p: &Parser) -> bool {
                                 | TokenKind::ASSIGN
                                 | TokenKind::QUEST
                                 | TokenKind::DOUBLE_ARROW
+                                | TokenKind::IS
+                                | TokenKind::AS
                                 | TokenKind::NL
                         );
                     }
@@ -746,12 +810,18 @@ fn parse_atom(p: &mut Parser) -> Expr {
                     pos,
                 }
             } else {
-                // tuple or parenthesized expr
-                let first = parse_expr_prec(p, 1);
+                // tuple or parenthesized expr. Parse the inner at prec 0 so
+                // assignment binds inside parens: `(x = 1)`, `(a, b) = ...`,
+                // and tuple elements like `(2, _ = 1)` (official
+                // ParseLeftParenExprInKind -> ParseExpr(EXPR_IN_TUPLE), which
+                // is a full expression including assignment). The COMMA that
+                // separates tuple elements has precedence 0 and is not an
+                // operator, so it still terminates the element expression.
+                let first = parse_expr_prec(p, 0);
                 if p.eat(TokenKind::COMMA) {
                     let mut elems = vec![first];
                     while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
-                        elems.push(parse_expr_prec(p, 1));
+                        elems.push(parse_expr_prec(p, 0));
                         if !p.eat(TokenKind::COMMA) {
                             break;
                         }
@@ -1397,7 +1467,11 @@ fn parse_try(p: &mut Parser) -> Expr {
             let t = p.peek_token().clone();
             let found = crate::token_display_text(&t);
             let after = p.prev_display_text();
-            p.error_id(&t, cj_diag::DiagId::PARSE_EXPECTED_EXPRESSION, &[&after, &found]);
+            p.error_id(
+                &t,
+                cj_diag::DiagId::PARSE_EXPECTED_EXPRESSION,
+                &[&after, &found],
+            );
         }
         if has_paren {
             let _ = p.expect(TokenKind::RPAREN);

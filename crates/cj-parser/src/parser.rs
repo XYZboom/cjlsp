@@ -61,7 +61,11 @@ impl<'a> Parser<'a> {
             }
             i -= 1;
         }
-        if self.tokens.first().is_some_and(|t| t.kind != TokenKind::COMMENT && t.kind != TokenKind::NL) {
+        if self
+            .tokens
+            .first()
+            .is_some_and(|t| t.kind != TokenKind::COMMENT && t.kind != TokenKind::NL)
+        {
             crate::token_display_text(&self.tokens[0])
         } else {
             String::new()

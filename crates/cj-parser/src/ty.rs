@@ -138,19 +138,34 @@ pub fn parse_type(p: &mut Parser) -> Type {
             }
         }
         // RefType with optional generic args. A contextual keyword can be a
-        // type name too (`class A <: public {}` — official Seeing + SeeingContextualKeyword).
         k if k == TokenKind::IDENTIFIER || k == TokenKind::THISTYPE || k.is_name_like() => {
-            // RefType with optional generic args
-            let name = p.advance().text;
-            let args = if p.at(TokenKind::LT) {
+            // RefType with optional generic args. A contextual keyword can be a
+            // type name too (`class A <: public {}` — official Seeing + SeeingContextualKeyword).
+            let mut name = p.advance().text;
+            let mut args = if p.at(TokenKind::LT) {
                 parse_generic_args(p)
             } else {
                 Vec::new()
             };
-            let ty = Type::Ref {
-                name,
-                args,
-                pos: pos_of(&tok),
+            let mut qualified = false;
+            // Qualified type: `a.My`, `A.C`, `b.A<Int64>` (official
+            // ParseQualifiedType loops on DOT, building a QualifiedType whose
+            // base is the accumulated name). Each segment may carry generic
+            // args (`a.A<Int64>`); the final name string folds them all.
+            while p.peek() == TokenKind::DOT && p.peek_ahead(1).is_name_like() {
+                qualified = true;
+                p.advance(); // dot
+                name.push('.');
+                name.push_str(&p.advance().text);
+                if p.at(TokenKind::LT) {
+                    args = parse_generic_args(p);
+                }
+            }
+            let pos = pos_of(&tok);
+            let ty = if qualified {
+                Type::Qualified { name, pos }
+            } else {
+                Type::Ref { name, args, pos }
             };
             // optional `?`
             if p.eat(TokenKind::QUEST) {
