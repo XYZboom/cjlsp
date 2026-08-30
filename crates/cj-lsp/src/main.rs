@@ -16,6 +16,7 @@ mod document_highlight;
 mod document_symbol;
 mod hover;
 mod references;
+mod rename;
 mod semantic;
 mod server;
 mod signature;

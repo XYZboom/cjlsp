@@ -79,7 +79,7 @@ pub(crate) fn name_at(file: &File, line: u32, character: u32) -> Option<String> 
             let l0 = npos.line.saturating_sub(1);
             let c0 = npos.col.saturating_sub(1);
             let e0 = npos.end_col.saturating_sub(1);
-            if line == l0 && character >= c0 && character < e0 {
+            if line == l0 && character >= c0 && character <= e0 {
                 return Some(name);
             }
         }
@@ -106,8 +106,7 @@ pub(crate) fn decl_name_pos(d: &Decl) -> Option<(String, cj_ast::CodePos)> {
         | Decl::Struct { name, name_pos, .. }
         | Decl::Enum { name, name_pos, .. }
         | Decl::Var { name, name_pos, .. } => Some((name.clone(), *name_pos)),
-        Decl::Macro { name, pos, .. }
-        | Decl::Prop { name, pos, .. } => Some((name.clone(), *pos)),
+        Decl::Macro { name, pos, .. } | Decl::Prop { name, pos, .. } => Some((name.clone(), *pos)),
         Decl::TypeAlias { name, name_pos, .. } => Some((name.clone(), *name_pos)),
         _ => None,
     }
@@ -166,6 +165,12 @@ pub(crate) fn expr_name_refs(e: &Expr, target: &str, locs: &mut Vec<(u32, u32, u
         }
         Expr::Unary { inner, .. } => expr_name_refs(inner, target, locs),
         Expr::Paren { inner, .. } => expr_name_refs(inner, target, locs),
+        // `x as T` / `x is T` — the casted/tested expression may reference
+        // the target (mirrors expr_name_at; the type side is covered by the
+        // type walker in document_highlight).
+        Expr::As { inner, .. } | Expr::Is { inner, .. } => {
+            expr_name_refs(inner, target, locs);
+        }
         // `dabc[0][0]` — the indexed object may reference the target.
         Expr::Subscript { object, index, .. } => {
             expr_name_refs(object, target, locs);
@@ -246,7 +251,7 @@ fn expr_name_at(e: &Expr, line: u32, character: u32, hit: &mut Option<String>) {
             let l0 = pos.line.saturating_sub(1);
             let c0 = pos.col.saturating_sub(1);
             let e0 = pos.end_col.saturating_sub(1);
-            if line == l0 && character >= c0 && character < e0 {
+            if line == l0 && character >= c0 && character <= e0 {
                 *hit = Some(name.clone());
             }
         }
@@ -270,20 +275,40 @@ fn expr_name_at(e: &Expr, line: u32, character: u32, hit: &mut Option<String>) {
             expr_name_at(lhs, line, character, hit);
             expr_name_at(rhs, line, character, hit);
         }
+        // `return Foo()` — the returned value may reference the target
+        // (mirrors expr_name_refs so name_at/references find names inside
+        // return statements too).
+        Expr::Return { value: Some(v), .. } => expr_name_at(v, line, character, hit),
+        Expr::Paren { inner, .. } | Expr::Unary { inner, .. } => {
+            expr_name_at(inner, line, character, hit);
+        }
+        // `x as T` / `x is T` — the casted/tested expression may hold the
+        // target name (mirrors expr_name_refs).
+        Expr::As { inner, .. } | Expr::Is { inner, .. } => {
+            expr_name_at(inner, line, character, hit);
+        }
+        Expr::If {
+            cond, then, els, ..
+        } => {
+            expr_name_at(cond, line, character, hit);
+            expr_name_at(then, line, character, hit);
+            if let Some(e2) = els {
+                expr_name_at(e2, line, character, hit);
+            }
+        }
         // `var a1 = dabc[0]...` — the initializer may reference the target.
         Expr::LetPatternDestructor {
-            initializer, patterns, ..
+            initializer,
+            patterns,
+            ..
         } => {
             expr_name_at(initializer, line, character, hit);
             for p in patterns {
-                if let cj_ast::Pattern::Var {
-                    name, name_pos, ..
-                } = p
-                {
+                if let cj_ast::Pattern::Var { name, name_pos, .. } = p {
                     let l0 = name_pos.line.saturating_sub(1);
                     let c0 = name_pos.col.saturating_sub(1);
                     let e0 = name_pos.end_col.saturating_sub(1);
-                    if line == l0 && character >= c0 && character < e0 {
+                    if line == l0 && character >= c0 && character <= e0 {
                         *hit = Some(name.clone());
                     }
                 }

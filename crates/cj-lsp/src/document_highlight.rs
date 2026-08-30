@@ -25,50 +25,13 @@ pub fn document_highlight_at(file: &File, line: u32, character: u32) -> Value {
     let Some(target) = type_or_expr_name_at(file, line, character) else {
         return json!([]);
     };
-
-    let mut locs: Vec<(u32, u32, u32, bool)> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for d in &file.decls {
-        if let Some((name, npos)) = decl_name_pos(d) {
-            if name == target {
-                let key = (npos.line, npos.col, npos.end_col);
-                if seen.insert(key) {
-                    locs.push((
-                        npos.line.saturating_sub(1),
-                        npos.col.saturating_sub(1),
-                        npos.end_col.saturating_sub(1),
-                        true,
-                    ));
-                }
-            }
-        }
-    }
-    let mut use_locs: Vec<(u32, u32, u32, u32)> = Vec::new();
-    for d in &file.decls {
-        collect_name_refs(d, &target, &mut use_locs);
-    }
-    for (l0, c0, e0, _) in use_locs {
-        if seen.insert((l0, c0, e0)) {
-            locs.push((l0, c0, e0, false));
-        }
-    }
-    let mut type_locs: Vec<(u32, u32, u32)> = Vec::new();
-    for d in &file.decls {
-        collect_type_refs(d, &target, &mut type_locs);
-    }
-    for (l0, c0, e0) in type_locs {
-        if seen.insert((l0, c0, e0)) {
-            locs.push((l0, c0, e0, false));
-        }
-    }
-
-    locs.sort();
+    let locs = collect_occurrences(file, &target);
     // Official cangjie LSP emits kind=1 (Text) for *all* occurrences — the
     // declaration is NOT distinguished as Write(3). Verified across 300
     // expected highlights in the official documentHighlight suite.
     let out: Vec<Value> = locs
         .iter()
-        .map(|(l0, c0, e0, _)| {
+        .map(|(l0, c0, e0)| {
             json!({
                 "range": {
                     "start": {"line": l0, "character": c0},
@@ -81,6 +44,56 @@ pub fn document_highlight_at(file: &File, line: u32, character: u32) -> Value {
     json!(out)
 }
 
+/// Collect every occurrence of `target` in the file as 0-based LSP ranges
+/// (line, start_col, end_col), de-duplicated and sorted. Shared by
+/// documentHighlight (ranges → highlights) and rename (ranges → TextEdits):
+/// both features must agree on which positions belong to a symbol, so the
+/// collection lives here and callers only shape the output.
+///
+/// Covers the declaration name (decl_name_pos), Name-expression usages
+/// (collect_name_refs) and *type* positions (collect_type_refs, e.g. `Any`
+/// in `class A1<:Any{}` — Ctrl+click on a type constraint highlights every
+/// occurrence, matching the official documentHighlight_001).
+pub(crate) fn collect_occurrences(file: &File, target: &str) -> Vec<(u32, u32, u32)> {
+    let mut locs: Vec<(u32, u32, u32)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for d in &file.decls {
+        if let Some((name, npos)) = decl_name_pos(d) {
+            if name == target {
+                let key = (
+                    npos.line.saturating_sub(1),
+                    npos.col.saturating_sub(1),
+                    npos.end_col.saturating_sub(1),
+                );
+                if seen.insert(key) {
+                    locs.push(key);
+                }
+            }
+        }
+    }
+    let mut use_locs: Vec<(u32, u32, u32, u32)> = Vec::new();
+    for d in &file.decls {
+        collect_name_refs(d, target, &mut use_locs);
+    }
+    for (l0, c0, e0, _) in use_locs {
+        if seen.insert((l0, c0, e0)) {
+            locs.push((l0, c0, e0));
+        }
+    }
+    let mut type_locs: Vec<(u32, u32, u32)> = Vec::new();
+    for d in &file.decls {
+        collect_type_refs(d, target, &mut type_locs);
+    }
+    for (l0, c0, e0) in type_locs {
+        if seen.insert((l0, c0, e0)) {
+            locs.push((l0, c0, e0));
+        }
+    }
+
+    locs.sort();
+    locs
+}
+
 /// Extract the statements of a function/macro/main body (empty if none).
 fn body_stmts(body: &Body) -> &[cj_ast::Expr] {
     match body {
@@ -89,7 +102,7 @@ fn body_stmts(body: &Body) -> &[cj_ast::Expr] {
     }
 }
 
-fn type_or_expr_name_at(file: &File, line: u32, character: u32) -> Option<String> {
+pub(crate) fn type_or_expr_name_at(file: &File, line: u32, character: u32) -> Option<String> {
     let mut type_hit = None;
     for d in &file.decls {
         collect_type_at(d, line, character, &mut type_hit);
@@ -360,7 +373,9 @@ fn expr_type_refs(e: &cj_ast::Expr, target: &str, locs: &mut Vec<(u32, u32, u32)
             expr_type_refs(inner, target, locs);
         }
         Expr::LetPatternDestructor {
-            initializer, patterns, ..
+            initializer,
+            patterns,
+            ..
         } => {
             expr_type_refs(initializer, target, locs);
             for p in patterns {
@@ -554,7 +569,9 @@ fn expr_type_at(e: &cj_ast::Expr, line: u32, character: u32, hit: &mut Option<St
             }
         }
         Expr::LetPatternDestructor {
-            initializer, patterns, ..
+            initializer,
+            patterns,
+            ..
         } => {
             expr_type_at(initializer, line, character, hit);
             for p in patterns {

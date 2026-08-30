@@ -15,6 +15,12 @@ use std::time::SystemTime;
 pub struct LspServer {
     /// uri -> (path on disk, latest text from didOpen/didChange)
     open_docs: HashMap<String, (PathBuf, String)>,
+    /// uri -> current document version as tracked from didOpen/didChange.
+    /// didOpen initialises to 0; each didChange sets it to the client's
+    /// stated version + 1 (the version the text will have AFTER the change).
+    /// WorkspaceEdit responses (rename, applyEdit...) echo this so clients
+    /// can reconcile their own version counters.
+    doc_versions: HashMap<String, u32>,
     shutdown_received: bool,
     /// rootUri from `initialize` — used to derive the expected package name
     /// of each open file (module name + directory chain under src/).
@@ -35,6 +41,7 @@ impl LspServer {
     pub fn new(_test_mode: bool) -> Self {
         LspServer {
             open_docs: HashMap::new(),
+            doc_versions: HashMap::new(),
             shutdown_received: false,
             root_uri: String::new(),
             scan_cache: HashMap::new(),
@@ -63,6 +70,8 @@ impl LspServer {
             "textDocument/references" => self.handle_references(&params),
             "textDocument/codeLens" => self.handle_code_lens(&params),
             "textDocument/documentHighlight" => self.handle_document_highlight(&params),
+            "textDocument/rename" => self.handle_rename(&params),
+            "textDocument/prepareRename" => self.handle_prepare_rename(&params),
             "textDocument/signatureHelp" => self.handle_signature_help(&params),
             "textDocument/documentSymbol" => self.handle_document_symbol(&params),
             "workspace/symbol" => self.handle_workspace_symbol(&params),
@@ -412,6 +421,44 @@ impl LspServer {
         crate::document_highlight::document_highlight_at(&file, line, character)
     }
 
+    /// Handle textDocument/rename: replace every occurrence of the symbol
+    /// under the cursor in the current file with `newName`, returning a
+    /// WorkspaceEdit (changes: {uri: [TextEdit...]}).
+    fn handle_rename(&mut self, params: &Value) -> Value {
+        let uri = params["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
+        let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
+        let new_name = params["newName"].as_str().unwrap_or("").to_string();
+        let Some((_, source)) = self.open_docs.get(&uri) else {
+            return Value::Null;
+        };
+        let version = self.doc_versions.get(&uri).copied().unwrap_or(0);
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        crate::rename::rename_at(&file, &uri, line, character, &new_name, version)
+    }
+
+    /// Handle textDocument/prepareRename: return the current symbol's range
+    /// (+ placeholder) so the client can pre-fill the new-name box, or null
+    /// when the cursor is not on a renameable symbol.
+    fn handle_prepare_rename(&mut self, params: &Value) -> Value {
+        let uri = params["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
+        let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
+        let Some((_, source)) = self.open_docs.get(&uri) else {
+            return Value::Null;
+        };
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        crate::rename::prepare_rename_at(&file, line, character)
+    }
+
     /// Handle workspace/symbol: Ctrl+T project-wide symbol search. Reuses the
     /// sibling scan cache (all packages under the project root) so every
     /// file.decls is collected, filters by `query` (case-insensitive fuzzy
@@ -425,7 +472,10 @@ impl LspServer {
         let mut root: PathBuf = if self.root_uri.is_empty() {
             cwd
         } else {
-            let p = self.root_uri.strip_prefix("file://").unwrap_or(&self.root_uri);
+            let p = self
+                .root_uri
+                .strip_prefix("file://")
+                .unwrap_or(&self.root_uri);
             PathBuf::from(p)
         };
         if let Some(r) = crate::cjpm::find_project_root(&root) {
@@ -474,6 +524,9 @@ impl LspServer {
         let path = Self::uri_to_path(&uri).unwrap_or_default();
         let text = doc["text"].as_str().unwrap_or("").to_string();
         self.open_docs.insert(uri.clone(), (path, text));
+        // Initial document version is 0; didChange bumps it to the client's
+        // stated version + 1 (matches the official cjlsp rename suite).
+        self.doc_versions.insert(uri.clone(), 0);
         self.publish_diagnostics(&uri)
     }
 
@@ -501,6 +554,11 @@ impl LspServer {
                 }
             }
         }
+        // Version AFTER the applied change = client's stated version + 1
+        // (official cjlsp rename suite echoes this in WorkspaceEdit).
+        if let Some(v) = params["textDocument"]["version"].as_u64() {
+            self.doc_versions.insert(uri.clone(), v as u32 + 1);
+        }
         self.publish_diagnostics(&uri)
     }
 
@@ -510,6 +568,7 @@ impl LspServer {
             .unwrap_or("")
             .to_string();
         self.open_docs.remove(&uri);
+        self.doc_versions.remove(&uri);
         Vec::new()
     }
 
