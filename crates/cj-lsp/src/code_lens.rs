@@ -8,37 +8,59 @@
 // lens count and the references panel always agree.
 //
 // Performance: the file is walked ONCE — every Name expression is grouped by
-// name into a hash map, then each top-level decl looks up its own count. No
-// per-decl full-file rescan (would be O(decls) passes). Only top-level decls
-// get lenses; nested members are not recursed into. The decl + usage
-// locations for the showReferences command are built from the same map.
+// name into a hash map, and every top-level decl name position is recorded in
+// the same pass. Each lens then looks up its count and its full location list
+// from those maps, so the whole request is O(file) regardless of how many
+// top-level decls exist (no per-decl full-file rescan). Only top-level decls
+// get lenses; nested members are not recursed into.
 
 use cj_ast::{Body, Decl, Expr, File};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::references::{collect_name_refs, decl_name_pos};
+use crate::references::decl_name_pos;
+
+/// LSP position triple (0-based line, start col, end col) for a 1-based span.
+type Ls = (u32, u32, u32);
+
+fn lsp_span(p: &cj_ast::CodePos) -> Ls {
+    (
+        p.line.saturating_sub(1),
+        p.col.saturating_sub(1),
+        p.end_col.saturating_sub(1),
+    )
+}
 
 /// Generate CodeLens entries for `file` (one per top-level declaration).
 /// `uri` is used in the showReferences command arguments so clicking a lens
 /// opens the references panel for that declaration.
 pub fn code_lenses(file: &File, uri: &str) -> Value {
-    // Single pass: group every Name-expression position by name. A name used
-    // twice -> two entries. Keyed by the raw identifier, exactly like
-    // references.rs matches (name equality, no scope resolution).
-    let mut usages: HashMap<String, Vec<(u32, u32, u32)>> = HashMap::new();
+    // Single pass: group every Name-expression position by name (a name used
+    // twice -> two entries) AND record every top-level decl name position, in
+    // the same walk. Keyed by the raw identifier, exactly like references.rs
+    // matches (name equality, no scope resolution).
+    let mut decl_positions: HashMap<String, Vec<Ls>> = HashMap::new();
+    let mut usage_positions: HashMap<String, Vec<Ls>> = HashMap::new();
     for d in &file.decls {
-        collect_decl_all_names(d, &mut usages);
+        if let Some((name, npos)) = decl_name_pos(d) {
+            decl_positions
+                .entry(name)
+                .or_default()
+                .push(lsp_span(&npos));
+        }
+        collect_decl_all_names(d, &mut usage_positions);
     }
 
-    // Count top-level decl occurrences per name (overloads / re-declarations
-    // all contribute to the same name's reference total, matching
-    // references_at which pushes every matching decl name).
-    let mut decl_counts: HashMap<String, u32> = HashMap::new();
-    for d in &file.decls {
-        if let Some((name, _)) = decl_name_pos(d) {
-            *decl_counts.entry(name).or_insert(0) += 1;
+    // Merge each name's decl + usage locations once, in source order, so every
+    // lens for that name (incl. overloads) shares the same location list.
+    let mut locations: HashMap<String, Vec<Ls>> = HashMap::new();
+    for (name, dpos) in &decl_positions {
+        let mut locs = dpos.clone();
+        if let Some(u) = usage_positions.get(name) {
+            locs.extend(u.iter().copied());
         }
+        locs.sort_unstable();
+        locations.insert(name.clone(), locs);
     }
 
     let mut lenses: Vec<Value> = Vec::new();
@@ -48,21 +70,34 @@ pub fn code_lenses(file: &File, uri: &str) -> Value {
         let Some((name, npos)) = decl_name_pos(d) else {
             continue;
         };
-        let decl_n = decl_counts.get(&name).copied().unwrap_or(0);
-        let usage_n = usages.get(&name).map_or(0, |v| v.len() as u32);
+        let decl_n = decl_positions.get(&name).map_or(0, Vec::len) as u32;
+        let usage_n = usage_positions.get(&name).map_or(0, Vec::len) as u32;
         let total = decl_n + usage_n;
 
-        let (l0, c0, e0) = (
-            npos.line.saturating_sub(1),
-            npos.col.saturating_sub(1),
-            npos.end_col.saturating_sub(1),
-        );
+        let (l0, c0, e0) = lsp_span(&npos);
         // Range = the declaration name's span (0-based). Lenses attach to the
         // name token itself so VS Code renders "N references" above the line.
         let range = json!({
             "start": {"line": l0, "character": c0},
             "end": {"line": l0, "character": e0},
         });
+
+        let locs: Vec<Value> = locations
+            .get(&name)
+            .map(|v| {
+                v.iter()
+                    .map(|&(l, c, e)| {
+                        json!({
+                            "uri": uri,
+                            "range": {
+                                "start": {"line": l, "character": c},
+                                "end": {"line": l, "character": e},
+                            }
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         lenses.push(json!({
             "range": range,
@@ -72,7 +107,7 @@ pub fn code_lenses(file: &File, uri: &str) -> Value {
                 "arguments": [
                     uri,
                     {"line": l0, "character": c0},
-                    locations_for(file, uri, &name, npos.line),
+                    locs,
                 ],
             }
         }));
@@ -80,45 +115,10 @@ pub fn code_lenses(file: &File, uri: &str) -> Value {
     json!(lenses)
 }
 
-/// All reference locations for `name`: every top-level decl carrying that
-/// name plus every Name-expression usage, in source order. Matches
-/// references_at(file, ..., includeDeclaration=true) output shape (Location[]).
-fn locations_for(file: &File, uri: &str, name: &str, _decl_line: u32) -> Vec<Value> {
-    // (line0, col0, end0, decl_flag) — same tuple shape as references.rs.
-    let mut locs: Vec<(u32, u32, u32, u32)> = Vec::new();
-    for d in &file.decls {
-        if let Some((dn, npos)) = decl_name_pos(d) {
-            if dn == name {
-                locs.push((
-                    npos.line.saturating_sub(1),
-                    npos.col.saturating_sub(1),
-                    npos.end_col.saturating_sub(1),
-                    1,
-                ));
-            }
-        }
-        // Reuses references::collect_name_refs — the same traversal the
-        // references feature uses, so lens locations == references locations.
-        collect_name_refs(d, name, &mut locs);
-    }
-    locs.sort();
-    locs.into_iter()
-        .map(|(l, c, e, _)| {
-            json!({
-                "uri": uri,
-                "range": {
-                    "start": {"line": l, "character": c},
-                    "end": {"line": l, "character": e},
-                }
-            })
-        })
-        .collect()
-}
-
 /// Walk a declaration's body, grouping every Name expression by name
 /// (mirrors references::expr_name_refs traversal, but collects ALL names in
 /// one pass instead of filtering on a single target).
-fn collect_decl_all_names(d: &Decl, usages: &mut HashMap<String, Vec<(u32, u32, u32)>>) {
+fn collect_decl_all_names(d: &Decl, usages: &mut HashMap<String, Vec<Ls>>) {
     match d {
         Decl::Var {
             init: Some(init), ..
@@ -146,14 +146,10 @@ fn collect_decl_all_names(d: &Decl, usages: &mut HashMap<String, Vec<(u32, u32, 
 }
 
 /// Group Name expressions in an expression tree by name.
-fn collect_all_names(e: &Expr, usages: &mut HashMap<String, Vec<(u32, u32, u32)>>) {
+fn collect_all_names(e: &Expr, usages: &mut HashMap<String, Vec<Ls>>) {
     match e {
         Expr::Name { name, pos, .. } => {
-            usages.entry(name.clone()).or_default().push((
-                pos.line.saturating_sub(1),
-                pos.col.saturating_sub(1),
-                pos.end_col.saturating_sub(1),
-            ));
+            usages.entry(name.clone()).or_default().push(lsp_span(pos));
         }
         Expr::Call { callee, args, .. } => {
             collect_all_names(callee, usages);
@@ -332,5 +328,36 @@ mod tests {
         let file = parse("");
         let result = code_lenses(&file, "file:///proj/e.cj");
         assert_eq!(result.as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn lens_locations_match_references_order() {
+        // Decl + usages must appear in source order in the showReferences
+        // arguments, mirroring references_at output. NOTE: use explicit \n +
+        // real spaces — Rust string continuation strips leading whitespace.
+        let file = parse(
+            "func foo(): Unit {}\n\
+             func main(): Unit {\n    foo()\n    bar()\n    foo()\n}\n\
+             func bar(): Unit {}\n",
+        );
+        let result = code_lenses(&file, "file:///proj/r.cj");
+        let locs = result[0]["command"]["arguments"][2].as_array().unwrap();
+        let spans: Vec<(u64, u64)> = locs
+            .iter()
+            .map(|l| {
+                let s = &l["range"]["start"];
+                (
+                    s["line"].as_u64().unwrap(),
+                    s["character"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        // foo decl at 0:5, then foo() at 2:4, then foo() at 4:4 -> sorted.
+        assert_eq!(
+            spans,
+            vec![(0, 5), (2, 4), (4, 4)],
+            "locations in source order: {:?}",
+            spans
+        );
     }
 }
