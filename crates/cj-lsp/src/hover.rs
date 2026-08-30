@@ -387,7 +387,10 @@ fn render_hover(hi: &Hoverable, r: LspRange) -> Value {
         hi.declared_in, pkg, hi.signature
     );
     if let Some(doc) = &hi.doc {
-        value.push_str(&format!("\n---\n\n{doc}  \n"));
+        // `doc` is the fully-rendered comment section: `\n---\n\n` + one
+        // block per comment token (joined by `\n\n`), every line escaped and
+        // hard-broken with `  \n`, matching official AppendHoverComments.
+        value.push_str(doc);
     }
     json!({
         "contents": { "kind": "markdown", "value": value },
@@ -568,7 +571,7 @@ impl<'a> Index<'a> {
                 let sig = format!(
                     "{mods}func {name}{}({}){}",
                     render_type_params(type_params),
-                    render_params(params, false),
+                    render_params(params, true),
                     ret_txt
                 );
                 let sig = self.with_container(&sig, container);
@@ -1870,22 +1873,86 @@ impl<'a> Index<'a> {
         self.source.lines().nth((line - 1) as usize).unwrap_or("")
     }
 
-    /// Doc comment: the `//` line immediately above the decl name line.
+    /// Doc comment section, official-compatible (T65).
+    ///
+    /// Collects the contiguous comment block directly above the decl name line
+    /// (`//` lines, `/* */` blocks, `/** */` doc blocks) and renders it exactly
+    /// like official AppendHoverComments:
+    ///   `\n---\n\n` + one block per comment token, blocks joined with `\n\n`,
+    ///   every line escaped (EscapeMarkdownText) and hard-broken with `  \n`.
+    /// Returns None when there is no comment above the decl.
     fn doc_comment(&self, name_line: u32) -> Option<String> {
         if name_line <= 1 {
             return None;
         }
-        let above = self.source_line(name_line - 1).trim();
-        if let Some(body) = above.strip_prefix("//") {
-            let t = body.trim();
-            if t.is_empty() {
-                None
+        // 1) walk up collecting the contiguous comment lines above the decl.
+        //    A line is part of the block when it starts (after ws) with `//`,
+        //    `/*`, or `*` (a `*` continuation inside a /* */ / /** */ block).
+        let mut lines: Vec<&str> = Vec::new();
+        let mut l = i64::from(name_line) - 1;
+        while l >= 1 {
+            let raw = self.source_line(l as u32);
+            let t = raw.trim_start();
+            if t.starts_with("//") || t.starts_with("/*") || t.starts_with('*') {
+                lines.push(raw);
+                l -= 1;
             } else {
-                Some(t.to_string())
+                break;
             }
-        } else {
-            None
         }
+        if lines.is_empty() {
+            return None;
+        }
+        lines.reverse(); // top-down order
+                         // 2) split into comment tokens: a `//` line = one token; a `/*...*/`
+                         //    block (possibly spanning lines) = one token.
+        let mut tokens: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < lines.len() {
+            let t = lines[i].trim_start();
+            if t.starts_with("//") {
+                let body = t.strip_prefix("//").map(str::trim).unwrap_or("");
+                if !body.is_empty() {
+                    tokens.push(resolve_line_comment(body));
+                }
+                i += 1;
+            } else if t.starts_with("/*") {
+                let mut buf = String::new();
+                while i < lines.len() && !lines[i].contains("*/") {
+                    buf.push_str(lines[i]);
+                    buf.push('\n');
+                    i += 1;
+                }
+                if i < lines.len() {
+                    buf.push_str(lines[i]);
+                    i += 1;
+                }
+                let text = resolve_block_comment(&buf);
+                if !text.is_empty() {
+                    tokens.push(text);
+                }
+            } else {
+                // bare `*` line with no opening `/*` above — not a comment
+                // block we can attribute; skip it.
+                i += 1;
+            }
+        }
+        if tokens.is_empty() {
+            return None;
+        }
+        // 3) render: `\n---\n\n` + blocks joined by `\n\n`, each line escaped
+        //    and hard-broken (`  \n`).
+        let mut section = String::from("\n---\n\n");
+        for (idx, tok) in tokens.iter().enumerate() {
+            if idx > 0 {
+                section.push_str("\n\n");
+            }
+            for line in tok.lines() {
+                section.push_str(&escape_markdown_text(line));
+                section.push_str("  \n");
+            }
+        }
+        Some(section)
     }
 
     // ------------------------------------------------------------
@@ -2548,6 +2615,94 @@ fn render_interface_parents(parents: &[Type]) -> String {
     }
 }
 
+/// Official TrimSpaceAndTab: strip leading/trailing spaces, tabs, `\r` and
+/// full-width spaces from a resolved single-line comment body.
+fn resolve_line_comment(body: &str) -> String {
+    body.trim_matches(|c: char| c == ' ' || c == '\t' || c == '\r' || c == '\u{3000}')
+        .to_string()
+}
+
+/// Official ResolveComment(BLOCK_COMMENT/DOC_COMMENT) + RemoveBlankAndStar:
+/// cut the `/*`..`*/` (or `/**`..`*/`) envelope, then per line remove the
+/// common minimum indentation, strip the leading `*` (and one following
+/// space), and drop trailing whitespace on the last line.
+fn resolve_block_comment(raw: &str) -> String {
+    let start = raw.find("/*").map(|i| i + 2).unwrap_or(0);
+    let end = raw.rfind("*/").unwrap_or(raw.len());
+    if end <= start {
+        return String::new();
+    }
+    let content = &raw[start..end];
+    // minimum indentation over non-blank lines (official RemoveAboveBlank)
+    let mut min_indent = usize::MAX;
+    let mut lines: Vec<&str> = Vec::new();
+    for line in content.split('\n') {
+        let ns = line.find(|c: char| c != ' ' && c != '\t' && c != '\r');
+        if let Some(ns) = ns {
+            min_indent = min_indent.min(ns);
+        }
+        lines.push(line);
+    }
+    if min_indent == usize::MAX {
+        min_indent = 0;
+    }
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        let mut s = if line.len() >= min_indent {
+            &line[min_indent..]
+        } else {
+            line
+        };
+        // RemoveStar: drop up to the first `*` and one following space
+        if let Some(sp) = s.find('*') {
+            let after = &s[sp + 1..];
+            s = after.strip_prefix(' ').unwrap_or(after);
+        }
+        if i == lines.len() - 1 {
+            s = s.trim_end_matches([' ', '\t', '\r']);
+        }
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(s);
+    }
+    out.trim_matches('\n').to_string()
+}
+
+/// Official EscapeMarkdownText: escape markdown-significant characters
+/// (`\` `` ` `` `*` `_` `[` `]` `<` `>` `#`) and a leading ordered-list
+/// marker (`N. ` → `N\. `) so the comment text renders as plain text.
+fn escape_markdown_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len() + 4);
+    let first_non_space = text.find(|c: char| c != ' ' && c != '\t');
+    let ordered_dot = first_non_space.and_then(|fns| {
+        let mut number_end = fns;
+        let bytes = text.as_bytes();
+        while number_end < bytes.len() && bytes[number_end].is_ascii_digit() {
+            number_end += 1;
+        }
+        if number_end > fns
+            && number_end + 1 < bytes.len()
+            && bytes[number_end] == b'.'
+            && (bytes[number_end + 1] == b' ' || bytes[number_end + 1] == b'\t')
+        {
+            Some(number_end)
+        } else {
+            None
+        }
+    });
+    for (i, ch) in text.char_indices() {
+        if Some(i) == ordered_dot {
+            escaped.push('\\');
+        }
+        if matches!(ch, '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '#') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
 /// Render a param list: `a: Int64, b!: Float64, c: Bool = true`.
 fn render_params(params: &[cj_ast::Param], with_defaults: bool) -> String {
     params
@@ -3073,6 +3228,82 @@ mod tests {
         assert_eq!(
             version_cmp("1.1.3-alpha", "1.1.3"),
             std::cmp::Ordering::Less
+        );
+    }
+
+    /// hover value for a decl at a cursor position (pkg "default", file main.cj)
+    fn hover_value(src: &str, line: u32, character: u32) -> String {
+        let (file, source) = parse(src);
+        let v = hover_at(
+            &file,
+            &source,
+            Some("default"),
+            "main.cj",
+            line,
+            character,
+            &[],
+        );
+        v["contents"]["value"].as_str().unwrap_or("").to_string()
+    }
+
+    /// T65: default param values are rendered in regular func signatures,
+    /// matching official GetFuncNamedParam (was: dropped for non-init funcs).
+    #[test]
+    fn hover_renders_default_params_in_func_signature() {
+        let src = "package default\n\n// a doc line\nfunc add1(a: Int32, b!: Int32 = 1): Int32 { a + b }\n";
+        // Cursor on `add1` (0-based line 3, char 8).
+        let v = hover_value(src, 3, 8);
+        assert!(
+            v.contains("internal func add1(a: Int32, b!: Int32 = 1): Int32\n"),
+            "default `= 1` missing: {v}"
+        );
+    }
+
+    /// T65: multi-line `//` comments render each line as its own block,
+    /// separated by `\n\n`, matching official AppendHoverComments.
+    #[test]
+    fn hover_renders_multiline_comment_blocks() {
+        let src = "package default\n\n// 函数返回值类型推断\n//Write return explicitly.\nfunc return_test_1(): Int64 { 3 }\n";
+        // Cursor on `return_test_1` (0-based line 4, char 7).
+        let v = hover_value(src, 4, 7);
+        assert!(
+            v.contains("函数返回值类型推断  \n\n\nWrite return explicitly.  \n"),
+            "multi-line // blocks wrong: {v}"
+        );
+    }
+
+    /// T65: block `/* */` comments render as their own block.
+    #[test]
+    fn hover_renders_block_comment() {
+        let src = "package default\n\n/* 块注释 */\nvar LSP_Hover_Comment_Block_001: Int64 = 1\n";
+        // Cursor on the var name (0-based line 3, char 4).
+        let v = hover_value(src, 3, 4);
+        assert!(v.contains("块注释  \n"), "block comment missing: {v}");
+    }
+
+    /// T65: doc `/** @param */` comments render stripped of `*` + indent,
+    /// keeping @param lines, matching official RemoveBlankAndStar.
+    #[test]
+    fn hover_renders_doc_comment_params() {
+        let src = "package default\n\n/**\n * desc\n * @param param1 说明1\n * @param param2 说明2\n * @return Int64\n */\nfunc LSP_Hover_Comment_Doc_001(param1: Int64, param2: Int64): Int64 { 0 }\n";
+        // Cursor on the func name (0-based line 8, char 7).
+        let v = hover_value(src, 8, 7);
+        assert!(
+            v.contains("desc  \n@param param1 说明1  \n@param param2 说明2  \n@return Int64  \n"),
+            "doc @param comment wrong: {v}"
+        );
+    }
+
+    /// T65: ordered-list markers in comments are escaped (`4. ` -> `4\. `),
+    /// matching official EscapeMarkdownText.
+    #[test]
+    fn hover_escapes_ordered_list_in_comment() {
+        let src = "package default\n\n/**\n * 4. Interface 接口定义\n * 3. this is a test\n * 2. cangjie\n */\nvar LSP_Hover_Comment_Block_Ordered_List_001: Int64 = 1\n";
+        // Cursor on the var name (0-based line 7, char 4).
+        let v = hover_value(src, 7, 4);
+        assert!(
+            v.contains("4\\. Interface 接口定义  \n3\\. this is a test  \n2\\. cangjie  \n"),
+            "ordered-list escape missing: {v}"
         );
     }
 }

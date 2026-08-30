@@ -101,16 +101,42 @@ Package info: <pkg>  \n
 
 验证: 修复后全量 hover 套件 181/181 (100%), 单测 15/15 通过, build 无新 warning。
 
-## 4. 我们缺/未对齐的小差异 (已确认官方套件未覆盖, 按"不破坏行为"原则暂不实现)
+## 4. 我们缺/未对齐的小差异 (T61 记录, T65 已补)
 
-1. **多行 `//` / `/* */` / `/** */` 文档注释**: 官方 CollectCommentText 收集 inner/leading/trailing
-   三组注释、逐条 ResolveComment (去前缀、去行首 *、最小缩进归一, 支持 `/** */`)并独立成段。
-   我们只支持被 hover 声明上一行的单条 `//`, 多行/块注释会取到空。官方 181 例中注释全部是
-   单行 `//`(10 个含注释的用例全过), 故不构成用例缺口; 若要支持 arkit 的 `/** @param */`
-   参数文档格式需扩展 doc_comment。**依赖: 官方测试源里无 `/** */` 用例, 加了也测不到**, 且
-   用户硬规则"最小必要改动、不破坏行为" → 记录不实现。
-2. **注释文本 markdown 转义**: 官方 EscapeMarkdownText 对所有注释行转义 `\ * _ [] <>#` 等。
-   我们 doc 原样输出。官方套件注释都是纯中文/短文本无特殊字符, 不影响 181 例。
+T61 调研时上述字段官方套件未覆盖, 记录"暂不实现"。T65 对照官方 HoverImpl 逐条复核源码
+语义后, **前两项已实现 (见 §4.1/§4.2), 后两项仍不实现**。
+
+### 4.1 函数参数默认值 — T65 已实现
+- 官方: `ItemResolverUtil::ProcessSingleParam` 无条件调用 `GetFuncNamedParam`, 对**每个**有
+  默认值的参数渲染 ` = <expr>` (普通 func / 成员 func / init / 主构造器一致)。
+- 我们 (T65 前): 仅 `init`/PrimaryCtor 走 `with_defaults=true`, 顶层与成员 func 走
+  `false` → 签名漏 `= value`。
+- T65 修复: `collect_decl` 的 `Decl::Func` 改 `render_params(params, true)`, 与官方对齐。
+- 验证: 官方套件 181/181 不回归 (官方案例里带默认值的非 init func 均未被 hover, 无冲突);
+  探针 `func add1(a: Int32, b!: Int32 = 1)` 现输出 `internal func add1(a: Int32, b!: Int32 = 1): Int32`。
+
+### 4.2 多行 `//` / `/* */` / `/** */` 文档注释 + markdown 转义 — T65 已实现
+- 官方: `CollectCommentText` 收集 inner/leading/trailing 三组注释, 逐条 `ResolveComment`
+  (LINE 去 `//`; BLOCK/DOC 去 `/*..*/`/`/**..*/` 外壳, `RemoveBlankAndStar` 去行首 `*` +
+  最小缩进归一), 每条注释独立成块, `AppendHoverComments` 以 `\n---\n\n` 开头、块间
+  `\n\n` 分隔、每行 `EscapeMarkdownText` 转义 + 硬换行 `  \n`。
+- 我们 (T65 前): 仅取声明上一行的单条 `//`, 多行/块注释取空, 注释原样输出不转义。
+- T65 修复 (hover.rs):
+  - `doc_comment` 重写: 向上收集紧邻的注释行 (含 `//`/`/*`/`*` 续行), 拆成注释 token
+    (每条 `//` 一行; 每个 `/*..*/`/`/**..*/` 一块), 逐块 resolve, 再渲染为
+    `\n---\n\n` + 块间 `\n\n` + 每行 `escape_markdown_text(line) + "  \n"`。
+  - 新增 `resolve_line_comment` (TrimSpaceAndTab 语义)、`resolve_block_comment`
+    (RemoveBlankAndStar 语义: 最小缩进 + 去首 `*` + 去尾空白)、`escape_markdown_text`
+    (EscapeMarkdownText 语义: 转义 `\` `` ` `` `*` `_` `[` `]` `<` `>` `#`, 以及行首
+    有序列表 `N. ` → `N\. `)。
+  - `render_hover` 改为直接拼接 `doc` (doc 现为完整渲染后的注释段, 不再重复加 `  \n`)。
+- 验证: 官方套件 181/181 不回归 (10 个含注释用例全为单行纯文本 `//`, 转义为无操作);
+  探针 5 场景全 PASS (默认参数 / 多行 `//` / 块注释 / `/** @param */` / 有序列表转义);
+  单测 29/29 通过。
+- 仍不实现: **inner/trailing 注释** (声明同行尾部注释、`/** */` 内部悬挂注释) 官方
+  CollectCommentText 亦收集, 但 VSCode 场景与官方套件均不涉及, 按最小改动原则跳过。
+
+### 4.3 仍不实现
 3. **apiKey / @!APILevel**: Deveco / ohos 专属, VSCode 路径 (MessageHeaderEndOfLine::GetIsDeveco)
    与测试套件均不产出, 不实现。
 
@@ -118,7 +144,10 @@ Package info: <pkg>  \n
 
 - 我们的 render_hover 三段式 markdown (Declared in / Package info / ```cangjie 签名 / --- 注释)
   与官方 BuildHoverMarkdown 结构**逐字节对齐**（除去免不了的中文包名等差异源）。
-- 修掉了 143 回归后, 官方 hover 套件 **181/181 = 100%**。
-- 官方有而我们没有的字段: 多行/块/`/** */` 文档注释、注释 markdown 转义、apiKey(Deveco)、
-  @!APILevel(ohos)。前两者官方套件无用例, 后两者非 VSCode 场景 —— 均按任务范围"保持行为不破坏、
-  只补官方有而我们缺且可验证的字段"暂不实现, 记录于此。
+- 官方 hover 套件 **181/181 = 100%** (T61 修 143 后; T65 修改后仍 100%, 无回归)。
+- T65 补齐了官方有而我们缺、且可按官方源码语义验证的字段:
+  - **函数参数默认值** (普通/成员 func 签名渲染 ` = value`)
+  - **多行 `//` / 块 `/* */` / 文档 `/** @param */` 注释** (独立成块 + 缩进/`*` 归一)
+  - **注释 markdown 转义** (含有序列表 `N. ` → `N\. `)
+- 仍不实现: apiKey (Deveco), @!APILevel (ohos), inner/trailing 注释 — 官方套件/VSCode
+  场景均不产出, 保持行为不破坏、最小改动。
