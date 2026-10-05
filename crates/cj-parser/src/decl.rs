@@ -186,10 +186,10 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
             let name = match name_tok.kind {
                 k if k.is_name_like() => p.advance().text,
                 // operator overload names: `+`, `==`, `[]`, `()`, `!` etc.
-                // The call/index operator names span both delimiters: `operator
-                // func [](...)` / `operator func ()(...)`. `!`/`~` (NOT/BITNOT)
-                // are unary operator overloads (`operator func !()`).
-                k if k.operator_like() || matches!(k, TokenKind::NOT | TokenKind::BITNOT) => {
+                // Legal only after `operator func`.
+                k if _is_operator
+                    && (k.operator_like() || matches!(k, TokenKind::NOT | TokenKind::BITNOT)) =>
+                {
                     let t = p.advance();
                     let close = match t.kind {
                         TokenKind::LPAREN => Some(TokenKind::RPAREN),
@@ -640,14 +640,7 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
                 pos: pos_of(&tok),
             })
         }
-        _ => {
-            if is_member {
-                // inside a class-like body, treat unknown token as a member decl attempt
-                None
-            } else {
-                None
-            }
-        }
+        _ => None,
     }
 }
 
@@ -1139,7 +1132,17 @@ impl<'a> Parser<'a> {
             self.advance();
             tok
         } else {
-            self.error(&tok, &format!("expected {what}"));
+            let found = crate::token_display_text(&tok);
+            let (prefix, suffix) = if let Some(stripped) = what.strip_suffix(" name") {
+                (stripped, "name")
+            } else {
+                (what, "")
+            };
+            self.error_id(
+                &tok,
+                cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                &[prefix, suffix, &found],
+            );
             tok
         }
     }

@@ -223,4 +223,286 @@ mod tests {
             assert!(diags.is_empty(), "case {name}: {diags:?}");
         }
     }
+
+    #[test]
+    fn unclosed_delimiter_diagnostics_and_recovery() {
+        struct Case {
+            name: &'static str,
+            src: &'static str,
+            expected: &'static [(cj_diag::DiagId, &'static str, u32, u32)],
+        }
+
+        let cases = [
+            Case {
+                name: "unclosed paren in expression",
+                src: "main() {\n    let x = (1 + 2\n    let y = 3\n}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_RIGHT_DELIMITER,
+                    "unclosed delimiter: '('",
+                    2,
+                    14,
+                )],
+            },
+            Case {
+                name: "unclosed paren in call args",
+                src: "main() {\n    foo(1, 2\n    let y = 3\n}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_RIGHT_DELIMITER,
+                    "unclosed delimiter: '('",
+                    2,
+                    9,
+                )],
+            },
+            Case {
+                name: "unclosed bracket in array literal",
+                src: "main() {\n    let a = [1, 2\n    let b = 3\n}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_RIGHT_DELIMITER,
+                    "unclosed delimiter: '['",
+                    2,
+                    14,
+                )],
+            },
+            Case {
+                name: "unclosed bracket in subscript",
+                src: "main() {\n    let x = arr[1\n    let y = 2\n}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_RIGHT_DELIMITER,
+                    "unclosed delimiter: '['",
+                    2,
+                    17,
+                )],
+            },
+            Case {
+                name: "unclosed curly brace in block",
+                src: "func f() {\n    let x = 1\n",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_RIGHT_DELIMITER,
+                    "unclosed delimiter: '{'",
+                    1,
+                    11,
+                )],
+            },
+            Case {
+                name: "bare dollar without identifier or lparen",
+                src: "main() {\n    let s = $\n    let y = 3\n}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECT_ESCAPE_DOLLAR_TOKEN,
+                    "expected identifier or '(' after '$'",
+                    2,
+                    13,
+                )],
+            },
+        ];
+
+        for case in cases {
+            let (file, diags) = parse(case.src);
+            let actual: Vec<_> = diags
+                .iter()
+                .map(|diag| {
+                    (
+                        diag.code.unwrap_or(""),
+                        diag.message.as_str(),
+                        diag.line,
+                        diag.col,
+                    )
+                })
+                .collect();
+            let expected: Vec<_> = case
+                .expected
+                .iter()
+                .map(|(id, msg, line, col)| (id.code(), *msg, *line, *col))
+                .collect();
+            assert_eq!(actual, expected, "case: {}", case.name);
+            assert!(
+                !file.decls.is_empty(),
+                "case {} should recover AST",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn declaration_and_top_level_error_diagnostics() {
+        struct Case {
+            name: &'static str,
+            src: &'static str,
+            expected: &'static [(cj_diag::DiagId, &'static str, u32, u32)],
+        }
+
+        let cases = [
+            Case {
+                name: "class missing name",
+                src: "class { }\nfunc next() {}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                    "expected class name, found '{'",
+                    1,
+                    7,
+                )],
+            },
+            Case {
+                name: "struct missing name",
+                src: "struct { }\nfunc next() {}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                    "expected struct name, found '{'",
+                    1,
+                    8,
+                )],
+            },
+            Case {
+                name: "enum missing name",
+                src: "enum { A }\nfunc next() {}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                    "expected enum name, found '{'",
+                    1,
+                    6,
+                )],
+            },
+            Case {
+                name: "interface missing name",
+                src: "interface { }\nfunc next() {}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                    "expected interface name, found '{'",
+                    1,
+                    11,
+                )],
+            },
+            Case {
+                name: "func missing name",
+                src: "func () {}\nfunc next() {}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_NAME,
+                    "expected func name, found '('",
+                    1,
+                    6,
+                )],
+            },
+            Case {
+                name: "var missing identifier or pattern",
+                src: "var = 1\nfunc next() {}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_ONE_OF_IDENTIFIER_OR_PATTERN,
+                    "expected identifier or pattern after 'var', found '='",
+                    1,
+                    5,
+                )],
+            },
+            Case {
+                name: "top level statement without decl",
+                src: "1 + 1\nfunc next() {}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_DECL,
+                    "expected declaration, found literal '1'",
+                    1,
+                    1,
+                )],
+            },
+        ];
+
+        for case in cases {
+            let (file, diags) = parse(case.src);
+            let actual: Vec<_> = diags
+                .iter()
+                .map(|diag| {
+                    (
+                        diag.code.unwrap_or(""),
+                        diag.message.as_str(),
+                        diag.line,
+                        diag.col,
+                    )
+                })
+                .collect();
+            let expected: Vec<_> = case
+                .expected
+                .iter()
+                .map(|(id, msg, line, col)| (id.code(), *msg, *line, *col))
+                .collect();
+            assert_eq!(actual, expected, "case: {}", case.name);
+            assert!(
+                file.decls.iter().any(|d| match d {
+                    Decl::Func { name, .. } => name == "next",
+                    _ => false,
+                }),
+                "case {} should recover and parse following declarations",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn control_flow_missing_condition_and_delimiter_diagnostics() {
+        struct Case {
+            name: &'static str,
+            src: &'static str,
+            expected: &'static [(cj_diag::DiagId, &'static str, u32, u32)],
+        }
+
+        let cases = [
+            Case {
+                name: "if missing condition left paren",
+                src: "main() {\n    if { }\n}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_LEFT_PAREN_AFTER,
+                    "expected '(' after 'if', found '{'",
+                    2,
+                    8,
+                )],
+            },
+            Case {
+                name: "while missing condition left paren",
+                src: "main() {\n    while { }\n}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_LEFT_PAREN_AFTER,
+                    "expected '(' after 'while', found '{'",
+                    2,
+                    11,
+                )],
+            },
+            Case {
+                name: "if unclosed condition right paren",
+                src: "main() {\n    if (x {\n        1\n    }\n}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_RIGHT_DELIMITER,
+                    "unclosed delimiter: '('",
+                    2,
+                    9,
+                )],
+            },
+            Case {
+                name: "while unclosed condition right paren",
+                src: "main() {\n    while (x {\n        1\n    }\n}",
+                expected: &[(
+                    cj_diag::DiagId::PARSE_EXPECTED_RIGHT_DELIMITER,
+                    "unclosed delimiter: '('",
+                    2,
+                    12,
+                )],
+            },
+        ];
+
+        for case in cases {
+            let (_, diags) = parse(case.src);
+            let actual: Vec<_> = diags
+                .iter()
+                .map(|diag| {
+                    (
+                        diag.code.unwrap_or(""),
+                        diag.message.as_str(),
+                        diag.line,
+                        diag.col,
+                    )
+                })
+                .collect();
+            let expected: Vec<_> = case
+                .expected
+                .iter()
+                .map(|(id, msg, line, col)| (id.code(), *msg, *line, *col))
+                .collect();
+            assert_eq!(actual, expected, "case: {}", case.name);
+        }
+    }
 }

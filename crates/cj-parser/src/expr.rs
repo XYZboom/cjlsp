@@ -245,7 +245,7 @@ fn parse_postfix(p: &mut Parser, allow_wildcard: bool) -> Expr {
                         break;
                     }
                 }
-                let _ = p.expect(TokenKind::RPAREN);
+                let _ = p.expect_close(&lparen, TokenKind::RPAREN, "(");
                 let pos = pos_of(&lparen);
                 e = Expr::Call {
                     callee: Box::new(e),
@@ -288,7 +288,7 @@ fn parse_postfix(p: &mut Parser, allow_wildcard: bool) -> Expr {
                 while p.eat(TokenKind::COMMA) {
                     let _ = parse_expr_prec(p, 1);
                 }
-                let _ = p.expect(TokenKind::RSQUARE);
+                let _ = p.expect_close(&lb, TokenKind::RSQUARE, "[");
                 let pos = pos_of(&lb);
                 e = Expr::Subscript {
                     object: Box::new(e),
@@ -859,7 +859,7 @@ fn parse_atom(p: &mut Parser, allow_wildcard: bool) -> Expr {
         }
         TokenKind::LPAREN => {
             let tuple_assignment_lhs = allow_wildcard || paren_is_assignment_lhs(p);
-            p.advance();
+            let open_paren = p.advance();
             // Empty parens `()` are the Unit value (spec Ch.02/Ch.05). Parse it
             // as a Unit literal; the inner expression path would otherwise
             // call parse_atom on `)` and emit a spurious diagnostic.
@@ -888,14 +888,14 @@ fn parse_atom(p: &mut Parser, allow_wildcard: bool) -> Expr {
                             break;
                         }
                     }
-                    let _ = p.expect(TokenKind::RPAREN);
+                    let _ = p.expect_close(&open_paren, TokenKind::RPAREN, "(");
                     let pos = pos_of(&tok);
                     Expr::Tuple {
                         elements: elems,
                         pos,
                     }
                 } else {
-                    let _ = p.expect(TokenKind::RPAREN);
+                    let _ = p.expect_close(&open_paren, TokenKind::RPAREN, "(");
                     let pos = pos_of(&tok);
                     Expr::Paren {
                         inner: Box::new(first),
@@ -905,7 +905,7 @@ fn parse_atom(p: &mut Parser, allow_wildcard: bool) -> Expr {
             }
         }
         TokenKind::LSQUARE => {
-            p.advance();
+            let open_bracket = p.advance();
             let mut elems = Vec::new();
             while !p.at(TokenKind::RSQUARE) && !p.at(TokenKind::END) {
                 elems.push(parse_expr_prec(p, 1));
@@ -913,7 +913,7 @@ fn parse_atom(p: &mut Parser, allow_wildcard: bool) -> Expr {
                     break;
                 }
             }
-            let _ = p.expect(TokenKind::RSQUARE);
+            let _ = p.expect_close(&open_bracket, TokenKind::RSQUARE, "[");
             let pos = pos_of(&tok);
             Expr::ArrayLit {
                 elements: elems,
@@ -1053,7 +1053,7 @@ fn parse_atom(p: &mut Parser, allow_wildcard: bool) -> Expr {
         }
         TokenKind::DOLLAR => {
             // $identifier — dollar identifier
-            p.advance();
+            let dollar_tok = p.advance();
             if p.peek() == TokenKind::IDENTIFIER {
                 let id = p.advance();
                 let pos = pos_of(&tok);
@@ -1063,6 +1063,11 @@ fn parse_atom(p: &mut Parser, allow_wildcard: bool) -> Expr {
                     pos,
                 }
             } else {
+                p.error_id(
+                    &dollar_tok,
+                    cj_diag::DiagId::PARSE_EXPECT_ESCAPE_DOLLAR_TOKEN,
+                    &[],
+                );
                 let pos = pos_of(&tok);
                 Expr::Invalid(pos)
             }
@@ -1239,6 +1244,30 @@ pub fn parse_block_expr(p: &mut Parser) -> Expr {
 
 fn parse_if_expr(p: &mut Parser) -> Expr {
     let if_tok = p.expect(TokenKind::IF);
+    // The condition must be parenthesized: `if (cond) { ... }`. When the
+    // next token is not `(`, emit a structured diagnostic anchored at the
+    // bad token and skip straight to the block.
+    if !p.at(TokenKind::LPAREN) && !p.at(TokenKind::END) {
+        let bad = p.peek_token().clone();
+        let found = crate::token_display_text(&bad);
+        p.error_id(
+            &bad,
+            cj_diag::DiagId::PARSE_EXPECTED_LEFT_PAREN_AFTER,
+            &["if", &found],
+        );
+        let then = parse_block_expr(p);
+        let pos = pos_of(&if_tok);
+        return Expr::If {
+            cond: Box::new(Expr::Lit {
+                kind: LitKind::Bool,
+                value: "false".to_string(),
+                pos: pos_of(&if_tok),
+            }),
+            then: Box::new(then),
+            els: None,
+            pos,
+        };
+    }
     let cond = parse_condition_or_expr(p);
     let then = parse_block_expr(p);
     let els = if p.eat(TokenKind::ELSE) {
@@ -1262,6 +1291,27 @@ fn parse_if_expr(p: &mut Parser) -> Expr {
 
 fn parse_while_expr(p: &mut Parser) -> Expr {
     let w = p.expect(TokenKind::WHILE);
+    // Same guard as parse_if_expr: condition must be parenthesized.
+    if !p.at(TokenKind::LPAREN) && !p.at(TokenKind::END) {
+        let bad = p.peek_token().clone();
+        let found = crate::token_display_text(&bad);
+        p.error_id(
+            &bad,
+            cj_diag::DiagId::PARSE_EXPECTED_LEFT_PAREN_AFTER,
+            &["while", &found],
+        );
+        let body = parse_block_expr(p);
+        let pos = pos_of(&w);
+        return Expr::While {
+            cond: Box::new(Expr::Lit {
+                kind: LitKind::Bool,
+                value: "false".to_string(),
+                pos: pos_of(&w),
+            }),
+            body: Box::new(body),
+            pos,
+        };
+    }
     let cond = parse_condition_or_expr(p);
     let body = parse_block_expr(p);
     let pos = pos_of(&w);

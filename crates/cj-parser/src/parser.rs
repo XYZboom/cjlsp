@@ -223,6 +223,39 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Expect a closing delimiter (`close_kind`); if it is absent, emit
+    /// `PARSE_EXPECTED_RIGHT_DELIMITER` anchored at the *opening* delimiter
+    /// token (`open_tok`) so the diagnostic points to where the delimiter was
+    /// opened rather than where the parser noticed the mismatch.
+    /// `open_char` is the display character of the opener, e.g. `"("`.
+    pub fn expect_close(
+        &mut self,
+        open_tok: &Token,
+        close_kind: TokenKind,
+        open_char: &str,
+    ) -> Token {
+        let tok = self.peek_token().clone();
+        if tok.kind == close_kind {
+            self.advance();
+            tok
+        } else {
+            // Anchor the diagnostic at the opening delimiter's *end* position
+            // (one past the `(` / `[` / `{`), matching official cjc behaviour.
+            let anchor = Token {
+                begin: open_tok.end,
+                end: open_tok.end,
+                kind: open_tok.kind,
+                text: open_tok.text.clone(),
+            };
+            self.error_id(
+                &anchor,
+                cj_diag::DiagId::PARSE_EXPECTED_RIGHT_DELIMITER,
+                &[open_char, &close_kind.to_string(), open_char],
+            );
+            tok
+        }
+    }
+
     /// Kind of the raw token at absolute index `i` (may be trivia). Returns
     /// `END` past the end of the stream. Used by lookahead scanners that must
     /// walk the raw token stream (e.g. generic-args / lambda detection).
