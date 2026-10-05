@@ -3720,6 +3720,14 @@ pub fn complete_at(
         // 3. Local scope (params, let/var in function body)
         collect_local_scope(file, source, line, &mut candidates, &mut seen);
 
+        if source
+            .lines()
+            .nth(line as usize)
+            .is_some_and(|current_line| current_line.contains("<:"))
+        {
+            collect_inheritance_member_names(&docs, &prefix, &mut candidates, &mut seen);
+        }
+
         // 4. Class members in scope (if cursor inside a class/struct body)
         let doc0: &(&File, &str) = &(file, source);
         if let Some((cb, _)) = enclosing_type(std::slice::from_ref(doc0), line) {
@@ -3765,6 +3773,65 @@ pub fn complete_at(
     }
     let _ = uri;
     json!(items)
+}
+
+fn collect_inheritance_member_names(
+    docs: &Docs,
+    prefix: &str,
+    candidates: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    for (file, source) in docs {
+        for decl in &file.decls {
+            let members = match decl {
+                Decl::Class { members, .. } | Decl::Struct { members, .. } => members,
+                _ => continue,
+            };
+            for member in members {
+                let Decl::Var {
+                    name,
+                    is_mutable,
+                    ty,
+                    init,
+                    pos,
+                    ..
+                } = member
+                else {
+                    continue;
+                };
+                if !fuzzy_match(name, prefix) {
+                    continue;
+                }
+                let keyword = if *is_mutable { "var" } else { "let" };
+                let type_suffix = ty
+                    .as_ref()
+                    .map(|member_type| format!(": {}", display_type(member_type)))
+                    .unwrap_or_default();
+                let init_suffix = if init.is_some() {
+                    let source_text = var_init_src(source, pos.line);
+                    if source_text.is_empty() {
+                        " = ...".to_string()
+                    } else {
+                        format!(" = {source_text}")
+                    }
+                } else {
+                    String::new()
+                };
+                push_candidate(
+                    candidates,
+                    seen,
+                    Candidate {
+                        label: name.clone(),
+                        kind: KIND_VARIABLE,
+                        detail: format!("{keyword} {name}{type_suffix}{init_suffix}"),
+                        insert_text: name.clone(),
+                        insert_text_format: 1,
+                        filter_text: name.clone(),
+                    },
+                );
+            }
+        }
+    }
 }
 
 fn import_alias_package<'a>(source: &'a str, alias: &str) -> Option<&'a str> {
@@ -4562,5 +4629,21 @@ mod tests {
 
         assert!(!has_extension_member(&plain_docs, "Array", "printSize"));
         assert!(has_extension_member(&extension_docs, "Array", "printSize"));
+    }
+
+    #[test]
+    fn inheritance_completion_can_find_member_names() {
+        let source = "class Father {\n    var father: Int32 = 0\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let docs = vec![(&file, source)];
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+
+        collect_inheritance_member_names(&docs, "Father", &mut candidates, &mut seen);
+
+        assert!(candidates.iter().any(|candidate| {
+            candidate.label == "father" && candidate.detail == "var father: Int32 = 0"
+        }));
     }
 }
