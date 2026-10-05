@@ -7,7 +7,7 @@
 // (1-based line/col in the Diag; the LSP layer converts to 0-based).
 
 use cj_ast::{Body, Decl, Expr, File, Type};
-use cj_diag::Diag;
+use cj_diag::{Diag, DiagId};
 use std::collections::{HashMap, HashSet};
 
 use crate::PackageTable;
@@ -968,6 +968,7 @@ pub fn check_semantics(file: &File, package: &PackageTable, src: Option<&str>) -
     diags.extend(check_override_param_names(file));
     diags.extend(check_bare_type_expr(file, package));
     diags.extend(check_deprecated_refs(file, src));
+    diags.extend(check_visibility(file, package));
     diags
 }
 
@@ -1047,6 +1048,90 @@ fn collect_deprecated_refs(d: &Decl, deprecated: &HashSet<String>, diags: &mut V
         }
         _ => {}
     }
+}
+
+/// Check visibility of declarations referenced from other packages (e.g. via imports).
+/// When an imported member is defined in the package table but is not public (`!is_public`),
+/// report an explicit accessibility diagnostic with `DiagId::PACKAGE_DECL_NOT_FIND_IN_PACKAGE`.
+pub fn check_visibility(file: &File, package: &PackageTable) -> Vec<Diag> {
+    let mut diags = Vec::new();
+    let own = file.package.as_deref();
+
+    for imp in &file.imports {
+        // Resolve target package
+        let pkg = if imp.glob {
+            if imp.path.is_empty() {
+                None
+            } else {
+                Some(imp.path.join("."))
+            }
+        } else if imp.path.len() >= 2 {
+            Some(imp.path[..imp.path.len() - 1].join("."))
+        } else if imp.path.len() == 1 {
+            Some(imp.path[0].clone())
+        } else {
+            None
+        };
+
+        let Some(pkg_name) = pkg else { continue };
+        // Visibility checks apply across packages (not to self-package)
+        if own.is_some_and(|o| o == pkg_name) {
+            continue;
+        }
+
+        // Check imported members: single member import `a.b.C` or selected members `a.b: A, B`
+        let mut members_to_check = Vec::new();
+        if !imp.glob && imp.path.len() >= 2 {
+            let member = imp.path.last().expect("non-empty");
+            let start_col = imp.name_pos.end_col.saturating_sub(member.len() as u32);
+            let pos = cj_ast::CodePos::new(
+                imp.name_pos.end_line,
+                start_col,
+                0,
+                imp.name_pos.end_line,
+                imp.name_pos.end_col,
+                0,
+            );
+            members_to_check.push((member.clone(), pos));
+        }
+        for s in &imp.selected {
+            members_to_check.push((s.clone(), imp.name_pos));
+        }
+
+        for (member, pos) in members_to_check {
+            if let Some(sym) = package.lookup(&member) {
+                // If found in package table and marked non-public
+                if !sym.is_public {
+                    let mut diag = Diag::error(
+                        pos.line,
+                        pos.col,
+                        format!("'{member}' is not accessible in package '{pkg_name}'"),
+                    )
+                    .with_span(pos.end_line, pos.end_col)
+                    .with_id(DiagId::PACKAGE_DECL_NOT_FIND_IN_PACKAGE);
+                    diag.related_locations.push(cj_diag::RelatedLocation {
+                        location: cj_diag::SourceLocation {
+                            file: String::new(),
+                            range: cj_diag::SourceRange {
+                                start: cj_diag::Position {
+                                    line: sym.pos.line,
+                                    column: sym.pos.col,
+                                },
+                                end: cj_diag::Position {
+                                    line: sym.pos.end_line,
+                                    column: sym.pos.end_col,
+                                },
+                            },
+                        },
+                        message: Some(format!("'{member}' is declared private here")),
+                    });
+                    diags.push(diag);
+                }
+            }
+        }
+    }
+
+    diags
 }
 
 #[cfg(test)]

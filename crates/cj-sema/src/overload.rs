@@ -9,7 +9,53 @@
 // reported at the LATER declaration's function name (official 017).
 
 use cj_ast::{Decl, File, Param};
-use cj_diag::{Diag, Severity};
+use cj_diag::{Diag, DiagId, Severity};
+
+/// Format parameter type for readable candidate signature.
+fn format_param_type(t: &cj_ast::Type) -> String {
+    use cj_ast::Type;
+    match t {
+        Type::Ref { name, args, .. } => {
+            if args.is_empty() {
+                name.clone()
+            } else {
+                let inner: Vec<String> = args.iter().map(format_param_type).collect();
+                format!("{}<{}>", name, inner.join(", "))
+            }
+        }
+        Type::Qualified { name, .. } => name.clone(),
+        Type::Option { inner, .. } => format!("{}?", format_param_type(inner)),
+        Type::Constant { inner, .. } => format!("const {}", format_param_type(inner)),
+        Type::VArray { inner, .. } => format!("VArray<{}>", format_param_type(inner)),
+        Type::Primitive { kind, .. } => format!("{kind:?}"),
+        Type::Paren { inner, .. } => format!("({})", format_param_type(inner)),
+        Type::Func { params, ret, .. } => {
+            let inner: Vec<String> = params.iter().map(format_param_type).collect();
+            format!("({}) -> {}", inner.join(", "), format_param_type(ret))
+        }
+        Type::Tuple { elements, .. } => {
+            let inner: Vec<String> = elements.iter().map(format_param_type).collect();
+            format!("({})", inner.join(", "))
+        }
+        Type::This(_) => "This".to_string(),
+        Type::Invalid(_) => "Invalid".to_string(),
+    }
+}
+
+fn format_signature(name: &str, params: &[Param]) -> String {
+    let p_strs: Vec<String> = params
+        .iter()
+        .map(|p| {
+            let ty_str = format_param_type(&p.ty);
+            if p.is_named {
+                format!("{}!: {}", p.name, ty_str)
+            } else {
+                format!("{}: {}", p.name, ty_str)
+            }
+        })
+        .collect();
+    format!("func {}({})", name, p_strs.join(", "))
+}
 
 /// Detect overload conflicts among top-level functions in one file
 /// (same package + same scope).
@@ -29,11 +75,22 @@ pub fn detect_overload_conflicts(file: &File) -> Vec<Diag> {
 
     let mut diags = Vec::new();
     for (i, (name, params, line, col)) in funcs.iter().enumerate() {
+        let matching: Vec<&[Param]> = funcs
+            .iter()
+            .filter(|(n2, p2, _, _)| n2 == name && same_signature(params, p2))
+            .map(|(_, p2, _, _)| *p2)
+            .collect();
+
         let conflict = funcs[..i]
             .iter()
             .any(|(n2, p2, _, _)| n2 == name && same_signature(params, p2));
         if conflict {
-            diags.push(Diag {
+            let candidates: Vec<String> = matching
+                .iter()
+                .map(|p| format_signature(name, p))
+                .collect();
+
+            let mut diag = Diag {
                 code: None,
                 category: None,
                 severity: Severity::Error,
@@ -49,9 +106,11 @@ pub fn detect_overload_conflicts(file: &File) -> Vec<Diag> {
                 related_locations: Vec::new(),
                 expected: None,
                 actual: None,
-                candidates: Vec::new(),
+                candidates,
                 suggestions: Vec::new(),
-            });
+            };
+            diag = diag.with_id(DiagId::SEMA_OVERLOAD_CONFLICTS);
+            diags.push(diag);
         }
     }
     diags
@@ -112,6 +171,10 @@ mod tests {
             .message
             .contains("function 'test05' has overload conflicts"));
         assert_eq!(diags[0].severity, Severity::Error);
+        assert_eq!(diags[0].code, Some(DiagId::SEMA_OVERLOAD_CONFLICTS.code()));
+        assert_eq!(diags[0].candidates.len(), 2);
+        assert_eq!(diags[0].candidates[0], "func test05(a: Int8, b: Bool)");
+        assert_eq!(diags[0].candidates[1], "func test05(a: Int8, b: Bool)");
         // reported at the SECOND declaration
         assert_eq!(diags[0].line, 2);
     }

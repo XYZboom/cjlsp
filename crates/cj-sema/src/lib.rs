@@ -13,7 +13,7 @@
 // cross-file references. Dependency analysis then runs over the merged table.
 
 use cj_ast::{CodePos, Decl, File};
-use cj_diag::Diag;
+use cj_diag::{Diag, DiagId, Position, RelatedLocation, SourceLocation, SourceRange};
 use std::collections::HashMap;
 
 pub mod checks;
@@ -74,6 +74,7 @@ pub struct Symbol {
     pub name: String,
     pub kind: SymbolKind,
     pub pos: CodePos,
+    pub is_public: bool,
 }
 
 /// A single function parameter signature (for cross-file call checks).
@@ -220,23 +221,42 @@ impl Collector {
         // Report redefinition at the *name* (not the decl start keyword) —
         // official reports `let zzzz` at the variable/function name position.
         let pos = decl_name_pos(d).unwrap_or_else(|| decl_pos(d));
+        let is_public = decl_is_public(d);
         let sym = Symbol {
             name: name.clone(),
             kind,
             pos,
+            is_public,
         };
         if let Some(prev) = self.table.declare(sym) {
             // Functions may share a scope (overloading, spec Ch.10); a
             // redefinition is only reported for non-function decls. Identical
             // signatures are flagged separately (overload.rs).
             if !(kind == SymbolKind::Func && prev.kind == SymbolKind::Func) {
-                let diag = Diag::error(
+                let mut diag = Diag::error(
                     pos.line,
                     pos.col,
                     format!("redefinition of declaration '{name}'"),
                 )
                 .with_span(pos.end_line, pos.end_col)
-                .with_note(format!("'{}' is previously declared here", prev.name));
+                .with_note(format!("'{}' is previously declared here", prev.name))
+                .with_id(DiagId::SEMA_REDEFINITION);
+                diag.related_locations.push(RelatedLocation {
+                    location: SourceLocation {
+                        file: String::new(),
+                        range: SourceRange {
+                            start: Position {
+                                line: prev.pos.line,
+                                column: prev.pos.col,
+                            },
+                            end: Position {
+                                line: prev.pos.end_line,
+                                column: prev.pos.end_col,
+                            },
+                        },
+                    },
+                    message: Some(format!("'{}' is previously declared here", prev.name)),
+                });
                 self.diags.push(diag);
             }
         }
@@ -247,13 +267,30 @@ impl Collector {
                 std::collections::HashMap::new();
             for p in params {
                 if let Some(prev) = seen.insert(p.name.as_str(), p) {
-                    let d = Diag::error(
+                    let mut d = Diag::error(
                         p.pos.line,
                         p.pos.col,
                         format!("redefinition of declaration '{}'", p.name),
                     )
                     .with_span(p.pos.end_line, p.pos.end_col)
-                    .with_note(format!("'{}' is previously declared here", prev.name));
+                    .with_note(format!("'{}' is previously declared here", prev.name))
+                    .with_id(DiagId::SEMA_REDEFINITION);
+                    d.related_locations.push(RelatedLocation {
+                        location: SourceLocation {
+                            file: String::new(),
+                            range: SourceRange {
+                                start: Position {
+                                    line: prev.pos.line,
+                                    column: prev.pos.col,
+                                },
+                                end: Position {
+                                    line: prev.pos.end_line,
+                                    column: prev.pos.end_col,
+                                },
+                            },
+                        },
+                        message: Some(format!("'{}' is previously declared here", prev.name)),
+                    });
                     self.diags.push(d);
                 }
             }
@@ -370,6 +407,25 @@ fn decl_name_pos(d: &Decl) -> Option<CodePos> {
     }
 }
 
+/// Determine whether a declaration has public visibility.
+fn decl_is_public(d: &Decl) -> bool {
+    use Decl::*;
+    match d {
+        Func { is_public, .. }
+        | Macro { is_public, .. }
+        | Class { is_public, .. }
+        | Interface { is_public, .. }
+        | Extend { is_public, .. }
+        | Enum { is_public, .. }
+        | Struct { is_public, .. }
+        | TypeAlias { is_public, .. }
+        | PrimaryCtor { is_public, .. }
+        | Var { is_public, .. }
+        | Prop { is_public, .. } => *is_public,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,6 +443,15 @@ mod tests {
         // Official anchors at the *name* (line 2 col 5), not the `let` keyword.
         assert_eq!(r.diags[0].line, 2);
         assert_eq!(r.diags[0].col, 5);
+        assert_eq!(r.diags[0].code, Some(DiagId::SEMA_REDEFINITION.code()));
+        assert_eq!(r.diags[0].related_locations.len(), 1);
+        let rel = &r.diags[0].related_locations[0];
+        assert_eq!(rel.location.range.start.line, 1);
+        assert_eq!(rel.location.range.start.column, 5);
+        assert_eq!(
+            rel.message.as_deref(),
+            Some("'x' is previously declared here")
+        );
     }
 
     #[test]
@@ -406,6 +471,15 @@ mod tests {
             r.diags.iter().any(|d| d.line == 1 && d.col == 17),
             "{:?}",
             r.diags
+        );
+        let diag = r.diags.iter().find(|d| d.line == 1 && d.col == 17).unwrap();
+        assert_eq!(diag.code, Some(DiagId::SEMA_REDEFINITION.code()));
+        assert_eq!(diag.related_locations.len(), 1);
+        assert_eq!(diag.related_locations[0].location.range.start.line, 1);
+        assert_eq!(diag.related_locations[0].location.range.start.column, 8);
+        assert_eq!(
+            diag.related_locations[0].message.as_deref(),
+            Some("'a' is previously declared here")
         );
     }
 
