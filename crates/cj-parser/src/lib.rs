@@ -112,4 +112,115 @@ mod tests {
         assert_eq!(file.imports.len(), 1);
         assert!(file.imports[0].glob);
     }
+
+    #[test]
+    fn expression_diagnostics_match_message_position_and_count() {
+        struct Case {
+            name: &'static str,
+            src: &'static str,
+            expected: &'static [(&'static str, u32, u32, u32)],
+        }
+
+        let cases = [
+            Case {
+                name: "wildcard expression",
+                src: "main() {\n    _()\n}",
+                expected: &[("unexpected _ wildcard", 2, 5, 6)],
+            },
+            Case {
+                name: "wildcards in ordinary tuple expression",
+                src: "main() {\n    (_, _) << 1\n}",
+                expected: &[
+                    ("unexpected _ wildcard", 2, 6, 7),
+                    ("unexpected _ wildcard", 2, 9, 10),
+                ],
+            },
+            Case {
+                name: "invalid assignment target",
+                src: "main() {\n    a + b = 1\n}",
+                expected: &[("invalid left-hand expression of assignment '='", 2, 11, 12)],
+            },
+            Case {
+                name: "invalid compound assignment target",
+                src: "main() {\n    1 <<= 2\n}",
+                expected: &[("invalid left-hand expression of assignment '<<='", 2, 7, 10)],
+            },
+            Case {
+                name: "assignment chain",
+                src: "main() {\n    a = b = c\n}",
+                expected: &[("assignment operators cannot be chained", 2, 11, 12)],
+            },
+            Case {
+                name: "local initializer assignment",
+                src: "main() {\n    var a = b = 1\n}",
+                expected: &[(
+                    "cannot have assignment expression in initializer",
+                    2,
+                    13,
+                    18,
+                )],
+            },
+            Case {
+                name: "global initializer assignment",
+                src: "var a = b += 1",
+                expected: &[("cannot have assignment expression in initializer", 1, 9, 15)],
+            },
+            Case {
+                name: "default value assignment",
+                src: "func f(a!: Int64 = b = 1) {}",
+                expected: &[(
+                    "cannot have assignment expression in initializer",
+                    1,
+                    20,
+                    25,
+                )],
+            },
+            Case {
+                name: "invalid increment target",
+                src: "var a = 1 ++",
+                expected: &[("cannot increment a un-assignable expression", 1, 11, 13)],
+            },
+            Case {
+                name: "invalid prefix decrement target",
+                src: "var a = --1",
+                expected: &[("cannot decrement a un-assignable expression", 1, 9, 11)],
+            },
+        ];
+
+        for case in cases {
+            let (_, diags) = parse(case.src);
+            let actual: Vec<_> = diags
+                .iter()
+                .map(|diag| (diag.message.as_str(), diag.line, diag.col, diag.end_col))
+                .collect();
+            assert_eq!(actual, case.expected, "case: {}", case.name);
+        }
+    }
+
+    #[test]
+    fn wildcard_patterns_and_assignable_expressions_are_accepted() {
+        let cases = [
+            (
+                "pattern destructuring",
+                "func f() { let (_, x) = (1, 2); match (x) { case _ => 0 } }",
+            ),
+            (
+                "tuple and discard assignment",
+                "main() {\n    var a = 1\n    var b = 2\n    (_, a) = (b, 3)\n    (a, _) = (4, 5)\n    _ = a\n}",
+            ),
+            (
+                "member subscript and step targets",
+                "main() { var a = [1]; a[0] = 2; a[0]++; --a[0] }",
+            ),
+            (
+                "ordinary initializer and default",
+                "func f(a!: Int64 = 1) { let x = 2 }",
+            ),
+        ];
+
+        for (name, src) in cases {
+            let (_, diags) = parse(src);
+            assert!(diags.is_empty(), "case {name}: {diags:?}");
+        }
+    }
 }
