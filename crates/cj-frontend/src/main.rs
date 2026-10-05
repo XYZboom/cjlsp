@@ -115,71 +115,20 @@ fn dump_ast(src: &str) -> ExitCode {
 
 /// Default: parse + sema and report diagnostics (SCAN-format text).
 fn parse_and_report(src: &str, path: &str, diagnostic_format: &str) -> ExitCode {
-    // Lexer errors (unknown token, illegal number suffix...) surface as
-    // diagnostics, matching the LSP pipeline (lexer runs before the parser).
-    let mut lexer = Lexer::new(src);
-    let toks = lexer.tokenize();
-    let lex_diags: Vec<cj_diag::Diag> = lexer
-        .errors
-        .iter()
-        .map(|e| cj_diag::Diag::error(e.pos.line, e.pos.column, e.message.clone()))
-        .collect();
-    let mut parser = Parser::new(src, toks);
-    let file = parser.run();
-    // semantic analysis: symbol collection (redefinition) + dependency graph
-    let collector = cj_sema::Collector::new();
-    let sema_result = collector.collect_file(&file);
-    let mut pkg = cj_sema::PackageTable::default();
-    pkg.merge(&sema_result);
-    let mut resolver = cj_sema::resolver::Resolver::new(&pkg);
-    resolver.resolve_file(&file);
-    let resolve_diags = resolver.take_diags();
-    let dep_graph = cj_sema::dep_graph::DepGraph::build(&[&file]);
-    let dep_diags = dep_graph.detect_cycles();
-    // Bare-name call checks (undeclared callee, arity, argument literals).
-    let call_diags = cj_sema::typecheck::check_calls(&file, &sema_result.func_sigs);
-    let source_lines: Vec<String> = src.lines().map(String::from).collect();
-    let fmt = cj_diag::TextFormatter {
-        file_name: path,
-        source_lines: &source_lines,
-    };
-    let mut errors = 0;
-    let mut warnings = 0;
-    let diagnostics: Vec<cj_diag::Diag> = lex_diags
-        .iter()
-        .chain(parser.diags.iter())
-        .chain(sema_result.diags.iter())
-        .chain(resolve_diags.iter())
-        .chain(dep_diags.iter())
-        .chain(call_diags.iter())
-        .cloned()
-        .collect();
-    for d in &diagnostics {
-        match d.severity {
-            cj_diag::Severity::Warning => warnings += 1,
-            _ => errors += 1,
-        }
-        if diagnostic_format == "text" {
-            eprint!("{}", fmt.render(d));
-        }
-    }
+    let output = cj_frontend::analyze_source(src, path);
     if diagnostic_format == "json" {
         let json = cj_diag::JsonFormatter { file_name: path }
-            .render(&diagnostics)
+            .render(&output.diagnostics)
             .expect("diagnostic JSON serialization cannot fail");
         eprintln!("{json}");
         return ExitCode::SUCCESS;
     }
-    if errors > 0 {
-        eprint!("{}", cj_diag::render_summary(errors, warnings));
-    } else if lex_diags.is_empty()
-        && parser.diags.is_empty()
-        && sema_result.diags.is_empty()
-        && dep_diags.is_empty()
-    {
+    if output.diagnostics.is_empty() {
         eprintln!("// parse OK");
-    } else {
+    } else if output.rendered.is_empty() {
         eprintln!("// warnings only");
+    } else {
+        eprint!("{}", output.rendered);
     }
     ExitCode::SUCCESS
 }
