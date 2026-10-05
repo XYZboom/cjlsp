@@ -34,6 +34,8 @@ pub fn detect_overload_conflicts(file: &File) -> Vec<Diag> {
             .any(|(n2, p2, _, _)| n2 == name && same_signature(params, p2));
         if conflict {
             diags.push(Diag {
+                code: None,
+                category: None,
                 severity: Severity::Error,
                 message: format!("function '{name}' has overload conflicts"),
                 line: *line,
@@ -44,6 +46,11 @@ pub fn detect_overload_conflicts(file: &File) -> Vec<Diag> {
                 notes: Vec::new(),
                 tags: Vec::new(),
                 fix: None,
+                related_locations: Vec::new(),
+                expected: None,
+                actual: None,
+                candidates: Vec::new(),
+                suggestions: Vec::new(),
             });
         }
     }

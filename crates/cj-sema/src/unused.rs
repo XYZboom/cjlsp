@@ -772,6 +772,8 @@ fn unused_diag(
     // `range.end = start + name length`), not a single character.
     let end_col = col + name.chars().count() as u32;
     Diag {
+        code: None,
+        category: None,
         severity: Severity::Hint,
         message: format!("{label} '{name}' is declared but never used"),
         line,
@@ -787,6 +789,11 @@ fn unused_diag(
             start_line,
             start_col,
         }),
+        related_locations: Vec::new(),
+        expected: None,
+        actual: None,
+        candidates: Vec::new(),
+        suggestions: Vec::new(),
     }
 }
 

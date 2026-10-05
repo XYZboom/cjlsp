@@ -98,6 +98,11 @@ mod tests {
     fn parse_errors_collected() {
         let (_, diags) = parse("func f( { }");
         assert!(!diags.is_empty(), "expected parse errors");
+        assert!(diags.iter().any(|diag| diag.code.is_some()));
+        assert!(diags
+            .iter()
+            .filter(|diag| diag.code.is_some())
+            .all(|diag| diag.category == Some("parser")));
     }
 
     #[test]

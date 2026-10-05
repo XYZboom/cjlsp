@@ -61,6 +61,8 @@ pub fn check_package(file: &File, expected: Option<&str>) -> Vec<Diag> {
                  the compiler option `-Woff unused`"
             );
             diags.push(Diag {
+                code: None,
+                category: None,
                 severity: Severity::Hint,
                 message: msg,
                 line: pos.line,
@@ -71,6 +73,11 @@ pub fn check_package(file: &File, expected: Option<&str>) -> Vec<Diag> {
                 notes: Vec::new(),
                 tags: Vec::new(),
                 fix: None,
+                related_locations: Vec::new(),
+                expected: None,
+                actual: None,
+                candidates: Vec::new(),
+                suggestions: Vec::new(),
             });
         }
 

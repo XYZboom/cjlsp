@@ -17,8 +17,11 @@ pub use templates::DiagId;
 
 use std::fmt::Write;
 
+use serde::Serialize;
+
 /// Severity of a diagnostic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Severity {
     Note,
     Hint,
@@ -69,9 +72,57 @@ pub struct DiagFix {
     pub start_col: u32,
 }
 
+/// A 1-based source position, as used by text diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Position {
+    pub line: u32,
+    pub column: u32,
+}
+
+/// A source range whose end follows the existing exclusive span convention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SourceRange {
+    pub start: Position,
+    pub end: Position,
+}
+
+/// A typed source location suitable for machine consumers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SourceLocation {
+    pub file: String,
+    pub range: SourceRange,
+}
+
+/// A secondary location related to a diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RelatedLocation {
+    pub location: SourceLocation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// A source edit proposed by a diagnostic suggestion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TextEdit {
+    pub location: SourceLocation,
+    pub replacement: String,
+}
+
+/// A general-purpose suggestion, optionally carrying applicable edits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Suggestion {
+    pub message: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub edits: Vec<TextEdit>,
+}
+
 /// A single diagnostic message with an optional source range.
 #[derive(Debug, Clone)]
 pub struct Diag {
+    /// Stable string identifier; never an enum ordinal.
+    pub code: Option<&'static str>,
+    /// Stable producer category such as `parser` or `lexer`.
+    pub category: Option<&'static str>,
     pub severity: Severity,
     pub message: String,
     /// 1-based line/col of the start of the highlighted range.
@@ -88,11 +139,18 @@ pub struct Diag {
     pub tags: Vec<i32>,
     /// Optional quickfix (unused-symbol removal) the editor can apply.
     pub fix: Option<DiagFix>,
+    pub related_locations: Vec<RelatedLocation>,
+    pub expected: Option<String>,
+    pub actual: Option<String>,
+    pub candidates: Vec<String>,
+    pub suggestions: Vec<Suggestion>,
 }
 
 impl Diag {
     pub fn error(line: u32, col: u32, message: impl Into<String>) -> Self {
         Diag {
+            code: None,
+            category: None,
             severity: Severity::Error,
             message: message.into(),
             line,
@@ -103,11 +161,18 @@ impl Diag {
             notes: Vec::new(),
             tags: Vec::new(),
             fix: None,
+            related_locations: Vec::new(),
+            expected: None,
+            actual: None,
+            candidates: Vec::new(),
+            suggestions: Vec::new(),
         }
     }
 
     pub fn warning(line: u32, col: u32, message: impl Into<String>) -> Self {
         Diag {
+            code: None,
+            category: None,
             severity: Severity::Warning,
             message: message.into(),
             line,
@@ -118,6 +183,11 @@ impl Diag {
             notes: Vec::new(),
             tags: Vec::new(),
             fix: None,
+            related_locations: Vec::new(),
+            expected: None,
+            actual: None,
+            candidates: Vec::new(),
+            suggestions: Vec::new(),
         }
     }
 
@@ -135,6 +205,92 @@ impl Diag {
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
+    }
+
+    pub fn with_id(mut self, id: DiagId) -> Self {
+        self.code = Some(id.code());
+        self.category = Some(id.category());
+        self
+    }
+
+    pub fn source_range(&self) -> SourceRange {
+        SourceRange {
+            start: Position {
+                line: self.line,
+                column: self.col,
+            },
+            end: Position {
+                line: self.end_line,
+                column: self.end_col,
+            },
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonDiagnostic<'a> {
+    severity: Severity,
+    message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category: Option<&'static str>,
+    location: SourceLocation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    here: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    notes: &'a Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actual: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    candidates: &'a Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    related_locations: &'a Vec<RelatedLocation>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    suggestions: &'a Vec<Suggestion>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonDocument<'a> {
+    schema_version: u32,
+    diagnostics: Vec<JsonDiagnostic<'a>>,
+}
+
+/// Renders a deterministic compact JSON document for IDE and AI consumers.
+pub struct JsonFormatter<'a> {
+    pub file_name: &'a str,
+}
+
+impl JsonFormatter<'_> {
+    pub fn render(&self, diagnostics: &[Diag]) -> serde_json::Result<String> {
+        let diagnostics = diagnostics
+            .iter()
+            .map(|diag| JsonDiagnostic {
+                severity: diag.severity,
+                message: &diag.message,
+                code: diag.code,
+                category: diag.category,
+                location: SourceLocation {
+                    file: self.file_name.to_string(),
+                    range: diag.source_range(),
+                },
+                here: diag.here.as_deref(),
+                notes: &diag.notes,
+                expected: diag.expected.as_deref(),
+                actual: diag.actual.as_deref(),
+                candidates: &diag.candidates,
+                related_locations: &diag.related_locations,
+                suggestions: &diag.suggestions,
+            })
+            .collect();
+        serde_json::to_string(&JsonDocument {
+            schema_version: 1,
+            diagnostics,
+        })
     }
 }
 
@@ -244,5 +400,41 @@ error: expected declaration, found '@!'
         out.push_str(&render_summary(2, 0));
         assert!(out.contains("2 errors generated, 2 errors printed."));
         assert!(out.matches("error:").count() >= 2);
+    }
+
+    #[test]
+    fn json_is_structured_and_omits_absent_fields() {
+        let mut d = Diag::error(2, 3, "expected declaration")
+            .with_span(2, 5)
+            .with_id(DiagId::PARSE_EXPECTED_DECL);
+        d.expected = Some("declaration".into());
+        d.actual = Some("expression".into());
+        d.candidates.push("func declaration".into());
+        d.suggestions.push(Suggestion {
+            message: "replace the token".into(),
+            edits: vec![TextEdit {
+                location: SourceLocation {
+                    file: "test.cj".into(),
+                    range: d.source_range(),
+                },
+                replacement: "func".into(),
+            }],
+        });
+
+        let json = JsonFormatter {
+            file_name: "test.cj",
+        }
+        .render(&[d])
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["diagnostics"][0]["code"], "parse_expected_decl");
+        assert_eq!(value["diagnostics"][0]["category"], "parser");
+        assert_eq!(
+            value["diagnostics"][0]["location"]["range"]["start"]["line"],
+            2
+        );
+        assert!(value["diagnostics"][0].get("relatedLocations").is_none());
+        assert!(!json.contains(":null"));
     }
 }

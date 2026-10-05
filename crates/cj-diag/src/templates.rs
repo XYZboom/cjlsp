@@ -22,6 +22,8 @@ pub enum DiagId {
     PARSE_VARRAY_WITH_PAREN,
     /// error (from parse_expected_import)
     PARSE_EXPECTED_IMPORT,
+    /// error (from parse_expected_module_name)
+    PARSE_EXPECTED_MODULE_NAME,
     /// error (from parse_expected_right_delimiter)
     PARSE_EXPECTED_RIGHT_DELIMITER,
     /// error (from parse_not_allowed_raw_identifier)
@@ -292,6 +294,8 @@ pub enum DiagId {
     PARSE_CONFLICT_ANNOTATION,
     /// error (from parse_fail_expected_annotation)
     PARSE_FAIL_EXPECTED_ANNOTATION,
+    /// error (from parse_common_and_specific_in_the_same_file)
+    PARSE_COMMON_AND_SPECIFIC_IN_THE_SAME_FILE,
     /// error (from parse_common_function_must_have_return_type)
     PARSE_COMMON_FUNCTION_MUST_HAVE_RETURN_TYPE,
     /// error (from parse_specific_function_must_have_return_type)
@@ -306,8 +310,10 @@ pub enum DiagId {
     PARSE_CJMP_OUTDECL_MISS_MATCH,
     /// error (from parse_cjmp_static_init)
     PARSE_CJMP_STATIC_INIT,
-    /// error (from parse_unexpected_cjmp_decl)
-    PARSE_UNEXPECTED_CJMP_DECL,
+    /// error (from parse_common_in_non_common_file)
+    PARSE_COMMON_IN_NON_COMMON_FILE,
+    /// error (from parse_specific_in_non_specific_file)
+    PARSE_SPECIFIC_IN_NON_SPECIFIC_FILE,
     /// error (from parse_cjmp_generic_decl)
     PARSE_CJMP_GENERIC_DECL,
     /// error (from parse_cjmp_pattern_decl)
@@ -368,8 +374,12 @@ pub enum DiagId {
     PARSE_JAVA_MIRROR_FUNCTION_CANNOT_HAVE_BODY,
     /// error (from parse_java_mirror_function_must_have_return_type)
     PARSE_JAVA_MIRROR_FUNCTION_MUST_HAVE_RETURN_TYPE,
-    /// error (from parse_java_mirror_prop_is_forbidden)
-    PARSE_JAVA_MIRROR_PROP_IS_FORBIDDEN,
+    /// error (from parse_java_mirror_prop_cannot_have_setter)
+    PARSE_JAVA_MIRROR_PROP_CANNOT_HAVE_SETTER,
+    /// error (from parse_java_mirror_prop_cannot_have_getter)
+    PARSE_JAVA_MIRROR_PROP_CANNOT_HAVE_GETTER,
+    /// warning (from parse_java_mirror_prop_is_deprecated)
+    PARSE_JAVA_MIRROR_PROP_IS_DEPRECATED,
     /// error (from parse_java_mirror_decl_cannot_have_primary_ctor)
     PARSE_JAVA_MIRROR_DECL_CANNOT_HAVE_PRIMARY_CTOR,
     /// error (from parse_java_mirror_constructor_cannot_have_body)
@@ -392,6 +402,8 @@ pub enum DiagId {
     PARSE_JAVA_IMPL_CANNOT_BE_SEALED,
     /// error (from parse_java_impl_cannot_have_static_init)
     PARSE_JAVA_IMPL_CANNOT_HAVE_STATIC_INIT,
+    /// error (from parse_java_mirror_cannot_have_open_prop)
+    PARSE_JAVA_MIRROR_CANNOT_HAVE_OPEN_PROP,
     /// error (from parse_java_impl_cannot_be_open)
     PARSE_JAVA_IMPL_CANNOT_BE_OPEN,
     /// error (from parse_java_impl_cannot_be_interface)
@@ -600,8 +612,8 @@ pub enum DiagId {
     SEMA_STATIC_FUNCTION_OVERLOAD_CONFLICTS,
     /// error (from sema_use_mutable_func_alone)
     SEMA_USE_MUTABLE_FUNC_ALONE,
-    /// error (from sema_func_can_only_be_called)
-    SEMA_FUNC_CAN_ONLY_BE_CALLED,
+    /// error (from sema_unsafe_func_can_only_be_called)
+    SEMA_UNSAFE_FUNC_CAN_ONLY_BE_CALLED,
     /// error (from sema_ambiguous_match_primitive_extend)
     SEMA_AMBIGUOUS_MATCH_PRIMITIVE_EXTEND,
     /// error (from sema_immutable_access_mutable_func)
@@ -714,8 +726,6 @@ pub enum DiagId {
     SEMA_SPAWN_ARG_INVALID,
     /// warning (from sema_spawn_arg_no_effect)
     SEMA_SPAWN_ARG_NO_EFFECT,
-    /// error (from sema_spawn_capture_var)
-    SEMA_SPAWN_CAPTURE_VAR,
     /// error (from sema_interface_call_with_unimplemented_call)
     SEMA_INTERFACE_CALL_WITH_UNIMPLEMENTED_CALL,
     /// error (from sema_type_uninitialized_static_field)
@@ -850,6 +860,18 @@ pub enum DiagId {
     SEMA_SHADOW_CANNOT_IN_TYPE_ARGS,
     /// error (from sema_unsupported_type_argument_in_java_interop)
     SEMA_UNSUPPORTED_TYPE_ARGUMENT_IN_JAVA_INTEROP,
+    /// error (from sema_cjmapping_struct_generic_not_supported)
+    SEMA_CJMAPPING_STRUCT_GENERIC_NOT_SUPPORTED,
+    /// error (from sema_cjmapping_struct_inheritance_interface_not_supported)
+    SEMA_CJMAPPING_STRUCT_INHERITANCE_INTERFACE_NOT_SUPPORTED,
+    /// error (from sema_cjmapping_decl_not_supported)
+    SEMA_CJMAPPING_DECL_NOT_SUPPORTED,
+    /// error (from sema_cjmapping_method_arg_not_supported)
+    SEMA_CJMAPPING_METHOD_ARG_NOT_SUPPORTED,
+    /// error (from sema_cjmapping_method_ret_unsupported)
+    SEMA_CJMAPPING_METHOD_RET_UNSUPPORTED,
+    /// error (from sema_cj_mapping_generic_method_not_get_instance_config)
+    SEMA_CJ_MAPPING_GENERIC_METHOD_NOT_GET_INSTANCE_CONFIG,
     /// error (from sema_varray_size_match)
     SEMA_VARRAY_SIZE_MATCH,
     /// error (from sema_varray_args_number_mismatch)
@@ -860,14 +882,6 @@ pub enum DiagId {
     SEMA_VARRAY_IN_CFUNC,
     /// error (from sema_varray_arg_type_with_reftype)
     SEMA_VARRAY_ARG_TYPE_WITH_REFTYPE,
-    /// error (from sema_only_cfunc_can_use_annotation)
-    SEMA_ONLY_CFUNC_CAN_USE_ANNOTATION,
-    /// error (from sema_annotation_calling_conv_not_support)
-    SEMA_ANNOTATION_CALLING_CONV_NOT_SUPPORT,
-    /// error (from sema_annotation_invalid_args_type)
-    SEMA_ANNOTATION_INVALID_ARGS_TYPE,
-    /// error (from sema_illegal_scope_use_of_annotation)
-    SEMA_ILLEGAL_SCOPE_USE_OF_ANNOTATION,
     /// error (from sema_invalid_cfunc_return_type)
     SEMA_INVALID_CFUNC_RETURN_TYPE,
     /// error (from sema_mock_unsupported_type)
@@ -896,8 +910,6 @@ pub enum DiagId {
     SEMA_MISMATCHING_HANDLE_BLOCK,
     /// error (from sema_return_in_try_handle_block)
     SEMA_RETURN_IN_TRY_HANDLE_BLOCK,
-    /// error (from sema_try_handle_capture_var)
-    SEMA_TRY_HANDLE_CAPTURE_VAR,
     /// error (from sema_command_incompatible_type)
     SEMA_COMMAND_INCOMPATIBLE_TYPE,
     /// error (from sema_resume_throwing_mismatch_type)
@@ -1004,6 +1016,8 @@ pub enum DiagId {
     SEMA_JAVA_INTEROP_NOT_SUPPORTED,
     /// error (from sema_extend_ref_target_cannot_be_java_impl)
     SEMA_EXTEND_REF_TARGET_CANNOT_BE_JAVA_IMPL,
+    /// error (from sema_variable_of_java_type)
+    SEMA_VARIABLE_OF_JAVA_TYPE,
     /// error (from sema_generic_parameter_of_java_type)
     SEMA_GENERIC_PARAMETER_OF_JAVA_TYPE,
     /// error (from sema_java_has_default_annotation_args)
@@ -1054,6 +1068,10 @@ pub enum DiagId {
     SEMA_OBJC_IMPL_MUST_HAVE_OBJC_MIRROR_SUPER_CLASS,
     /// error (from sema_objc_setter_name_on_immutable_prop)
     SEMA_OBJC_SETTER_NAME_ON_IMMUTABLE_PROP,
+    /// error (from sema_objc_cjmapping_inheritance_interface_not_supported)
+    SEMA_OBJC_CJMAPPING_INHERITANCE_INTERFACE_NOT_SUPPORTED,
+    /// error (from sema_objc_cjmapping_generic_not_supported)
+    SEMA_OBJC_CJMAPPING_GENERIC_NOT_SUPPORTED,
     /// error (from sema_foreign_name_appeared_in_child)
     SEMA_FOREIGN_NAME_APPEARED_IN_CHILD,
     /// error (from sema_foreign_name_conflicting_annotation)
@@ -1154,6 +1172,10 @@ pub enum DiagId {
     CHIR_EVAL_SUPPORT,
     /// error (from chir_annotation_not_applicable)
     CHIR_ANNOTATION_NOT_APPLICABLE,
+    /// error (from frontend_can_not_handle_to_many_chir)
+    FRONTEND_CAN_NOT_HANDLE_TO_MANY_CHIR,
+    /// error (from chir_native_ffi_java_illegal_type_cast)
+    CHIR_NATIVE_FFI_JAVA_ILLEGAL_TYPE_CAST,
     /// error (from chir_diag_end)
     CHIR_DIAG_END,
     /// error (from import_package_diag_begin)
@@ -1206,8 +1228,6 @@ pub enum DiagId {
     FEATURE_NULL_DECLARATION,
     /// error (from feature_different_consistency)
     FEATURE_DIFFERENT_CONSISTENCY,
-    /// error (from feature_is_not_subset_of_child_set)
-    FEATURE_IS_NOT_SUBSET_OF_CHILD_SET,
     /// error (from import_package_diag_end)
     IMPORT_PACKAGE_DIAG_END,
     /// error (from module_diag_begin)
@@ -1226,18 +1246,1694 @@ pub enum DiagId {
     MODULE_LOADED_AST_FAILED,
     /// error (from module_same_name_with_indirect_dependent_pkg)
     MODULE_SAME_NAME_WITH_INDIRECT_DEPENDENT_PKG,
-    /// warning (from module_common_cjo_no_options)
-    MODULE_COMMON_CJO_NO_OPTIONS,
-    /// error (from module_common_cjo_debug_mismatch)
-    MODULE_COMMON_CJO_DEBUG_MISMATCH,
-    /// error (from module_common_cjo_opt_mismatch)
-    MODULE_COMMON_CJO_OPT_MISMATCH,
     /// error (from module_unsupport_circular_dependencies)
     MODULE_UNSUPPORT_CIRCULAR_DEPENDENCIES,
     /// error (from module_common_cjo_wrong_package)
     MODULE_COMMON_CJO_WRONG_PACKAGE,
     /// error (from module_diag_end)
     MODULE_DIAG_END,
+}
+
+impl DiagId {
+    /// Stable diagnostic code from the official definition identifier.
+    pub const fn code(self) -> &'static str {
+        match self {
+            DiagId::PARSE_DIAG_BEGIN => "parse_diag_begin",
+            DiagId::PARSE_EXPECTED_NAME => "parse_expected_name",
+            DiagId::PARSE_UNEXPECTED_NEWLINE_BETWEEN_AT_AND_MC => {
+                "parse_unexpected_newline_between_at_and_mc"
+            }
+            DiagId::PARSE_EXPECT_ESCAPE_DOLLAR_TOKEN => "parse_expect_escape_dollar_token",
+            DiagId::PARSE_VARRAY_TYPE_PARAMETER => "parse_varray_type_parameter",
+            DiagId::PARSE_VARRAY_TYPE_ARGS_MISMATCH => "parse_varray_type_args_mismatch",
+            DiagId::PARSE_EXPECT_INTEGER_LITERAL_VARRAY => "parse_expect_integer_literal_varray",
+            DiagId::PARSE_VARRAY_WITH_PAREN => "parse_varray_with_paren",
+            DiagId::PARSE_EXPECTED_IMPORT => "parse_expected_import",
+            DiagId::PARSE_EXPECTED_MODULE_NAME => "parse_expected_module_name",
+            DiagId::PARSE_EXPECTED_RIGHT_DELIMITER => "parse_expected_right_delimiter",
+            DiagId::PARSE_NOT_ALLOWED_RAW_IDENTIFIER => "parse_not_allowed_raw_identifier",
+            DiagId::PARSE_INVALID_RETURN_TYPE => "parse_invalid_return_type",
+            DiagId::PARSE_UNMATCHED_RIGHT_DELIMITER => "parse_unmatched_right_delimiter",
+            DiagId::PARSE_EXPECTED_LITERAL => "parse_expected_literal",
+            DiagId::PARSE_EXPECTED_PATTERN => "parse_expected_pattern",
+            DiagId::PARSE_EXPECTED_BACKARROW_IN_LET_COND => "parse_expected_backarrow_in_let_cond",
+            DiagId::PARSE_EXPECTED_LEFT_PAREN_AFTER => "parse_expected_left_paren_after",
+            DiagId::PARSE_EXPECTED_LEFT_ANGLE_AFTER => "parse_expected_left_angle_after",
+            DiagId::PARSE_EXPECTED_EXPR_OR_DECL_IN => "parse_expected_expr_or_decl_in",
+            DiagId::PARSE_EXPECTED_CATCH_OR_FINALLY_IN_TRY => {
+                "parse_expected_catch_or_finally_in_try"
+            }
+            DiagId::PARSE_EXPECTED_CATCH_OR_HANDLE_OR_FINALLY_IN_TRY => {
+                "parse_expected_catch_or_handle_or_finally_in_try"
+            }
+            DiagId::PARSE_EXPECTED_COLON_IN_CATCH_PATTERN => {
+                "parse_expected_colon_in_catch_pattern"
+            }
+            DiagId::PARSE_EXPECTED_COLON_IN_EFFECT_PATTERN => {
+                "parse_expected_colon_in_effect_pattern"
+            }
+            DiagId::PARSE_EXPECTED_WILDCARD_OR_EXCEPTION_PATTERN => {
+                "parse_expected_wildcard_or_exception_pattern"
+            }
+            DiagId::PARSE_EXPECTED_WILDCARD_OR_EFFECT_PATTERN => {
+                "parse_expected_wildcard_or_effect_pattern"
+            }
+            DiagId::PARSE_EXPECTED_DOUBLE_ARROW_IN_CASE => "parse_expected_double_arrow_in_case",
+            DiagId::PARSE_SELECTOR_OR_MATCH_EXPRESSION_BODY => {
+                "parse_selector_or_match_expression_body"
+            }
+            DiagId::PARSE_EXPECTED_LEFT_BRACE => "parse_expected_left_brace",
+            DiagId::PARSE_EXPECTED_LEFT_PAREN => "parse_expected_left_paren",
+            DiagId::PARSE_EXPECTED_CASE => "parse_expected_case",
+            DiagId::PARSE_UNEXPECTED_LINE_BREAK => "parse_unexpected_line_break",
+            DiagId::PARSE_EXPECTED_PAREN_OR_BRACE_AFTER_TRY => {
+                "parse_expected_paren_or_brace_after_try"
+            }
+            DiagId::PARSE_EXPECTED_ASSIGNMENT => "parse_expected_assignment",
+            DiagId::PARSE_EXPECTED_IN_FORIN_EXPRESSION => "parse_expected_in_forin_expression",
+            DiagId::PARSE_EXPECTED_WHILE_IN_DO_WHILE => "parse_expected_while_in_do_while",
+            DiagId::PARSE_EXPECTED_DOUBLE_ARROW_IN_LAMBDA => {
+                "parse_expected_double_arrow_in_lambda"
+            }
+            DiagId::PARSE_EXPECTED_CCD_IN_LAMBDA => "parse_expected_ccd_in_lambda",
+            DiagId::PARSE_EXPECTED_CHARACTER => "parse_expected_character",
+            DiagId::PARSE_EXPECTED_CHARACTER_AFTER => "parse_expected_character_after",
+            DiagId::PARSE_IMPORTING_BY_PACKAGE_NAME_IS_NOT_SUPPORTED => {
+                "parse_importing_by_package_name_is_not_supported"
+            }
+            DiagId::PARSE_EXPECTED_DECL => "parse_expected_decl",
+            DiagId::PARSE_EXPECTED_ONE_OF_IDENTIFIER_OR_PATTERN => {
+                "parse_expected_one_of_identifier_or_pattern"
+            }
+            DiagId::PARSE_EXPECTED_GET_OR_SET_IN_PROP => "parse_expected_get_or_set_in_prop",
+            DiagId::PARSE_EXPECTED_WHERE_BRACE => "parse_expected_where_brace",
+            DiagId::PARSE_EXPECTED_LT_BRACE => "parse_expected_lt_brace",
+            DiagId::PARSE_EXPECTED_LT_PAREN => "parse_expected_lt_paren",
+            DiagId::PARSE_EXPECTED_IDENTIFIER_LP => "parse_expected_identifier_lp",
+            DiagId::PARSE_EXPECTED_DOT_LPAREN => "parse_expected_dot_lparen",
+            DiagId::PARSE_EXPECTED_ARROW_IN_FUNC_TYPE => "parse_expected_arrow_in_func_type",
+            DiagId::PARSE_UNEXPECTED_COLON_IN_RANGE => "parse_unexpected_colon_in_range",
+            DiagId::PARSE_EXPECTED_LSQUARE_AFTER => "parse_expected_lsquare_after",
+            DiagId::PARSE_EXPECTED_TYPE_ARGUMENT => "parse_expected_type_argument",
+            DiagId::PARSE_EXPECTED_PARAMETER_RP => "parse_expected_parameter_rp",
+            DiagId::PARSE_EXPECTED_NO_NEWLINE_AFTER => "parse_expected_no_newline_after",
+            DiagId::PARSE_EXPECTED_IF_LET_ANDAND => "parse_expected_if_let_andand",
+            DiagId::PARSE_DUPLICATED_ITEM => "parse_duplicated_item",
+            DiagId::PARSE_NL_WARNING => "parse_nl_warning",
+            DiagId::PARSE_ILLEGAL_FUNCTION_NAME => "parse_illegal_function_name",
+            DiagId::PARSE_EXPECTED_MACRO_DECL_DEFINE_IN_MACRO_PACKAGE => {
+                "parse_expected_macro_decl_define_in_macro_package"
+            }
+            DiagId::PARSE_EXPECTED_PUBLIC_BEFORE_MACRO_DECL => {
+                "parse_expected_public_before_macro_decl"
+            }
+            DiagId::PARSE_MACRO_UNEXPECTED_EMPTY_PARAMETER => {
+                "parse_macro_unexpected_empty_parameter"
+            }
+            DiagId::PARSE_MACRO_EXPECTED_RIGHT_PARAMETER_NUMS => {
+                "parse_macro_expected_right_parameter_nums"
+            }
+            DiagId::PARSE_MACRO_ILLEGAL_PARAM_TYPE => "parse_macro_illegal_param_type",
+            DiagId::PARSE_MACRO_ILLEGAL_RET_TYPE => "parse_macro_illegal_ret_type",
+            DiagId::PARSE_MACRO_ILLEGAL_NAMED_PARAM => "parse_macro_illegal_named_param",
+            DiagId::PARSE_MACRO_DEFINE_CONFLICTED_WITH_BUILTIN => {
+                "parse_macro_define_conflicted_with_builtin"
+            }
+            DiagId::PARSE_MACRO_CALL_ILLEGAL_WITH_BUILTIN => {
+                "parse_macro_call_illegal_with_builtin"
+            }
+            DiagId::PARSE_UNEXPECTED_DECLARATION_IN_SCOPE => {
+                "parse_unexpected_declaration_in_scope"
+            }
+            DiagId::PARSE_CONST_EXPECTED_INITIALIZER => "parse_const_expected_initializer",
+            DiagId::PARSE_UNEXPECTED_CONST_MODIFIER_ON_VARIABLE => {
+                "parse_unexpected_const_modifier_on_variable"
+            }
+            DiagId::PARSE_VAR_MUST_BE_INITIALIZED => "parse_var_must_be_initialized",
+            DiagId::PARSE_EXPECTED_ONE_OF_TYPE_OR_INITIALIZER => {
+                "parse_expected_one_of_type_or_initializer"
+            }
+            DiagId::PARSE_EXPECTED_TYPE_OR_INIT_IN_PATTERN => {
+                "parse_expected_type_or_init_in_pattern"
+            }
+            DiagId::PARSE_NAMED_PARAMETER_AFTER_UNNAMED => "parse_named_parameter_after_unnamed",
+            DiagId::PARSE_MEMBER_PARAMETER_AFTER_REGULAR => "parse_member_parameter_after_regular",
+            DiagId::PARSE_DECL_CANNOT_INHERIT_THEIR_SELF => "parse_decl_cannot_inherit_their_self",
+            DiagId::PARSE_INTRINSIC_FUNCTION_MUST_BE_TOPLEVEL => {
+                "parse_intrinsic_function_must_be_toplevel"
+            }
+            DiagId::PARSE_INTRINSIC_FUNCTION_CANNOT_HAVE_BODY => {
+                "parse_intrinsic_function_cannot_have_body"
+            }
+            DiagId::PARSE_ABSTRACT_FUNC_MUST_HAVE_RETURN_TYPE => {
+                "parse_abstract_func_must_have_return_type"
+            }
+            DiagId::PARSE_DUPLICATED_GET_OR_SET => "parse_duplicated_get_or_set",
+            DiagId::PARSE_UNKNOWN_ENUM_CONSTRUCTOR => "parse_unknown_enum_constructor",
+            DiagId::PARSE_GETTER_SETTER_CANNOT_BE_GENERIC => {
+                "parse_getter_setter_cannot_be_generic"
+            }
+            DiagId::PARSE_UNEXPECTED_WHERE => "parse_unexpected_where",
+            DiagId::PARSE_SETTER_MUST_CONTAIN_ONE_PARAMETER => {
+                "parse_setter_must_contain_one_parameter"
+            }
+            DiagId::PARSE_SETTER_CAN_ONLY_ACCEPT_ONE_PARAMETER => {
+                "parse_setter_can_only_accept_one_parameter"
+            }
+            DiagId::PARSE_DUPLICATED_INTRINSIC_FUNCTION => "parse_duplicated_intrinsic_function",
+            DiagId::PARSE_MISSING_BODY => "parse_missing_body",
+            DiagId::PARSE_INVALID_SUPER_DECLARATION => "parse_invalid_super_declaration",
+            DiagId::PARSE_STATIC_INIT_CAN_NOT_ACCEPT_ANY_PARAMETER => {
+                "parse_static_init_can_not_accept_any_parameter"
+            }
+            DiagId::PARSE_FINALIZER_CAN_NOT_ACCEPT_ANY_PARAMETER => {
+                "parse_finalizer_can_not_accept_any_parameter"
+            }
+            DiagId::PARSE_INVALID_QUOTE_DOLLAR_EXPR => "parse_invalid_quote_dollar_expr",
+            DiagId::PARSE_UNEXPECTED_LAMBDA_EXPR_IN_TOPLEVEL => {
+                "parse_unexpected_lambda_expr_in_toplevel"
+            }
+            DiagId::PARSE_TRAILING_CLOSURE_ONLY_FOLLOW_NAME => {
+                "parse_trailing_closure_only_follow_name"
+            }
+            DiagId::PARSE_INVALID_LEFT_HAND_EXPR => "parse_invalid_left_hand_expr",
+            DiagId::PARSE_CHAINED_NONE_ASSOCIATIVE => "parse_chained_none_associative",
+            DiagId::PARSE_DUPLICATED_STEP_OP => "parse_duplicated_step_op",
+            DiagId::PARSE_INVALID_STEP_OP => "parse_invalid_step_op",
+            DiagId::PARSE_EXPECTED_EXPRESSION => "parse_expected_expression",
+            DiagId::PARSE_INVALID_INCRE_EXPR => "parse_invalid_incre_expr",
+            DiagId::PARSE_UNRECOGNIZED_TOKEN_AFTER_MACRO_NODE => {
+                "parse_unrecognized_token_after_macro_node"
+            }
+            DiagId::PARSE_EXPECTED_OPERATOR_OR_END => "parse_expected_operator_or_end",
+            DiagId::PARSE_CANNOT_HAVE_ASSI_IN_INIT => "parse_cannot_have_assi_in_init",
+            DiagId::PARSE_CASE_BODY_CANNOT_BE_EMPTY => "parse_case_body_cannot_be_empty",
+            DiagId::PARSE_REDEFINED_RESOURCE_NAME => "parse_redefined_resource_name",
+            DiagId::PARSE_NEWLINE_NOT_ALLOWED_BETWEEN_SPAWN_AND_ARGUMENT => {
+                "parse_newline_not_allowed_between_spawn_and_argument"
+            }
+            DiagId::PARSE_EXPECTED_NO_ARGUMENTS_IN_SPAWN => "parse_expected_no_arguments_in_spawn",
+            DiagId::PARSE_INVALID_OVERLOADED_OPERATOR => "parse_invalid_overloaded_operator",
+            DiagId::PARSE_EMPTY_STRING_INTERPOLATION => "parse_empty_string_interpolation",
+            DiagId::PARSE_INVALID_UNICODE_SCALAR => "parse_invalid_unicode_scalar",
+            DiagId::PARSE_WILDCARD_CAN_NOT_BE_USED_AS_MEMBER_NAME => {
+                "parse_wildcard_can_not_be_used_as_member_name"
+            }
+            DiagId::PARSE_UNEXPECTED_EXPECTED_FOUND => "parse_unexpected_expected_found",
+            DiagId::PARSE_CANNOT_OPERATOR_A_TUPLE => "parse_cannot_operator_a_tuple",
+            DiagId::PARSE_EXPECTED_PARENTHESES => "parse_expected_parentheses",
+            DiagId::PARSE_THIS_TYPE_NOT_ALLOW => "parse_this_type_not_allow",
+            DiagId::PARSE_UNEXPECTED_TUPLE_DECL_TYPE => "parse_unexpected_tuple_decl_type",
+            DiagId::PARSE_EXPECTED_TYPE => "parse_expected_type",
+            DiagId::PARSE_NEWLINE_NOT_ALLOWED_BETWEEN_QUEST_AND_TYPE => {
+                "parse_newline_not_allowed_between_quest_and_type"
+            }
+            DiagId::PARSE_REDUNDANT_ARROW_AFTER_FUNC_TYPE => {
+                "parse_redundant_arrow_after_func_type"
+            }
+            DiagId::PARSE_ALL_PARAMETERS_MUST_BE_NAMED => "parse_all_parameters_must_be_named",
+            DiagId::PARSE_ONLY_TUPLE_AND_FUNC_TYPE_ALLOW_TYPE_PARAMETER_NAME => {
+                "parse_only_tuple_and_func_type_allow_type_parameter_name"
+            }
+            DiagId::PARSE_ILLEGAL_DECLARATION_PATTERN => "parse_illegal_declaration_pattern",
+            DiagId::PARSE_ILLEGAL_OR_PATTERN => "parse_illegal_or_pattern",
+            DiagId::PARSE_TUPLE_PATTERN_EXPECTED_MORE_FIELD => {
+                "parse_tuple_pattern_expected_more_field"
+            }
+            DiagId::PARSE_TYPE_PATTERN_IN_LET_COND => "parse_type_pattern_in_let_cond",
+            DiagId::PARSE_EXPECTED_MACRO_DECL_IN_MACRO_PACKAGE => {
+                "parse_expected_macro_decl_in_macro_package"
+            }
+            DiagId::PARSE_PACKAGE_AS_ALL => "parse_package_as_all",
+            DiagId::PARSE_PACKAGE_NAME_LENGTH_OVERFLOW => "parse_package_name_length_overflow",
+            DiagId::PARSE_PACKAGE_NAME_HAS_BACKTICK => "parse_package_name_has_backtick",
+            DiagId::PARSE_ILLEGAL_MACRO_EXPAND_INPUT_ARGS => {
+                "parse_illegal_macro_expand_input_args"
+            }
+            DiagId::PARSE_ILLEGAL_MACRO_EXPAND_ATTR_ARGS => "parse_illegal_macro_expand_attr_args",
+            DiagId::PARSE_ILLEGAL_MACRO_EXPAND_INPUT_ARGS_WITHOUT_PAREN => {
+                "parse_illegal_macro_expand_input_args_without_paren"
+            }
+            DiagId::PARSE_ILLEGAL_MACRO_EXPAND_INPUT_WITHOUT_PAREN_IN_PARAMLIST => {
+                "parse_illegal_macro_expand_input_without_paren_in_paramlist"
+            }
+            DiagId::PARSE_IFAVAILABLE_ARG_NO_NAME => "parse_ifavailable_arg_no_name",
+            DiagId::PARSE_IFAVAILABLE_NOT_LAMBDA => "parse_ifavailable_not_lambda",
+            DiagId::PARSE_UNEXPECTED_ANNO_ON => "parse_unexpected_anno_on",
+            DiagId::PARSE_UNEXPECTED_OVERFLOW_ANNOTATION => "parse_unexpected_overflow_annotation",
+            DiagId::PARSE_UNRECOGNIZED_EXPRESSION_IN_WHEN => {
+                "parse_unrecognized_expression_in_when"
+            }
+            DiagId::PARSE_UNRECOGNIZED_ATTR_IN_ANNO => "parse_unrecognized_attr_in_anno",
+            DiagId::PARSE_EMPTY_ATTRIBUTE => "parse_empty_attribute",
+            DiagId::PARSE_DUPLICATED_ATTR_VALUE => "parse_duplicated_attr_value",
+            DiagId::PARSE_UNSAFE_WILL_BE_IGNORED => "parse_unsafe_will_be_ignored",
+            DiagId::PARSE_DUPLICATED_ANNOTATION => "parse_duplicated_annotation",
+            DiagId::PARSE_CONFLICT_ANNOTATION => "parse_conflict_annotation",
+            DiagId::PARSE_FAIL_EXPECTED_ANNOTATION => "parse_fail_expected_annotation",
+            DiagId::PARSE_COMMON_AND_SPECIFIC_IN_THE_SAME_FILE => {
+                "parse_common_and_specific_in_the_same_file"
+            }
+            DiagId::PARSE_COMMON_FUNCTION_MUST_HAVE_RETURN_TYPE => {
+                "parse_common_function_must_have_return_type"
+            }
+            DiagId::PARSE_SPECIFIC_FUNCTION_MUST_HAVE_RETURN_TYPE => {
+                "parse_specific_function_must_have_return_type"
+            }
+            DiagId::PARSE_SPECIFIC_FUNCTION_PARAMETER_CANNOT_HAVE_DEFAULT_VALUE => {
+                "parse_specific_function_parameter_cannot_have_default_value"
+            }
+            DiagId::PARSE_SPECIFIC_MEMBER_MUST_HAVE_IMPLEMENTATION => {
+                "parse_specific_member_must_have_implementation"
+            }
+            DiagId::PARSE_EXPECTED_TYPE_WITH_CJMP_VAR => "parse_expected_type_with_cjmp_var",
+            DiagId::PARSE_CJMP_OUTDECL_MISS_MATCH => "parse_cjmp_outdecl_miss_match",
+            DiagId::PARSE_CJMP_STATIC_INIT => "parse_cjmp_static_init",
+            DiagId::PARSE_COMMON_IN_NON_COMMON_FILE => "parse_common_in_non_common_file",
+            DiagId::PARSE_SPECIFIC_IN_NON_SPECIFIC_FILE => "parse_specific_in_non_specific_file",
+            DiagId::PARSE_CJMP_GENERIC_DECL => "parse_cjmp_generic_decl",
+            DiagId::PARSE_CJMP_PATTERN_DECL => "parse_cjmp_pattern_decl",
+            DiagId::PARSE_CJMP_IN_COMMON_CTOR_REQUIRED => "parse_cjmp_in_common_ctor_required",
+            DiagId::PARSE_EXPLICITLY_ABSTRACT_ONLY_FOR_CJMP_ABSTRACT_CLASS => {
+                "parse_explicitly_abstract_only_for_cjmp_abstract_class"
+            }
+            DiagId::PARSE_ILLEGAL_MODIFIER_IN_SCOPE => "parse_illegal_modifier_in_scope",
+            DiagId::PARSE_CONFLICT_MODIFIER => "parse_conflict_modifier",
+            DiagId::PARSE_EXPECTED_NO_MODIFIER => "parse_expected_no_modifier",
+            DiagId::PARSE_DUPLICATE_MODIFIER => "parse_duplicate_modifier",
+            DiagId::PARSE_DUPLICATE_TYPE_PARAMETER_NAME => "parse_duplicate_type_parameter_name",
+            DiagId::PARSE_UNEXPECTED_TYPE_IN => "parse_unexpected_type_in",
+            DiagId::PARSE_REDUNDANT_MODIFIER => "parse_redundant_modifier",
+            DiagId::PARSE_VARIABLE_LENGTH_PARAMETER_CAN_NOT_BE_FIRST => {
+                "parse_variable_length_parameter_can_not_be_first"
+            }
+            DiagId::PARSE_VARIABLE_LENGTH_PARAMETER_MUST_IN_THE_END => {
+                "parse_variable_length_parameter_must_in_the_end"
+            }
+            DiagId::PARSE_VARIABLE_LENGTH_PARAMETER_ONLY_IN_THE_FOREIGN_FUNCTION => {
+                "parse_variable_length_parameter_only_in_the_foreign_function"
+            }
+            DiagId::PARSE_FOREIGN_FUNC_SHOULD_NOT_BE_GENERIC => {
+                "parse_foreign_func_should_not_be_generic"
+            }
+            DiagId::PARSE_FOREIGN_FUNC_MUST_DECLARE_RETURN_TYPE => {
+                "parse_foreign_func_must_declare_return_type"
+            }
+            DiagId::PARSE_FOREIGN_FUNCTION_WITH_BODY => "parse_foreign_function_with_body",
+            DiagId::PARSE_EXPECTED_STATIC_FOR_CONST_MEMBER_VAR => {
+                "parse_expected_static_for_const_member_var"
+            }
+            DiagId::PARSE_DEPRECATED_WRONG_ARGUMENT => "parse_deprecated_wrong_argument",
+            DiagId::PARSE_DEPRECATED_ARGUMENT_DUPLICATION => {
+                "parse_deprecated_argument_duplication"
+            }
+            DiagId::PARSE_DEPRECATED_ARGUMENTS_MUST_BE_LIT_CONST_EXPR => {
+                "parse_deprecated_arguments_must_be_lit_const_expr"
+            }
+            DiagId::PARSE_DEPRECATED_EMPTY_STRING_ARGUMENT => {
+                "parse_deprecated_empty_string_argument"
+            }
+            DiagId::PARSE_DEPRECATED_UNKNOWN_ARGUMENT => "parse_deprecated_unknown_argument",
+            DiagId::PARSE_DEPRECATED_INVALID_TARGET => "parse_deprecated_invalid_target",
+            DiagId::PARSE_ANNOTATION_MAX_ONE_ARGUMENT => "parse_annotation_max_one_argument",
+            DiagId::PARSE_ANNOTATION_ONE_ARGUMENT => "parse_annotation_one_argument",
+            DiagId::PARSE_ANNOTATION_NO_ARGUMENTS => "parse_annotation_no_arguments",
+            DiagId::PARSE_FOREIGN_NAME_ON_FFI_DECL_MEMBER => {
+                "parse_foreign_name_on_ffi_decl_member"
+            }
+            DiagId::PARSE_JAVA_MIRROR_FUNCTION_CANNOT_HAVE_BODY => {
+                "parse_java_mirror_function_cannot_have_body"
+            }
+            DiagId::PARSE_JAVA_MIRROR_FUNCTION_MUST_HAVE_RETURN_TYPE => {
+                "parse_java_mirror_function_must_have_return_type"
+            }
+            DiagId::PARSE_JAVA_MIRROR_PROP_CANNOT_HAVE_SETTER => {
+                "parse_java_mirror_prop_cannot_have_setter"
+            }
+            DiagId::PARSE_JAVA_MIRROR_PROP_CANNOT_HAVE_GETTER => {
+                "parse_java_mirror_prop_cannot_have_getter"
+            }
+            DiagId::PARSE_JAVA_MIRROR_PROP_IS_DEPRECATED => "parse_java_mirror_prop_is_deprecated",
+            DiagId::PARSE_JAVA_MIRROR_DECL_CANNOT_HAVE_PRIMARY_CTOR => {
+                "parse_java_mirror_decl_cannot_have_primary_ctor"
+            }
+            DiagId::PARSE_JAVA_MIRROR_CONSTRUCTOR_CANNOT_HAVE_BODY => {
+                "parse_java_mirror_constructor_cannot_have_body"
+            }
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_HAVE_PRIVATE_MEMBER => {
+                "parse_java_mirror_cannot_have_private_member"
+            }
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_HAVE_STATIC_INIT => {
+                "parse_java_mirror_cannot_have_static_init"
+            }
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_HAVE_FINALIZER => {
+                "parse_java_mirror_cannot_have_finalizer"
+            }
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_HAVE_CONST_MEMBER => {
+                "parse_java_mirror_cannot_have_const_member"
+            }
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_BE_SEALED => "parse_java_mirror_cannot_be_sealed",
+            DiagId::PARSE_JAVA_IMPL_CANNOT_BE_GENERIC => "parse_java_impl_cannot_be_generic",
+            DiagId::PARSE_JAVA_IMPL_CANNOT_BE_ABSTRACT => "parse_java_impl_cannot_be_abstract",
+            DiagId::PARSE_JAVA_IMPL_CANNOT_BE_SEALED => "parse_java_impl_cannot_be_sealed",
+            DiagId::PARSE_JAVA_IMPL_CANNOT_HAVE_STATIC_INIT => {
+                "parse_java_impl_cannot_have_static_init"
+            }
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_HAVE_OPEN_PROP => {
+                "parse_java_mirror_cannot_have_open_prop"
+            }
+            DiagId::PARSE_JAVA_IMPL_CANNOT_BE_OPEN => "parse_java_impl_cannot_be_open",
+            DiagId::PARSE_JAVA_IMPL_CANNOT_BE_INTERFACE => "parse_java_impl_cannot_be_interface",
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_HAVE_PRIMARY_CTOR => {
+                "parse_objc_mirror_cannot_have_primary_ctor"
+            }
+            DiagId::PARSE_OBJC_MIRROR_CTOR_CANNOT_HAVE_BODY => {
+                "parse_objc_mirror_ctor_cannot_have_body"
+            }
+            DiagId::PARSE_OBJC_MIRROR_METHOD_CANNOT_HAVE_BODY => {
+                "parse_objc_mirror_method_cannot_have_body"
+            }
+            DiagId::PARSE_OBJC_MIRROR_METHOD_MUST_HAVE_RETURN_TYPE => {
+                "parse_objc_mirror_method_must_have_return_type"
+            }
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_BE_SEALED => "parse_objc_mirror_cannot_be_sealed",
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_HAVE_PRIVATE_MEMBER => {
+                "parse_objc_mirror_cannot_have_private_member"
+            }
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_HAVE_STATIC_INIT => {
+                "parse_objc_mirror_cannot_have_static_init"
+            }
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_HAVE_FINALIZER => {
+                "parse_objc_mirror_cannot_have_finalizer"
+            }
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_HAVE_CONST_MEMBER => {
+                "parse_objc_mirror_cannot_have_const_member"
+            }
+            DiagId::PARSE_OBJC_IMPL_CANNOT_BE_GENERIC => "parse_objc_impl_cannot_be_generic",
+            DiagId::PARSE_OBJC_IMPL_CANNOT_BE_ABSTRACT => "parse_objc_impl_cannot_be_abstract",
+            DiagId::PARSE_OBJC_IMPL_CANNOT_BE_SEALED => "parse_objc_impl_cannot_be_sealed",
+            DiagId::PARSE_OBJC_IMPL_CANNOT_HAVE_STATIC_INIT => {
+                "parse_objc_impl_cannot_have_static_init"
+            }
+            DiagId::PARSE_OBJC_IMPL_CANNOT_BE_OPEN => "parse_objc_impl_cannot_be_open",
+            DiagId::PARSE_OBJC_IMPL_CANNOT_BE_INTERFACE => "parse_objc_impl_cannot_be_interface",
+            DiagId::PARSE_OBJC_MIRROR_FIELD_CANNOT_HAVE_INITIALIZER => {
+                "parse_objc_mirror_field_cannot_have_initializer"
+            }
+            DiagId::PARSE_OBJC_MIRROR_FIELD_CANNOT_BE_STATIC => {
+                "parse_objc_mirror_field_cannot_be_static"
+            }
+            DiagId::PARSE_OBJC_MIRROR_PROP_CANNOT_HAVE_GETTER => {
+                "parse_objc_mirror_prop_cannot_have_getter"
+            }
+            DiagId::PARSE_OBJC_MIRROR_PROP_CANNOT_HAVE_SETTER => {
+                "parse_objc_mirror_prop_cannot_have_setter"
+            }
+            DiagId::PARSE_OBJC_MIRROR_FUNC_CANNOT_BE_FOREIGN => {
+                "parse_objc_mirror_func_cannot_be_foreign"
+            }
+            DiagId::PARSE_OBJC_MIRROR_FUNC_CANNOT_BE_C => "parse_objc_mirror_func_cannot_be_c",
+            DiagId::PARSE_OBJC_MIRROR_FUNC_CANNOT_BE_GENERIC => {
+                "parse_objc_mirror_func_cannot_be_generic"
+            }
+            DiagId::PARSE_OBJC_MIRROR_FUNC_CANNOT_HAVE_BODY => {
+                "parse_objc_mirror_func_cannot_have_body"
+            }
+            DiagId::PARSE_OBJC_MIRROR_FUNC_MUST_HAVE_EXPLICIT_TYPE => {
+                "parse_objc_mirror_func_must_have_explicit_type"
+            }
+            DiagId::PARSE_OBJC_MIRROR_FUNC_CANNOT_BE_CONST => {
+                "parse_objc_mirror_func_cannot_be_const"
+            }
+            DiagId::PARSE_OBJC_MIRROR_FUNC_MUST_BE_TOP_LEVEL => {
+                "parse_objc_mirror_func_must_be_top_level"
+            }
+            DiagId::PARSE_OBJC_INIT_METHOD_MUST_BE_STATIC => {
+                "parse_objc_init_method_must_be_static"
+            }
+            DiagId::PARSE_OBJC_INIT_METHOD_MUST_BE_IN_MIRROR_CLASS => {
+                "parse_objc_init_method_must_be_in_mirror_class"
+            }
+            DiagId::PARSE_OBJC_OPTIONAL_METHOD_MUST_BE_IN_MIRROR_CLASS => {
+                "parse_objc_optional_method_must_be_in_mirror_class"
+            }
+            DiagId::PARSE_OBJC_INTEROP_NOT_SUPPORTED => "parse_objc_interop_not_supported",
+            DiagId::PARSE_DIAG_ERROR => "parse_diag_error",
+            DiagId::PARSE_DIAG_WARNING => "parse_diag_warning",
+            DiagId::PARSE_DIAG_END => "parse_diag_end",
+            DiagId::LEX_DIAG_BEGIN => "lex_diag_begin",
+            DiagId::LEX_UNKNOWN_START_OF_TOKEN => "lex_unknown_start_of_token",
+            DiagId::LEX_UNEXPECTED_DIGIT => "lex_unexpected_digit",
+            DiagId::LEX_CANNOT_START_WITH_DIGIT => "lex_cannot_start_with_digit",
+            DiagId::LEX_EXPECTED_DIGIT => "lex_expected_digit",
+            DiagId::LEX_UNEXPECTED_DECIMAL_POINT => "lex_unexpected_decimal_point",
+            DiagId::LEX_UNEXPECTED_EXPONENT_PART => "lex_unexpected_exponent_part",
+            DiagId::LEX_EXPECTED_EXPONENT_PART => "lex_expected_exponent_part",
+            DiagId::LEX_EXPECTED_IDENTIFIER_AFTER_DOLLAR => "lex_expected_identifier_after_dollar",
+            DiagId::LEX_UNRECOGNIZED_SYMBOL => "lex_unrecognized_symbol",
+            DiagId::LEX_EXPECTED_IDENTIFIER => "lex_expected_identifier",
+            DiagId::LEX_EXPECTED_BACK_QUOTE => "lex_expected_back_quote",
+            DiagId::LEX_UNTERMINATED_SINGLE_LINE_STRING => "lex_unterminated_single_line_string",
+            DiagId::LEX_UNTERMINATED_MULTI_LINE_STRING => "lex_unterminated_multi_line_string",
+            DiagId::LEX_UNTERMINATED_INTERPOLATION => "lex_unterminated_interpolation",
+            DiagId::LEX_MULTILINE_STRING_START_FROM_NEWLINE => {
+                "lex_multiline_string_start_from_newline"
+            }
+            DiagId::LEX_UNTERMINATED_RAW_STRING => "lex_unterminated_raw_string",
+            DiagId::LEX_EXPECTED_QUOTE_IN_RAW_STRING => "lex_expected_quote_in_raw_string",
+            DiagId::LEX_UNRECOGNIZED_ESCAPE => "lex_unrecognized_escape",
+            DiagId::LEX_UNTERMINATED_BLOCK_COMMENT => "lex_unterminated_block_comment",
+            DiagId::LEX_EXPECTED_LEFT_BRACKET => "lex_expected_left_bracket",
+            DiagId::LEX_EXPECTED_RIGHT_BRACKET => "lex_expected_right_bracket",
+            DiagId::LEX_EXPECTED_RIGHT_BRACKET_OR_HEXADECIMAL => {
+                "lex_expected_right_bracket_or_hexadecimal"
+            }
+            DiagId::LEX_EXPECTED_CHARACTER => "lex_expected_character",
+            DiagId::LEX_EXPECTED_LETTER_AFTER_UNDERSCORE => "lex_expected_letter_after_underscore",
+            DiagId::LEX_ILLEGAL_INTEGER_SUFFIX => "lex_illegal_integer_suffix",
+            DiagId::LEX_ILLEGAL_FLOAT_SUFFIX => "lex_illegal_float_suffix",
+            DiagId::LEX_ILLEGAL_NON_DECIMAL_FLOAT => "lex_illegal_non_decimal_float",
+            DiagId::LEX_EXPECTED_CHARACTER_IN_CHAR_LITERAL => {
+                "lex_expected_character_in_char_literal"
+            }
+            DiagId::LEX_UNTERMINATED_CHAR_LITERAL => "lex_unterminated_char_literal",
+            DiagId::LEX_CHARACTERS_OVERFLOW => "lex_characters_overflow",
+            DiagId::LEX_UNKNOWN_SUFFIX => "lex_unknown_suffix",
+            DiagId::LEX_ILLEGAL_UTF8_ENCODING_BYTE => "lex_illegal_UTF8_encoding_byte",
+            DiagId::LEX_ILLEGAL_UNICODE => "lex_illegal_unicode",
+            DiagId::LEX_UNSECURE_UNICODE => "lex_unsecure_unicode",
+            DiagId::LEX_ILLEGAL_UNI_CHARACTER_LITERAL => "lex_illegal_uni_character_literal",
+            DiagId::LEX_TOO_MANY_DIGITS => "lex_too_many_digits",
+            DiagId::LEX_UNRECOGNIZED_CHAR_IN_BINARY_STRING => {
+                "lex_unrecognized_char_in_binary_string"
+            }
+            DiagId::LEX_DIAG_END => "lex_diag_end",
+            DiagId::SEMA_DIAG_BEGIN => "sema_diag_begin",
+            DiagId::SEMA_INVALID_NODE_AFTER_CHECK => "sema_invalid_node_after_check",
+            DiagId::SEMA_UNABLE_TO_INFER_DECL => "sema_unable_to_infer_decl",
+            DiagId::SEMA_MISMATCHED_TYPES => "sema_mismatched_types",
+            DiagId::SEMA_MISMATCHED_TYPES_MULTIPLE_ASSIGN => {
+                "sema_mismatched_types_multiple_assign"
+            }
+            DiagId::SEMA_MISMATCHED_TYPES_BECAUSE => "sema_mismatched_types_because",
+            DiagId::SEMA_AMBIGUOUS_USE => "sema_ambiguous_use",
+            DiagId::SEMA_UNDECLARED_IDENTIFIER => "sema_undeclared_identifier",
+            DiagId::SEMA_UNDEFINED_VARIABLE => "sema_undefined_variable",
+            DiagId::SEMA_REDEFINITION => "sema_redefinition",
+            DiagId::SEMA_CONFLICT_WITH_SUB_PACKAGE => "sema_conflict_with_sub_package",
+            DiagId::SEMA_CORE_OBJECT_NOT_FOUND_WHEN_NO_PRELUDE => {
+                "sema_core_object_not_found_when_no_prelude"
+            }
+            DiagId::SEMA_ACCESSIBILITY_WITH_MAIN_HINT => "sema_accessibility_with_main_hint",
+            DiagId::SEMA_ACCESSIBILITY => "sema_accessibility",
+            DiagId::SEMA_PARAM_MISS_MATCH => "sema_param_miss_match",
+            DiagId::SEMA_UNABLE_TO_INFER_RETURN_TYPE => "sema_unable_to_infer_return_type",
+            DiagId::SEMA_UNABLE_TO_INFER_GENERIC_FUNC => "sema_unable_to_infer_generic_func",
+            DiagId::SEMA_INVALID_CALLED_OBJECT => "sema_invalid_called_object",
+            DiagId::SEMA_INVALID_RETURN => "sema_invalid_return",
+            DiagId::SEMA_INVALID_RETURN_IN_STATIC_INIT => "sema_invalid_return_in_static_init",
+            DiagId::SEMA_WRONG_NUMBER_OF_ARGUMENTS => "sema_wrong_number_of_arguments",
+            DiagId::SEMA_UNORDERED_ARGUMENTS => "sema_unordered_arguments",
+            DiagId::SEMA_PARAM_NAMED_MISMATCHED => "sema_param_named_mismatched",
+            DiagId::SEMA_NEED_NAMED_ARGUMENT => "sema_need_named_argument",
+            DiagId::SEMA_INVALID_SUBSCRIPT_ASSIGN_PARAMETER => {
+                "sema_invalid_subscript_assign_parameter"
+            }
+            DiagId::SEMA_INVALID_SUBSCRIPT_ASSIGN_PARAMETER_NUM => {
+                "sema_invalid_subscript_assign_parameter_num"
+            }
+            DiagId::SEMA_INVALID_SUBSCRIPT_ASSIGN_RETURN => "sema_invalid_subscript_assign_return",
+            DiagId::SEMA_OVERLOAD_CONFLICTS => "sema_overload_conflicts",
+            DiagId::SEMA_STATIC_FUNCTION_OVERLOAD_CONFLICTS => {
+                "sema_static_function_overload_conflicts"
+            }
+            DiagId::SEMA_USE_MUTABLE_FUNC_ALONE => "sema_use_mutable_func_alone",
+            DiagId::SEMA_UNSAFE_FUNC_CAN_ONLY_BE_CALLED => "sema_unsafe_func_can_only_be_called",
+            DiagId::SEMA_AMBIGUOUS_MATCH_PRIMITIVE_EXTEND => {
+                "sema_ambiguous_match_primitive_extend"
+            }
+            DiagId::SEMA_IMMUTABLE_ACCESS_MUTABLE_FUNC => "sema_immutable_access_mutable_func",
+            DiagId::SEMA_RECURSIVE_CONSTRUCTOR_CALL => "sema_recursive_constructor_call",
+            DiagId::SEMA_CANNOT_HAVE_DEFAULT_PARAM => "sema_cannot_have_default_param",
+            DiagId::SEMA_TRAILING_LAMBDA_CANNOT_USED_FOR_NON_FUNCTION => {
+                "sema_trailing_lambda_cannot_used_for_non_function"
+            }
+            DiagId::SEMA_UNABLE_TO_INFER_EXPR => "sema_unable_to_infer_expr",
+            DiagId::SEMA_EXCEED_NUM_VALUE_RANGE => "sema_exceed_num_value_range",
+            DiagId::SEMA_EXCEED_FLOAT_LITERAL_RANGE => "sema_exceed_float_literal_range",
+            DiagId::SEMA_FLOAT_LITERAL_TOO_LARGE => "sema_float_literal_too_large",
+            DiagId::SEMA_FLOAT_LITERAL_TOO_SMALL => "sema_float_literal_too_small",
+            DiagId::SEMA_INVALID_UNARY_EXPR => "sema_invalid_unary_expr",
+            DiagId::SEMA_INVALID_UNARY_EXPR_WITH_TARGET => "sema_invalid_unary_expr_with_target",
+            DiagId::SEMA_INVALID_BINARY_EXPR => "sema_invalid_binary_expr",
+            DiagId::SEMA_INVALID_SUBSCRIPT_EXPR => "sema_invalid_subscript_expr",
+            DiagId::SEMA_CANNOT_ASSIGN_TO_SUBSCRIPT => "sema_cannot_assign_to_subscript",
+            DiagId::SEMA_NOT_MEMBER_OF => "sema_not_member_of",
+            DiagId::SEMA_MEMBER_NOT_IMPORTED => "sema_member_not_imported",
+            DiagId::SEMA_CANNOT_ASSIGN_TO_IMMUTABLE => "sema_cannot_assign_to_immutable",
+            DiagId::SEMA_UNQUALIFIED_LEFT_VALUE_ASSIGNED => "sema_unqualified_left_value_assigned",
+            DiagId::SEMA_NOT_FOUND_FROM_GENERIC_UPPER_BOUNDS => {
+                "sema_not_found_from_generic_upper_bounds"
+            }
+            DiagId::SEMA_DIFFERENT_OR_PATTERN => "sema_different_or_pattern",
+            DiagId::SEMA_VAR_IN_OR_PATTERN => "sema_var_in_or_pattern",
+            DiagId::SEMA_VAR_IN_OR_CONDITION => "sema_var_in_or_condition",
+            DiagId::SEMA_NONEXHUASTIVE_PATTERNS => "sema_nonexhuastive_patterns",
+            DiagId::SEMA_UNREACHABLE_PATTERN => "sema_unreachable_pattern",
+            DiagId::SEMA_LAMBDAEXPR_MUST_HAVE_TYPE_ANNOTATION => {
+                "sema_lambdaExpr_must_have_type_annotation"
+            }
+            DiagId::SEMA_USE_FUNC_CAPTURE_VAR_ALONE => "sema_use_func_capture_var_alone",
+            DiagId::SEMA_ENUM_CONSTRUCTOR_WITH_PARAM_MUST_HAVE_ARGS => {
+                "sema_enum_constructor_with_param_must_have_args"
+            }
+            DiagId::SEMA_OPTIONAL_CHAIN_NON_OPTIONAL => "sema_optional_chain_non_optional",
+            DiagId::SEMA_CAPTURE_BEFORE_INITIALIZATION => "sema_capture_before_initialization",
+            DiagId::SEMA_INTERPOLATION_IN_CONST_PATTERN => "sema_interpolation_in_const_pattern",
+            DiagId::SEMA_CANNOT_REF_TO_PKG_NAME => "sema_cannot_ref_to_pkg_name",
+            DiagId::SEMA_USE_EXPR_WITHOUT_IMPORT => "sema_use_expr_without_import",
+            DiagId::SEMA_GENERIC_FUNC_WITHOUT_TYPE_ARG => "sema_generic_func_without_type_arg",
+            DiagId::SEMA_GENERIC_TYPE_INCONSISTENT => "sema_generic_type_inconsistent",
+            DiagId::SEMA_GENERIC_ARGUMENT_NO_MATCH => "sema_generic_argument_no_match",
+            DiagId::SEMA_GENERIC_CONSTRAINT_NOT_LOOSER => "sema_generic_constraint_not_looser",
+            DiagId::SEMA_GENERIC_INSTANTIATION_CAUSES_AMBIGUOUS_FUNCTIONS => {
+                "sema_generic_instantiation_causes_ambiguous_functions"
+            }
+            DiagId::SEMA_MULTIPLE_CLASS_UPPERBOUNDS => "sema_multiple_class_upperbounds",
+            DiagId::SEMA_GENERIC_PARAM_EXIST_IN_CLASS_IRRELEVANT_UPPERBOUND_RECURSIVELY => {
+                "sema_generic_param_exist_in_class_irrelevant_upperbound_recursively"
+            }
+            DiagId::SEMA_GENERIC_PARAM_DIRECTLY_RECURSIVE => {
+                "sema_generic_param_directly_recursive"
+            }
+            DiagId::SEMA_UPPER_BOUND_MUST_BE_CLASS_OR_INTERFACE => {
+                "sema_upper_bound_must_be_class_or_interface"
+            }
+            DiagId::SEMA_INHERIT_MEMBER_KIND_INCONSISTENT => {
+                "sema_inherit_member_kind_inconsistent"
+            }
+            DiagId::SEMA_INHERIT_SUPER_MEMBER_KIND_INCONSISTENT => {
+                "sema_inherit_super_member_kind_inconsistent"
+            }
+            DiagId::SEMA_INHERIT_MEMBER_TYPE_INCONSISTENT => {
+                "sema_inherit_member_type_inconsistent"
+            }
+            DiagId::SEMA_INHERIT_ABSTRACT_CLASS_STATIC_UNIMPLEMENT_FUNC => {
+                "sema_inherit_abstract_class_static_unimplement_func"
+            }
+            DiagId::SEMA_CANNOT_OVERRIDE => "sema_cannot_override",
+            DiagId::SEMA_INVALID_MEMBER_VISIBILITY_IN_CLASS => {
+                "sema_invalid_member_visibility_in_class"
+            }
+            DiagId::SEMA_WEAK_VISIBILITY => "sema_weak_visibility",
+            DiagId::SEMA_CANNOT_INHERIT_SEALED => "sema_cannot_inherit_sealed",
+            DiagId::SEMA_INHERIT_THREAD_CONTEXT_INVALID => "sema_inherit_thread_context_invalid",
+            DiagId::SEMA_INHERIT_THREAD_CONTEXT_NOT_OPEN => "sema_inherit_thread_context_not_open",
+            DiagId::SEMA_INHERIT_NOT_RETURN_THIS => "sema_inherit_not_return_this",
+            DiagId::SEMA_RETURN_TYPE_INCOMPATIBLE => "sema_return_type_incompatible",
+            DiagId::SEMA_SPAWN_ARG_INVALID => "sema_spawn_arg_invalid",
+            DiagId::SEMA_SPAWN_ARG_NO_EFFECT => "sema_spawn_arg_no_effect",
+            DiagId::SEMA_INTERFACE_CALL_WITH_UNIMPLEMENTED_CALL => {
+                "sema_interface_call_with_unimplemented_call"
+            }
+            DiagId::SEMA_TYPE_UNINITIALIZED_STATIC_FIELD => "sema_type_uninitialized_static_field",
+            DiagId::SEMA_INSTANCE_FUNC_CANNOT_BE_USED_IN_FINALIZER => {
+                "sema_instance_func_cannot_be_used_in_finalizer"
+            }
+            DiagId::SEMA_NO_NON_PARAM_CONSTRUCTOR_IN_SUPER_CLASS => {
+                "sema_no_non_param_constructor_in_super_class"
+            }
+            DiagId::SEMA_NON_ABSTRACT_CLASS_CANNOT_BE_SEALED => {
+                "sema_non_abstract_class_cannot_be_sealed"
+            }
+            DiagId::SEMA_STATIC_VARIABLE_USE_GENERIC_PARAMETER => {
+                "sema_static_variable_use_generic_parameter"
+            }
+            DiagId::SEMA_CSTRUCT_CANNOT_IMPL_INTERFACES => "sema_cstruct_cannot_impl_interfaces",
+            DiagId::SEMA_CLASS_NEED_ABSTRACT_MODIFIER_OR_FUNC_NEED_IMPL => {
+                "sema_class_need_abstract_modifier_or_func_need_impl"
+            }
+            DiagId::SEMA_NEED_MEMBER_IMPLEMENTATION => "sema_need_member_implementation",
+            DiagId::SEMA_EXPORT_SAME_PRIVATE_DECL => "sema_export_same_private_decl",
+            DiagId::SEMA_EXTEND_FUNCTION_CANNOT_OVERRIDDEN => {
+                "sema_extend_function_cannot_overridden"
+            }
+            DiagId::SEMA_EXTEND_MEMBER_CANNOT_SHADOW => "sema_extend_member_cannot_shadow",
+            DiagId::SEMA_ILLEGAL_EXTENDED_TYPE => "sema_illegal_extended_type",
+            DiagId::SEMA_EXTEND_GENERIC_MUST_BE_USED => "sema_extend_generic_must_be_used",
+            DiagId::SEMA_EXTEND_DUPLICATE_INTERFACE => "sema_extend_duplicate_interface",
+            DiagId::SEMA_EXTEND_NOT_INTERFACE => "sema_extend_not_interface",
+            DiagId::SEMA_EXTEND_ILLEGAL_MEMBER => "sema_extend_illegal_member",
+            DiagId::SEMA_EXTEND_USE_SUPER => "sema_extend_use_super",
+            DiagId::SEMA_TYPE_CANNOT_EXTEND_IMPORTED_INTERFACE => {
+                "sema_type_cannot_extend_imported_interface"
+            }
+            DiagId::SEMA_C_TYPE_CANNOT_EXTEND_INTERFACE => "sema_c_type_cannot_extend_interface",
+            DiagId::SEMA_IMMUTABLE_TYPE_EXTEND_ASSIGNMENT_INDEX_OPERATOR => {
+                "sema_immutable_type_extend_assignment_index_operator"
+            }
+            DiagId::SEMA_IMMUTABLE_TYPE_ILLEGAL_PROPERTY => "sema_immutable_type_illegal_property",
+            DiagId::SEMA_INTERFACE_IS_NOT_EXTENDABLE => "sema_interface_is_not_extendable",
+            DiagId::SEMA_INVALID_MUT_MODIFIER_EXTEND_OF_STRUCT => {
+                "sema_invalid_mut_modifier_extend_of_struct"
+            }
+            DiagId::SEMA_EXTEND_CHECK_SEQUENCE_CANNOT_DECIDE => {
+                "sema_extend_check_sequence_cannot_decide"
+            }
+            DiagId::SEMA_EXPORT_EXTEND_DEPEND_NON_EXPORT_EXTEND => {
+                "sema_export_extend_depend_non_export_extend"
+            }
+            DiagId::SEMA_PROPERTY_MUST_HAVE_ACCESSORS => "sema_property_must_have_accessors",
+            DiagId::SEMA_IMMUTABLE_PROPERTY_WITH_SETTER => "sema_immutable_property_with_setter",
+            DiagId::SEMA_PROPERTY_HAVE_SAME_DECLARATION_IN_INHERIT_MUT => {
+                "sema_property_have_same_declaration_in_inherit_mut"
+            }
+            DiagId::SEMA_PROPERTY_HAVE_SAME_DECLARATION_IN_INHERIT_IMMUT => {
+                "sema_property_have_same_declaration_in_inherit_immut"
+            }
+            DiagId::SEMA_PROPERTY_MUST_IMPLEMENT_BOTH => "sema_property_must_implement_both",
+            DiagId::SEMA_EXPECT_CONST => "sema_expect_const",
+            DiagId::SEMA_CANNOT_DEFINE_VAR_IN_CONST_FUNCITON => {
+                "sema_cannot_define_var_in_const_funciton"
+            }
+            DiagId::SEMA_NO_CONST_INIT => "sema_no_const_init",
+            DiagId::SEMA_CLASS_CONST_INIT_WITH_VAR => "sema_class_const_init_with_var",
+            DiagId::SEMA_ANNOTATION_NO_CONST_INIT => "sema_annotation_no_const_init",
+            DiagId::SEMA_ANNOTATION_ARG_TARGET => "sema_annotation_arg_target",
+            DiagId::SEMA_ANNOTATION_ARG_TARGET_ARRAY_LIT => "sema_annotation_arg_target_array_lit",
+            DiagId::SEMA_ANNOTATION_NON_PUBLIC => "sema_annotation_non_public",
+            DiagId::SEMA_ANNOTATION_CUSTOM_PLACE => "sema_annotation_custom_place",
+            DiagId::SEMA_INOUT_MODIFY_CSTRING_OR_ZEROSIZED => {
+                "sema_inout_modify_cstring_or_zerosized"
+            }
+            DiagId::SEMA_INOUT_MODIFY_NON_CTYPE => "sema_inout_modify_non_ctype",
+            DiagId::SEMA_INOUT_MUST_BE_VAR_VARIABLE => "sema_inout_must_be_var_variable",
+            DiagId::SEMA_INOUT_MODIFY_HEAP_VARIABLE => "sema_inout_modify_heap_variable",
+            DiagId::SEMA_INOUT_CAN_ONLY_USED_IN_CFUNC_CALLING => {
+                "sema_inout_can_only_used_in_cfunc_calling"
+            }
+            DiagId::SEMA_INOUT_MISMATCH => "sema_inout_mismatch",
+            DiagId::SEMA_ANNOTATION_ERROR_ARG_NUM => "sema_annotation_error_arg_num",
+            DiagId::SEMA_ANNOTATION_ERROR_ARG_RANGE => "sema_annotation_error_arg_range",
+            DiagId::SEMA_ANNOTATION_ERROR_OBJECT => "sema_annotation_error_object",
+            DiagId::SEMA_JAVA_NON_JTYPE => "sema_java_non_jtype",
+            DiagId::SEMA_JAVA_INVALID_UNIT => "sema_java_invalid_unit",
+            DiagId::SEMA_JAVA_APP_INHERIT_EXT => "sema_java_app_inherit_ext",
+            DiagId::SEMA_JAVA_UNSUPPORTED_DECL => "sema_java_unsupported_decl",
+            DiagId::SEMA_MISSING_JAVA_INTEROP_ANNOTATION => "sema_missing_java_interop_annotation",
+            DiagId::SEMA_GENERIC_STATIC_ACCESS => "sema_generic_static_access",
+            DiagId::SEMA_PRIMITIVE_TYPE_AS_GENERICS_ARG => "sema_primitive_type_as_generics_arg",
+            DiagId::SEMA_MEET_CONSTRAINT_INDIRECTLY => "sema_meet_constraint_indirectly",
+            DiagId::SEMA_STATIC_MEMBER_IN_INTERFACE_MUST_HAS_BODY => {
+                "sema_static_member_in_interface_must_has_body"
+            }
+            DiagId::SEMA_EXTEND_A_JAVA_TYPE => "sema_extend_a_java_type",
+            DiagId::SEMA_GENERIC_UPPER_BOUNDS_MUST_BE_JAVA_IN_JAVA => {
+                "sema_generic_upper_bounds_must_be_java_in_java"
+            }
+            DiagId::SEMA_DEFINE_JAVA_ANNOTATION => "sema_define_java_annotation",
+            DiagId::SEMA_INVALID_USE_OF_JAVA_ANNOTATION => "sema_invalid_use_of_java_annotation",
+            DiagId::SEMA_INVALID_USE_OF_ANNOTATION_JFFI => "sema_invalid_use_of_annotation_jffi",
+            DiagId::SEMA_ANNOTATION_NOT_APPLICABLE_JFFI => "sema_annotation_not_applicable_jffi",
+            DiagId::SEMA_CANNOT_USE_ANNOTATION_JFFI => "sema_cannot_use_annotation_jffi",
+            DiagId::SEMA_SHADOW_CANNOT_IN_TYPE_ARGS => "sema_shadow_cannot_in_type_args",
+            DiagId::SEMA_UNSUPPORTED_TYPE_ARGUMENT_IN_JAVA_INTEROP => {
+                "sema_unsupported_type_argument_in_java_interop"
+            }
+            DiagId::SEMA_CJMAPPING_STRUCT_GENERIC_NOT_SUPPORTED => {
+                "sema_cjmapping_struct_generic_not_supported"
+            }
+            DiagId::SEMA_CJMAPPING_STRUCT_INHERITANCE_INTERFACE_NOT_SUPPORTED => {
+                "sema_cjmapping_struct_inheritance_interface_not_supported"
+            }
+            DiagId::SEMA_CJMAPPING_DECL_NOT_SUPPORTED => "sema_cjmapping_decl_not_supported",
+            DiagId::SEMA_CJMAPPING_METHOD_ARG_NOT_SUPPORTED => {
+                "sema_cjmapping_method_arg_not_supported"
+            }
+            DiagId::SEMA_CJMAPPING_METHOD_RET_UNSUPPORTED => {
+                "sema_cjmapping_method_ret_unsupported"
+            }
+            DiagId::SEMA_CJ_MAPPING_GENERIC_METHOD_NOT_GET_INSTANCE_CONFIG => {
+                "sema_cj_mapping_generic_method_not_get_instance_config"
+            }
+            DiagId::SEMA_VARRAY_SIZE_MATCH => "sema_varray_size_match",
+            DiagId::SEMA_VARRAY_ARGS_NUMBER_MISMATCH => "sema_varray_args_number_mismatch",
+            DiagId::SEMA_VARRAY_SUBSCRIPT_NUM => "sema_varray_subscript_num",
+            DiagId::SEMA_VARRAY_IN_CFUNC => "sema_varray_in_cfunc",
+            DiagId::SEMA_VARRAY_ARG_TYPE_WITH_REFTYPE => "sema_varray_arg_type_with_reftype",
+            DiagId::SEMA_INVALID_CFUNC_RETURN_TYPE => "sema_invalid_cfunc_return_type",
+            DiagId::SEMA_MOCK_UNSUPPORTED_TYPE => "sema_mock_unsupported_type",
+            DiagId::SEMA_MOCK_WRONG_STATIC_DECL => "sema_mock_wrong_static_decl",
+            DiagId::SEMA_MOCK_FROZEN_UNSUPPORTED => "sema_mock_frozen_unsupported",
+            DiagId::SEMA_MOCK_FROZEN_REQUIRED => "sema_mock_frozen_required",
+            DiagId::SEMA_COMMAND_HANDLE_TYPE_ERROR => "sema_command_handle_type_error",
+            DiagId::SEMA_RESUMPTION_HANDLE_TYPE_ERROR => "sema_resumption_handle_type_error",
+            DiagId::SEMA_RESUMPTION_INCORRECT_RETURN_TYPE => {
+                "sema_resumption_incorrect_return_type"
+            }
+            DiagId::SEMA_COMMAND_RESUMPTION_MISMATCH => "sema_command_resumption_mismatch",
+            DiagId::SEMA_IMPLICIT_RESUME_OUTSIDE_HANDLER => "sema_implicit_resume_outside_handler",
+            DiagId::SEMA_RESUME_NO_WITH => "sema_resume_no_with",
+            DiagId::SEMA_RESUME_WRONG_RESUMPTION_TYPE => "sema_resume_wrong_resumption_type",
+            DiagId::SEMA_MISMATCHING_HANDLE_BLOCK => "sema_mismatching_handle_block",
+            DiagId::SEMA_RETURN_IN_TRY_HANDLE_BLOCK => "sema_return_in_try_handle_block",
+            DiagId::SEMA_COMMAND_INCOMPATIBLE_TYPE => "sema_command_incompatible_type",
+            DiagId::SEMA_RESUME_THROWING_MISMATCH_TYPE => "sema_resume_throwing_mismatch_type",
+            DiagId::SEMA_USELESS_COMMAND_TYPE => "sema_useless_command_type",
+            DiagId::SEMA_DEPRECATED_ERROR => "sema_deprecated_error",
+            DiagId::SEMA_DEPRECATED_WARNING => "sema_deprecated_warning",
+            DiagId::SEMA_DEPRECATION_WEAKENING => "sema_deprecation_weakening",
+            DiagId::SEMA_DEPRECATION_OVERRIDE_ERROR => "sema_deprecation_override_error",
+            DiagId::SEMA_DEPRECATION_OVERRIDE_WARNING => "sema_deprecation_override_warning",
+            DiagId::SEMA_DEPRECATION_REDEF_ERROR => "sema_deprecation_redef_error",
+            DiagId::SEMA_DEPRECATION_REDEF_WARNING => "sema_deprecation_redef_warning",
+            DiagId::SEMA_COMMON_OPEN_CLASS_NO_INIT => "sema_common_open_class_no_init",
+            DiagId::SEMA_MULTIPLE_COMMON_IMPLEMENTATIONS => "sema_multiple_common_implementations",
+            DiagId::SEMA_COMMON_DIRECT_EXTENSION_HAS_DUPLICATE_PRIVATE_MEMBERS => {
+                "sema_common_direct_extension_has_duplicate_private_members"
+            }
+            DiagId::SEMA_COMMON_DIRECT_EXTENSION_HAS_COMMON_PRIVATE_MEMBERS => {
+                "sema_common_direct_extension_has_common_private_members"
+            }
+            DiagId::SEMA_NOT_MATCHED => "sema_not_matched",
+            DiagId::SEMA_SPECIFIC_VAR_NOT_MATCH_LET => "sema_specific_var_not_match_let",
+            DiagId::SEMA_SPECIFIC_INIT_COMMON_PRIMARY_CONSTRUCTOR => {
+                "sema_specific_init_common_primary_constructor"
+            }
+            DiagId::SPECIFIC_HAS_DIFFERENT_KIND => "specific_has_different_kind",
+            DiagId::COMMON_NON_EXAUSTIVE_PLATFROM_EXAUSTIVE_MISMATCH => {
+                "common_non_exaustive_platfrom_exaustive_mismatch"
+            }
+            DiagId::SEMA_SPECIFIC_HAS_DIFFERENT_TYPE => "sema_specific_has_different_type",
+            DiagId::SEMA_SPECIFIC_MEMBER_MUST_HAVE_IMPLEMENTATION => {
+                "sema_specific_member_must_have_implementation"
+            }
+            DiagId::SEMA_SPECIFIC_HAS_DIFFERENT_MODIFIER => "sema_specific_has_different_modifier",
+            DiagId::SEMA_SPECIFIC_HAS_DIFFERENT_ANNOTATION => {
+                "sema_specific_has_different_annotation"
+            }
+            DiagId::SEMA_SPECIFIC_HAS_DEPRECATED_ANNOTATION => {
+                "sema_specific_has_deprecated_annotation"
+            }
+            DiagId::SEMA_CJMP_PARAMETER_DEFAULT_VALUE_BOTH_SIDES => {
+                "sema_cjmp_parameter_default_value_both_sides"
+            }
+            DiagId::SEMA_SPECIFIC_HAS_DIFFERENT_PARAMETER => {
+                "sema_specific_has_different_parameter"
+            }
+            DiagId::SEMA_SPECIFIC_HAS_DIFFERENT_SUPER_TYPE => {
+                "sema_specific_has_different_super_type"
+            }
+            DiagId::SEMA_SPECIFIC_HAS_DUPLICATE_EXTENSIONS => {
+                "sema_specific_has_duplicate_extensions"
+            }
+            DiagId::SEMA_COMMON_PACKAGE_HAS_MAIN => "sema_common_package_has_main",
+            DiagId::SEMA_COMMON_STATIC_LET_CANT_BE_INITIALIZED_IN_STATIC_INIT => {
+                "sema_common_static_let_cant_be_initialized_in_static_init"
+            }
+            DiagId::SEMA_COMMON_ASSIGN_TO_COMMON_IMMUTABLE_IN_CTOR => {
+                "sema_common_assign_to_common_immutable_in_ctor"
+            }
+            DiagId::SEMA_CJMP_ABSTRACT_CLASS_MEMBER_HAS_NO_EXPLICIT_MODIFIER => {
+                "sema_cjmp_abstract_class_member_has_no_explicit_modifier"
+            }
+            DiagId::SEMA_EXPLICITLY_ABSTRACT_CAN_NOT_HAVE_BODY => {
+                "sema_explicitly_abstract_can_not_have_body"
+            }
+            DiagId::SEMA_EXPLICITLY_ABSTRACT_ONLY_FOR_CJMP_ABSTRACT_CLASS => {
+                "sema_explicitly_abstract_only_for_cjmp_abstract_class"
+            }
+            DiagId::SEMA_OPEN_ABSTRACT_SPECIFIC_CAN_NOT_REPLACE_OPEN_COMMON => {
+                "sema_open_abstract_specific_can_not_replace_open_common"
+            }
+            DiagId::SEMA_CJMP_NON_SPECIFIC_ABSTRACT_MEMBER_IN_SPECIFIC_CLASS => {
+                "sema_cjmp_non_specific_abstract_member_in_specific_class"
+            }
+            DiagId::SEMA_COMMON_GENERIC_FROZEN_NOT_SUPPORTED => {
+                "sema_common_generic_frozen_not_supported"
+            }
+            DiagId::SEMA_COMMON_GENERIC_RENAME_NOT_SUPPORTED => {
+                "sema_common_generic_rename_not_supported"
+            }
+            DiagId::SEMA_COMMON_SPECIFIC_ANNOTATION_NOT_ALLOWED => {
+                "sema_common_specific_annotation_not_allowed"
+            }
+            DiagId::SEMA_JAVA_MIRROR_CTOR_ARG_MUST_BE_JAVA_MIRROR => {
+                "sema_java_mirror_ctor_arg_must_be_java_mirror"
+            }
+            DiagId::SEMA_JAVA_MIRROR_METHOD_ARG_MUST_BE_JAVA_MIRROR => {
+                "sema_java_mirror_method_arg_must_be_java_mirror"
+            }
+            DiagId::SEMA_JAVA_MIRROR_METHOD_RET_UNSUPPORTED => {
+                "sema_java_mirror_method_ret_unsupported"
+            }
+            DiagId::SEMA_JAVA_MIRROR_PROP_MUST_BE_JAVA_MIRROR => {
+                "sema_java_mirror_prop_must_be_java_mirror"
+            }
+            DiagId::SEMA_JAVA_MIRROR_SUBTYPE_MUST_BE_ANNOTATED => {
+                "sema_java_mirror_subtype_must_be_annotated"
+            }
+            DiagId::SEMA_JAVA_MIRROR_CANNOT_INHERIT_PURE_CANGJIE_TYPE => {
+                "sema_java_mirror_cannot_inherit_pure_cangjie_type"
+            }
+            DiagId::SEMA_JAVA_IMPL_CANNOT_INHERIT_PURE_CANGJIE_TYPE => {
+                "sema_java_impl_cannot_inherit_pure_cangjie_type"
+            }
+            DiagId::SEMA_JAVA_MIRROR_SUBTYPE_ANNO_MUST_INHERIT_MIRROR => {
+                "sema_java_mirror_subtype_anno_must_inherit_mirror"
+            }
+            DiagId::SEMA_JAVA_MIRROR_CANNOT_BE_EXTENDED_WITH_INTERFACE => {
+                "sema_java_mirror_cannot_be_extended_with_interface"
+            }
+            DiagId::SEMA_JAVA_IMPL_CANNOT_BE_EXTENDED_WITH_INTERFACE => {
+                "sema_java_impl_cannot_be_extended_with_interface"
+            }
+            DiagId::SEMA_JAVA_IMPL_REDEFINITION => "sema_java_impl_redefinition",
+            DiagId::SEMA_JAVA_MIRROR_INTEROPLIB_MUST_BE_IMPORTED => {
+                "sema_java_mirror_interoplib_must_be_imported"
+            }
+            DiagId::SEMA_JAVA_INTEROP_NOT_SUPPORTED => "sema_java_interop_not_supported",
+            DiagId::SEMA_EXTEND_REF_TARGET_CANNOT_BE_JAVA_IMPL => {
+                "sema_extend_ref_target_cannot_be_java_impl"
+            }
+            DiagId::SEMA_VARIABLE_OF_JAVA_TYPE => "sema_variable_of_java_type",
+            DiagId::SEMA_GENERIC_PARAMETER_OF_JAVA_TYPE => "sema_generic_parameter_of_java_type",
+            DiagId::SEMA_JAVA_HAS_DEFAULT_ANNOTATION_ARGS => {
+                "sema_java_has_default_annotation_args"
+            }
+            DiagId::SEMA_JAVA_HAS_DEFAULT_ANNOTATION_IS_IN_WRONG_PLACE => {
+                "sema_java_has_default_annotation_is_in_wrong_place"
+            }
+            DiagId::SEMA_JAVA_HAS_DEFAULT_CONFLICT_WITH_STATIC => {
+                "sema_java_has_default_conflict_with_static"
+            }
+            DiagId::SEMA_OBJC_INTEROP_CTOR_PARAM_MUST_BE_OBJC_COMPATIBLE => {
+                "sema_objc_interop_ctor_param_must_be_objc_compatible"
+            }
+            DiagId::SEMA_OBJC_INTEROP_METHOD_PARAM_MUST_BE_OBJC_COMPATIBLE => {
+                "sema_objc_interop_method_param_must_be_objc_compatible"
+            }
+            DiagId::SEMA_OBJC_INTEROP_METHOD_RET_MUST_BE_OBJC_COMPATIBLE => {
+                "sema_objc_interop_method_ret_must_be_objc_compatible"
+            }
+            DiagId::SEMA_OBJC_INTEROP_PROP_MUST_BE_OBJC_COMPATIBLE => {
+                "sema_objc_interop_prop_must_be_objc_compatible"
+            }
+            DiagId::SEMA_OBJC_INTEROP_FIELD_MUST_BE_OBJC_COMPATIBLE => {
+                "sema_objc_interop_field_must_be_objc_compatible"
+            }
+            DiagId::SEMA_OBJC_MIRROR_DECL_CANNOT_INHERIT => "sema_objc_mirror_decl_cannot_inherit",
+            DiagId::SEMA_OBJC_MIRROR_SUBTYPE_CANNOT_MULTIPLE_INHERIT => {
+                "sema_objc_mirror_subtype_cannot_multiple_inherit"
+            }
+            DiagId::SEMA_OBJC_MIRROR_SUBTYPE_MUST_BE_ANNOTATED => {
+                "sema_objc_mirror_subtype_must_be_annotated"
+            }
+            DiagId::SEMA_OBJC_MIRROR_SUBTYPE_MUST_INHERIT_MIRROR => {
+                "sema_objc_mirror_subtype_must_inherit_mirror"
+            }
+            DiagId::SEMA_OBJC_MIRROR_MUST_INHERIT_MIRROR => "sema_objc_mirror_must_inherit_mirror",
+            DiagId::SEMA_OBJC_MIRROR_INTEROPLIB_MUST_BE_IMPORTED => {
+                "sema_objc_mirror_interoplib_must_be_imported"
+            }
+            DiagId::SEMA_OBJC_INTEROP_NOT_SUPPORTED => "sema_objc_interop_not_supported",
+            DiagId::SEMA_OBJC_POINTER_ARGUMENT_MUST_BE_OBJC_COMPATIBLE => {
+                "sema_objc_pointer_argument_must_be_objc_compatible"
+            }
+            DiagId::SEMA_OBJC_INTEROP_TOPLEVEL_PARAM_MUST_BE_OBJC_COMPATIBLE => {
+                "sema_objc_interop_toplevel_param_must_be_objc_compatible"
+            }
+            DiagId::SEMA_OBJC_INTEROP_TOPLEVEL_RET_MUST_BE_OBJC_COMPATIBLE => {
+                "sema_objc_interop_toplevel_ret_must_be_objc_compatible"
+            }
+            DiagId::SEMA_OBJC_METHOD_MUST_HAVE_FOREIGN_NAME => {
+                "sema_objc_method_must_have_foreign_name"
+            }
+            DiagId::SEMA_OBJC_CTOR_MUST_HAVE_FOREIGN_NAME => {
+                "sema_objc_ctor_must_have_foreign_name"
+            }
+            DiagId::SEMA_OBJC_FUNC_ARGUMENT_MUST_BE_OBJC_COMPATIBLE => {
+                "sema_objc_func_argument_must_be_objc_compatible"
+            }
+            DiagId::SEMA_OBJC_FUNC_CALL_PROPERTY_CAN_ONLY_BE_CALLED => {
+                "sema_objc_func_call_property_can_only_be_called"
+            }
+            DiagId::SEMA_OBJC_IMPL_MUST_HAVE_OBJC_MIRROR_SUPER_CLASS => {
+                "sema_objc_impl_must_have_objc_mirror_super_class"
+            }
+            DiagId::SEMA_OBJC_SETTER_NAME_ON_IMMUTABLE_PROP => {
+                "sema_objc_setter_name_on_immutable_prop"
+            }
+            DiagId::SEMA_OBJC_CJMAPPING_INHERITANCE_INTERFACE_NOT_SUPPORTED => {
+                "sema_objc_cjmapping_inheritance_interface_not_supported"
+            }
+            DiagId::SEMA_OBJC_CJMAPPING_GENERIC_NOT_SUPPORTED => {
+                "sema_objc_cjmapping_generic_not_supported"
+            }
+            DiagId::SEMA_FOREIGN_NAME_APPEARED_IN_CHILD => "sema_foreign_name_appeared_in_child",
+            DiagId::SEMA_FOREIGN_NAME_CONFLICTING_ANNOTATION => {
+                "sema_foreign_name_conflicting_annotation"
+            }
+            DiagId::SEMA_FOREIGN_NAME_CONFLICTING_DERIVED_ANNOTATION => {
+                "sema_foreign_name_conflicting_derived_annotation"
+            }
+            DiagId::SEMA_IFAVAILABLE_ARG_NO_NAME => "sema_ifavailable_arg_no_name",
+            DiagId::SEMA_IFAVAILABLE_ARG_NOT_LITERAL => "sema_ifavailable_arg_not_literal",
+            DiagId::SEMA_IFAVAILABLE_UNKNOW_ARG_NAME => "sema_ifavailable_unknow_arg_name",
+            DiagId::SEMA_APILEVEL_MULTI_ANNO => "sema_apilevel_multi_anno",
+            DiagId::SEMA_APILEVEL_MISSING_ARG => "sema_apilevel_missing_arg",
+            DiagId::SEMA_APILEVEL_INVALID_VERSION_FORMAT => "sema_apilevel_invalid_version_format",
+            DiagId::SEMA_ONLY_LITERAL_SUPPORT => "sema_only_literal_support",
+            DiagId::SEMA_APILEVEL_REF_HIGHER => "sema_apilevel_ref_higher",
+            DiagId::SEMA_APILEVEL_SYSCAP_WARNING => "sema_apilevel_syscap_warning",
+            DiagId::SEMA_APILEVEL_SYSCAP_ERROR => "sema_apilevel_syscap_error",
+            DiagId::SEMA_APILEVEL_MULTI_DIFF_SYSCAP => "sema_apilevel_multi_diff_syscap",
+            DiagId::SEMA_HIDE_MULTI_ANNOTATION => "sema_hide_multi_annotation",
+            DiagId::SEMA_HIDE_AT_FUNC_PARAM => "sema_hide_at_func_param",
+            DiagId::SEMA_HIDE_MISSING_HIDE => "sema_hide_missing_hide",
+            DiagId::SEMA_HIDE_COMPILE_TIME_INVISIBLE => "sema_hide_compile_time_invisible",
+            DiagId::SEMA_HIDE_DIFF_PARAM => "sema_hide_diff_param",
+            DiagId::SEMA_HIDE_MUST_AT_END => "sema_hide_must_at_end",
+            DiagId::SEMA_UNUSED_IMPORT => "sema_unused_import",
+            DiagId::SEMA_DIAG_END => "sema_diag_end",
+            DiagId::CHIR_DIAG_BEGIN => "chir_diag_begin",
+            DiagId::CHIR_USED_BEFORE_INITIALIZATION => "chir_used_before_initialization",
+            DiagId::CHIR_ILLEGAL_USAGE_OF_MEMBER => "chir_illegal_usage_of_member",
+            DiagId::CHIR_CANNOT_ASSIGN_INITIALIZED_LET_VARIABLE => {
+                "chir_cannot_assign_initialized_let_variable"
+            }
+            DiagId::CHIR_CLASS_UNINITIALIZED_FIELD => "chir_class_uninitialized_field",
+            DiagId::CHIR_ILLEGAL_USAGE_OF_SUPER_MEMBER => "chir_illegal_usage_of_super_member",
+            DiagId::CHIR_ARITHMETIC_OPERATOR_OVERFLOW => "chir_arithmetic_operator_overflow",
+            DiagId::CHIR_IDX_OUT_OF_BOUNDS => "chir_idx_out_of_bounds",
+            DiagId::CHIR_DIVISOR_IS_ZERO => "chir_divisor_is_zero",
+            DiagId::CHIR_SHIFT_LENGTH_OVERFLOW => "chir_shift_length_overflow",
+            DiagId::CHIR_TYPECAST_OVERFLOW => "chir_typecast_overflow",
+            DiagId::CHIR_STEP_NON_ZERO_RANGE => "chir_step_non_zero_range",
+            DiagId::CHIR_DCE_UNREACHABLE_STATEMENT => "chir_dce_unreachable_statement",
+            DiagId::CHIR_DCE_UNREACHABLE_RETURN => "chir_dce_unreachable_return",
+            DiagId::CHIR_DCE_UNREACHABLE_IF => "chir_dce_unreachable_if",
+            DiagId::CHIR_DCE_UNREACHABLE => "chir_dce_unreachable",
+            DiagId::CHIR_DCE_UNREACHABLE_EXPRESSION_HINT => "chir_dce_unreachable_expression_hint",
+            DiagId::CHIR_DCE_UNREACHABLE_BLOCK_IN_EXPRESSION => {
+                "chir_dce_unreachable_block_in_expression"
+            }
+            DiagId::CHIR_DCE_UNREACHABLE_BLOCK => "chir_dce_unreachable_block",
+            DiagId::CHIR_DCE_UNUSED_EXPRESSION => "chir_dce_unused_expression",
+            DiagId::CHIR_DCE_UNUSED_FUNCTION => "chir_dce_unused_function",
+            DiagId::CHIR_DCE_UNUSED_FUNCTION_MAIN => "chir_dce_unused_function_main",
+            DiagId::CHIR_DCE_UNREACHABLE_EXPRESSION => "chir_dce_unreachable_expression",
+            DiagId::CHIR_DCE_UNUSED_VARIABLE => "chir_dce_unused_variable",
+            DiagId::CHIR_DCE_UNUSED_OPERATOR => "chir_dce_unused_operator",
+            DiagId::CHIR_UNREACHABLE_PATTERN => "chir_unreachable_pattern",
+            DiagId::CHIR_EVAL_SUPPORT => "chir_eval_support",
+            DiagId::CHIR_ANNOTATION_NOT_APPLICABLE => "chir_annotation_not_applicable",
+            DiagId::FRONTEND_CAN_NOT_HANDLE_TO_MANY_CHIR => "frontend_can_not_handle_to_many_chir",
+            DiagId::CHIR_NATIVE_FFI_JAVA_ILLEGAL_TYPE_CAST => {
+                "chir_native_ffi_java_illegal_type_cast"
+            }
+            DiagId::CHIR_DIAG_END => "chir_diag_end",
+            DiagId::IMPORT_PACKAGE_DIAG_BEGIN => "import_package_diag_begin",
+            DiagId::PACKAGE_UNSUPPORT_SAVE => "package_unsupport_save",
+            DiagId::PACKAGE_UNSUPPORTED_LOAD => "package_unsupported_load",
+            DiagId::PACKAGE_INVALID_CJO_DEPENDENCY => "package_invalid_cjo_dependency",
+            DiagId::PACKAGE_DECL_NOT_FIND_IN_PACKAGE => "package_decl_not_find_in_package",
+            DiagId::PACKAGE_SEARCH_ERROR => "package_search_error",
+            DiagId::BC_CJO_ERROR => "bc_cjo_error",
+            DiagId::PACKAGE_IMPORT_ITSELF_ILLEGAL => "package_import_itself_illegal",
+            DiagId::PACKAGE_MISSED_CJO_MAIN_PKG_PART_FOR_TEST_PKG => {
+                "package_missed_cjo_main_pkg_part_for_test_pkg"
+            }
+            DiagId::PACKAGE_MULTIPLE_PACKAGE_DECLARATIONS => {
+                "package_multiple_package_declarations"
+            }
+            DiagId::PACKAGE_NAME_NOT_IDENTICAL_LSP => "package_name_not_identical_lsp",
+            DiagId::PACKAGE_NAME_INCONSISTENT_WITH_MACRO => "package_name_inconsistent_with_macro",
+            DiagId::PACKAGE_SHADOWED_IMPORT => "package_shadowed_import",
+            DiagId::PACKAGE_CONFLICT_IMPORT => "package_conflict_import",
+            DiagId::PACKAGE_CANNOT_EXPORT_MACRO_PACKAGE => "package_cannot_export_macro_package",
+            DiagId::PACKAGE_IMPORT_INCONSISTENT => "package_import_inconsistent",
+            DiagId::PACKAGE_MOCKING_SUPPORT_INCONSISTENCY => {
+                "package_mocking_support_inconsistency"
+            }
+            DiagId::PACKAGE_ACCESSIBILITY => "package_accessibility",
+            DiagId::PACKAGE_RE_EXPORT_PACKAGE_NAME => "package_re_export_package_name",
+            DiagId::PACKAGE_ROOT_PACKAGE_SHOULD_BE_PUBLIC => {
+                "package_root_package_should_be_public"
+            }
+            DiagId::PACKAGES_VISIBILITY_INCONSISTENT => "packages_visibility_inconsistent",
+            DiagId::PACKAGES_MACRO_INCONSISTENT => "packages_macro_inconsistent",
+            DiagId::FEATURE_ALREADY_SEEN_NAME => "feature_already_seen_name",
+            DiagId::FEATURE_NULL_DECLARATION => "feature_null_declaration",
+            DiagId::FEATURE_DIFFERENT_CONSISTENCY => "feature_different_consistency",
+            DiagId::IMPORT_PACKAGE_DIAG_END => "import_package_diag_end",
+            DiagId::MODULE_DIAG_BEGIN => "module_diag_begin",
+            DiagId::MODULE_READ_FILE_TO_BUFFER_FAILED => "module_read_file_to_buffer_failed",
+            DiagId::MODULE_COMMON_PART_PATH_IS_REQUIRED => "module_common_part_path_is_required",
+            DiagId::MODULE_READ_FILE_CONFLICTED => "module_read_file_conflicted",
+            DiagId::MODULE_VERSION_NOT_IDENTICAL => "module_version_not_identical",
+            DiagId::MODULE_OPEN_BCFILE_FAILED => "module_open_bcFile_failed",
+            DiagId::MODULE_LOADED_AST_FAILED => "module_loaded_ast_failed",
+            DiagId::MODULE_SAME_NAME_WITH_INDIRECT_DEPENDENT_PKG => {
+                "module_same_name_with_indirect_dependent_pkg"
+            }
+            DiagId::MODULE_UNSUPPORT_CIRCULAR_DEPENDENCIES => {
+                "module_unsupport_circular_dependencies"
+            }
+            DiagId::MODULE_COMMON_CJO_WRONG_PACKAGE => "module_common_cjo_wrong_package",
+            DiagId::MODULE_DIAG_END => "module_diag_end",
+        }
+    }
+
+    /// Stable diagnostic producer category.
+    pub const fn category(self) -> &'static str {
+        match self {
+            DiagId::PARSE_DIAG_BEGIN => "parser",
+            DiagId::PARSE_EXPECTED_NAME => "parser",
+            DiagId::PARSE_UNEXPECTED_NEWLINE_BETWEEN_AT_AND_MC => "parser",
+            DiagId::PARSE_EXPECT_ESCAPE_DOLLAR_TOKEN => "parser",
+            DiagId::PARSE_VARRAY_TYPE_PARAMETER => "parser",
+            DiagId::PARSE_VARRAY_TYPE_ARGS_MISMATCH => "parser",
+            DiagId::PARSE_EXPECT_INTEGER_LITERAL_VARRAY => "parser",
+            DiagId::PARSE_VARRAY_WITH_PAREN => "parser",
+            DiagId::PARSE_EXPECTED_IMPORT => "parser",
+            DiagId::PARSE_EXPECTED_MODULE_NAME => "parser",
+            DiagId::PARSE_EXPECTED_RIGHT_DELIMITER => "parser",
+            DiagId::PARSE_NOT_ALLOWED_RAW_IDENTIFIER => "parser",
+            DiagId::PARSE_INVALID_RETURN_TYPE => "parser",
+            DiagId::PARSE_UNMATCHED_RIGHT_DELIMITER => "parser",
+            DiagId::PARSE_EXPECTED_LITERAL => "parser",
+            DiagId::PARSE_EXPECTED_PATTERN => "parser",
+            DiagId::PARSE_EXPECTED_BACKARROW_IN_LET_COND => "parser",
+            DiagId::PARSE_EXPECTED_LEFT_PAREN_AFTER => "parser",
+            DiagId::PARSE_EXPECTED_LEFT_ANGLE_AFTER => "parser",
+            DiagId::PARSE_EXPECTED_EXPR_OR_DECL_IN => "parser",
+            DiagId::PARSE_EXPECTED_CATCH_OR_FINALLY_IN_TRY => "parser",
+            DiagId::PARSE_EXPECTED_CATCH_OR_HANDLE_OR_FINALLY_IN_TRY => "parser",
+            DiagId::PARSE_EXPECTED_COLON_IN_CATCH_PATTERN => "parser",
+            DiagId::PARSE_EXPECTED_COLON_IN_EFFECT_PATTERN => "parser",
+            DiagId::PARSE_EXPECTED_WILDCARD_OR_EXCEPTION_PATTERN => "parser",
+            DiagId::PARSE_EXPECTED_WILDCARD_OR_EFFECT_PATTERN => "parser",
+            DiagId::PARSE_EXPECTED_DOUBLE_ARROW_IN_CASE => "parser",
+            DiagId::PARSE_SELECTOR_OR_MATCH_EXPRESSION_BODY => "parser",
+            DiagId::PARSE_EXPECTED_LEFT_BRACE => "parser",
+            DiagId::PARSE_EXPECTED_LEFT_PAREN => "parser",
+            DiagId::PARSE_EXPECTED_CASE => "parser",
+            DiagId::PARSE_UNEXPECTED_LINE_BREAK => "parser",
+            DiagId::PARSE_EXPECTED_PAREN_OR_BRACE_AFTER_TRY => "parser",
+            DiagId::PARSE_EXPECTED_ASSIGNMENT => "parser",
+            DiagId::PARSE_EXPECTED_IN_FORIN_EXPRESSION => "parser",
+            DiagId::PARSE_EXPECTED_WHILE_IN_DO_WHILE => "parser",
+            DiagId::PARSE_EXPECTED_DOUBLE_ARROW_IN_LAMBDA => "parser",
+            DiagId::PARSE_EXPECTED_CCD_IN_LAMBDA => "parser",
+            DiagId::PARSE_EXPECTED_CHARACTER => "parser",
+            DiagId::PARSE_EXPECTED_CHARACTER_AFTER => "parser",
+            DiagId::PARSE_IMPORTING_BY_PACKAGE_NAME_IS_NOT_SUPPORTED => "parser",
+            DiagId::PARSE_EXPECTED_DECL => "parser",
+            DiagId::PARSE_EXPECTED_ONE_OF_IDENTIFIER_OR_PATTERN => "parser",
+            DiagId::PARSE_EXPECTED_GET_OR_SET_IN_PROP => "parser",
+            DiagId::PARSE_EXPECTED_WHERE_BRACE => "parser",
+            DiagId::PARSE_EXPECTED_LT_BRACE => "parser",
+            DiagId::PARSE_EXPECTED_LT_PAREN => "parser",
+            DiagId::PARSE_EXPECTED_IDENTIFIER_LP => "parser",
+            DiagId::PARSE_EXPECTED_DOT_LPAREN => "parser",
+            DiagId::PARSE_EXPECTED_ARROW_IN_FUNC_TYPE => "parser",
+            DiagId::PARSE_UNEXPECTED_COLON_IN_RANGE => "parser",
+            DiagId::PARSE_EXPECTED_LSQUARE_AFTER => "parser",
+            DiagId::PARSE_EXPECTED_TYPE_ARGUMENT => "parser",
+            DiagId::PARSE_EXPECTED_PARAMETER_RP => "parser",
+            DiagId::PARSE_EXPECTED_NO_NEWLINE_AFTER => "parser",
+            DiagId::PARSE_EXPECTED_IF_LET_ANDAND => "parser",
+            DiagId::PARSE_DUPLICATED_ITEM => "parser",
+            DiagId::PARSE_NL_WARNING => "parser",
+            DiagId::PARSE_ILLEGAL_FUNCTION_NAME => "parser",
+            DiagId::PARSE_EXPECTED_MACRO_DECL_DEFINE_IN_MACRO_PACKAGE => "parser",
+            DiagId::PARSE_EXPECTED_PUBLIC_BEFORE_MACRO_DECL => "parser",
+            DiagId::PARSE_MACRO_UNEXPECTED_EMPTY_PARAMETER => "parser",
+            DiagId::PARSE_MACRO_EXPECTED_RIGHT_PARAMETER_NUMS => "parser",
+            DiagId::PARSE_MACRO_ILLEGAL_PARAM_TYPE => "parser",
+            DiagId::PARSE_MACRO_ILLEGAL_RET_TYPE => "parser",
+            DiagId::PARSE_MACRO_ILLEGAL_NAMED_PARAM => "parser",
+            DiagId::PARSE_MACRO_DEFINE_CONFLICTED_WITH_BUILTIN => "parser",
+            DiagId::PARSE_MACRO_CALL_ILLEGAL_WITH_BUILTIN => "parser",
+            DiagId::PARSE_UNEXPECTED_DECLARATION_IN_SCOPE => "parser",
+            DiagId::PARSE_CONST_EXPECTED_INITIALIZER => "parser",
+            DiagId::PARSE_UNEXPECTED_CONST_MODIFIER_ON_VARIABLE => "parser",
+            DiagId::PARSE_VAR_MUST_BE_INITIALIZED => "parser",
+            DiagId::PARSE_EXPECTED_ONE_OF_TYPE_OR_INITIALIZER => "parser",
+            DiagId::PARSE_EXPECTED_TYPE_OR_INIT_IN_PATTERN => "parser",
+            DiagId::PARSE_NAMED_PARAMETER_AFTER_UNNAMED => "parser",
+            DiagId::PARSE_MEMBER_PARAMETER_AFTER_REGULAR => "parser",
+            DiagId::PARSE_DECL_CANNOT_INHERIT_THEIR_SELF => "parser",
+            DiagId::PARSE_INTRINSIC_FUNCTION_MUST_BE_TOPLEVEL => "parser",
+            DiagId::PARSE_INTRINSIC_FUNCTION_CANNOT_HAVE_BODY => "parser",
+            DiagId::PARSE_ABSTRACT_FUNC_MUST_HAVE_RETURN_TYPE => "parser",
+            DiagId::PARSE_DUPLICATED_GET_OR_SET => "parser",
+            DiagId::PARSE_UNKNOWN_ENUM_CONSTRUCTOR => "parser",
+            DiagId::PARSE_GETTER_SETTER_CANNOT_BE_GENERIC => "parser",
+            DiagId::PARSE_UNEXPECTED_WHERE => "parser",
+            DiagId::PARSE_SETTER_MUST_CONTAIN_ONE_PARAMETER => "parser",
+            DiagId::PARSE_SETTER_CAN_ONLY_ACCEPT_ONE_PARAMETER => "parser",
+            DiagId::PARSE_DUPLICATED_INTRINSIC_FUNCTION => "parser",
+            DiagId::PARSE_MISSING_BODY => "parser",
+            DiagId::PARSE_INVALID_SUPER_DECLARATION => "parser",
+            DiagId::PARSE_STATIC_INIT_CAN_NOT_ACCEPT_ANY_PARAMETER => "parser",
+            DiagId::PARSE_FINALIZER_CAN_NOT_ACCEPT_ANY_PARAMETER => "parser",
+            DiagId::PARSE_INVALID_QUOTE_DOLLAR_EXPR => "parser",
+            DiagId::PARSE_UNEXPECTED_LAMBDA_EXPR_IN_TOPLEVEL => "parser",
+            DiagId::PARSE_TRAILING_CLOSURE_ONLY_FOLLOW_NAME => "parser",
+            DiagId::PARSE_INVALID_LEFT_HAND_EXPR => "parser",
+            DiagId::PARSE_CHAINED_NONE_ASSOCIATIVE => "parser",
+            DiagId::PARSE_DUPLICATED_STEP_OP => "parser",
+            DiagId::PARSE_INVALID_STEP_OP => "parser",
+            DiagId::PARSE_EXPECTED_EXPRESSION => "parser",
+            DiagId::PARSE_INVALID_INCRE_EXPR => "parser",
+            DiagId::PARSE_UNRECOGNIZED_TOKEN_AFTER_MACRO_NODE => "parser",
+            DiagId::PARSE_EXPECTED_OPERATOR_OR_END => "parser",
+            DiagId::PARSE_CANNOT_HAVE_ASSI_IN_INIT => "parser",
+            DiagId::PARSE_CASE_BODY_CANNOT_BE_EMPTY => "parser",
+            DiagId::PARSE_REDEFINED_RESOURCE_NAME => "parser",
+            DiagId::PARSE_NEWLINE_NOT_ALLOWED_BETWEEN_SPAWN_AND_ARGUMENT => "parser",
+            DiagId::PARSE_EXPECTED_NO_ARGUMENTS_IN_SPAWN => "parser",
+            DiagId::PARSE_INVALID_OVERLOADED_OPERATOR => "parser",
+            DiagId::PARSE_EMPTY_STRING_INTERPOLATION => "parser",
+            DiagId::PARSE_INVALID_UNICODE_SCALAR => "parser",
+            DiagId::PARSE_WILDCARD_CAN_NOT_BE_USED_AS_MEMBER_NAME => "parser",
+            DiagId::PARSE_UNEXPECTED_EXPECTED_FOUND => "parser",
+            DiagId::PARSE_CANNOT_OPERATOR_A_TUPLE => "parser",
+            DiagId::PARSE_EXPECTED_PARENTHESES => "parser",
+            DiagId::PARSE_THIS_TYPE_NOT_ALLOW => "parser",
+            DiagId::PARSE_UNEXPECTED_TUPLE_DECL_TYPE => "parser",
+            DiagId::PARSE_EXPECTED_TYPE => "parser",
+            DiagId::PARSE_NEWLINE_NOT_ALLOWED_BETWEEN_QUEST_AND_TYPE => "parser",
+            DiagId::PARSE_REDUNDANT_ARROW_AFTER_FUNC_TYPE => "parser",
+            DiagId::PARSE_ALL_PARAMETERS_MUST_BE_NAMED => "parser",
+            DiagId::PARSE_ONLY_TUPLE_AND_FUNC_TYPE_ALLOW_TYPE_PARAMETER_NAME => "parser",
+            DiagId::PARSE_ILLEGAL_DECLARATION_PATTERN => "parser",
+            DiagId::PARSE_ILLEGAL_OR_PATTERN => "parser",
+            DiagId::PARSE_TUPLE_PATTERN_EXPECTED_MORE_FIELD => "parser",
+            DiagId::PARSE_TYPE_PATTERN_IN_LET_COND => "parser",
+            DiagId::PARSE_EXPECTED_MACRO_DECL_IN_MACRO_PACKAGE => "parser",
+            DiagId::PARSE_PACKAGE_AS_ALL => "parser",
+            DiagId::PARSE_PACKAGE_NAME_LENGTH_OVERFLOW => "parser",
+            DiagId::PARSE_PACKAGE_NAME_HAS_BACKTICK => "parser",
+            DiagId::PARSE_ILLEGAL_MACRO_EXPAND_INPUT_ARGS => "parser",
+            DiagId::PARSE_ILLEGAL_MACRO_EXPAND_ATTR_ARGS => "parser",
+            DiagId::PARSE_ILLEGAL_MACRO_EXPAND_INPUT_ARGS_WITHOUT_PAREN => "parser",
+            DiagId::PARSE_ILLEGAL_MACRO_EXPAND_INPUT_WITHOUT_PAREN_IN_PARAMLIST => "parser",
+            DiagId::PARSE_IFAVAILABLE_ARG_NO_NAME => "parser",
+            DiagId::PARSE_IFAVAILABLE_NOT_LAMBDA => "parser",
+            DiagId::PARSE_UNEXPECTED_ANNO_ON => "parser",
+            DiagId::PARSE_UNEXPECTED_OVERFLOW_ANNOTATION => "parser",
+            DiagId::PARSE_UNRECOGNIZED_EXPRESSION_IN_WHEN => "parser",
+            DiagId::PARSE_UNRECOGNIZED_ATTR_IN_ANNO => "parser",
+            DiagId::PARSE_EMPTY_ATTRIBUTE => "parser",
+            DiagId::PARSE_DUPLICATED_ATTR_VALUE => "parser",
+            DiagId::PARSE_UNSAFE_WILL_BE_IGNORED => "parser",
+            DiagId::PARSE_DUPLICATED_ANNOTATION => "parser",
+            DiagId::PARSE_CONFLICT_ANNOTATION => "parser",
+            DiagId::PARSE_FAIL_EXPECTED_ANNOTATION => "parser",
+            DiagId::PARSE_COMMON_AND_SPECIFIC_IN_THE_SAME_FILE => "parser",
+            DiagId::PARSE_COMMON_FUNCTION_MUST_HAVE_RETURN_TYPE => "parser",
+            DiagId::PARSE_SPECIFIC_FUNCTION_MUST_HAVE_RETURN_TYPE => "parser",
+            DiagId::PARSE_SPECIFIC_FUNCTION_PARAMETER_CANNOT_HAVE_DEFAULT_VALUE => "parser",
+            DiagId::PARSE_SPECIFIC_MEMBER_MUST_HAVE_IMPLEMENTATION => "parser",
+            DiagId::PARSE_EXPECTED_TYPE_WITH_CJMP_VAR => "parser",
+            DiagId::PARSE_CJMP_OUTDECL_MISS_MATCH => "parser",
+            DiagId::PARSE_CJMP_STATIC_INIT => "parser",
+            DiagId::PARSE_COMMON_IN_NON_COMMON_FILE => "parser",
+            DiagId::PARSE_SPECIFIC_IN_NON_SPECIFIC_FILE => "parser",
+            DiagId::PARSE_CJMP_GENERIC_DECL => "parser",
+            DiagId::PARSE_CJMP_PATTERN_DECL => "parser",
+            DiagId::PARSE_CJMP_IN_COMMON_CTOR_REQUIRED => "parser",
+            DiagId::PARSE_EXPLICITLY_ABSTRACT_ONLY_FOR_CJMP_ABSTRACT_CLASS => "parser",
+            DiagId::PARSE_ILLEGAL_MODIFIER_IN_SCOPE => "parser",
+            DiagId::PARSE_CONFLICT_MODIFIER => "parser",
+            DiagId::PARSE_EXPECTED_NO_MODIFIER => "parser",
+            DiagId::PARSE_DUPLICATE_MODIFIER => "parser",
+            DiagId::PARSE_DUPLICATE_TYPE_PARAMETER_NAME => "parser",
+            DiagId::PARSE_UNEXPECTED_TYPE_IN => "parser",
+            DiagId::PARSE_REDUNDANT_MODIFIER => "parser",
+            DiagId::PARSE_VARIABLE_LENGTH_PARAMETER_CAN_NOT_BE_FIRST => "parser",
+            DiagId::PARSE_VARIABLE_LENGTH_PARAMETER_MUST_IN_THE_END => "parser",
+            DiagId::PARSE_VARIABLE_LENGTH_PARAMETER_ONLY_IN_THE_FOREIGN_FUNCTION => "parser",
+            DiagId::PARSE_FOREIGN_FUNC_SHOULD_NOT_BE_GENERIC => "parser",
+            DiagId::PARSE_FOREIGN_FUNC_MUST_DECLARE_RETURN_TYPE => "parser",
+            DiagId::PARSE_FOREIGN_FUNCTION_WITH_BODY => "parser",
+            DiagId::PARSE_EXPECTED_STATIC_FOR_CONST_MEMBER_VAR => "parser",
+            DiagId::PARSE_DEPRECATED_WRONG_ARGUMENT => "parser",
+            DiagId::PARSE_DEPRECATED_ARGUMENT_DUPLICATION => "parser",
+            DiagId::PARSE_DEPRECATED_ARGUMENTS_MUST_BE_LIT_CONST_EXPR => "parser",
+            DiagId::PARSE_DEPRECATED_EMPTY_STRING_ARGUMENT => "parser",
+            DiagId::PARSE_DEPRECATED_UNKNOWN_ARGUMENT => "parser",
+            DiagId::PARSE_DEPRECATED_INVALID_TARGET => "parser",
+            DiagId::PARSE_ANNOTATION_MAX_ONE_ARGUMENT => "parser",
+            DiagId::PARSE_ANNOTATION_ONE_ARGUMENT => "parser",
+            DiagId::PARSE_ANNOTATION_NO_ARGUMENTS => "parser",
+            DiagId::PARSE_FOREIGN_NAME_ON_FFI_DECL_MEMBER => "parser",
+            DiagId::PARSE_JAVA_MIRROR_FUNCTION_CANNOT_HAVE_BODY => "parser",
+            DiagId::PARSE_JAVA_MIRROR_FUNCTION_MUST_HAVE_RETURN_TYPE => "parser",
+            DiagId::PARSE_JAVA_MIRROR_PROP_CANNOT_HAVE_SETTER => "parser",
+            DiagId::PARSE_JAVA_MIRROR_PROP_CANNOT_HAVE_GETTER => "parser",
+            DiagId::PARSE_JAVA_MIRROR_PROP_IS_DEPRECATED => "parser",
+            DiagId::PARSE_JAVA_MIRROR_DECL_CANNOT_HAVE_PRIMARY_CTOR => "parser",
+            DiagId::PARSE_JAVA_MIRROR_CONSTRUCTOR_CANNOT_HAVE_BODY => "parser",
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_HAVE_PRIVATE_MEMBER => "parser",
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_HAVE_STATIC_INIT => "parser",
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_HAVE_FINALIZER => "parser",
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_HAVE_CONST_MEMBER => "parser",
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_BE_SEALED => "parser",
+            DiagId::PARSE_JAVA_IMPL_CANNOT_BE_GENERIC => "parser",
+            DiagId::PARSE_JAVA_IMPL_CANNOT_BE_ABSTRACT => "parser",
+            DiagId::PARSE_JAVA_IMPL_CANNOT_BE_SEALED => "parser",
+            DiagId::PARSE_JAVA_IMPL_CANNOT_HAVE_STATIC_INIT => "parser",
+            DiagId::PARSE_JAVA_MIRROR_CANNOT_HAVE_OPEN_PROP => "parser",
+            DiagId::PARSE_JAVA_IMPL_CANNOT_BE_OPEN => "parser",
+            DiagId::PARSE_JAVA_IMPL_CANNOT_BE_INTERFACE => "parser",
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_HAVE_PRIMARY_CTOR => "parser",
+            DiagId::PARSE_OBJC_MIRROR_CTOR_CANNOT_HAVE_BODY => "parser",
+            DiagId::PARSE_OBJC_MIRROR_METHOD_CANNOT_HAVE_BODY => "parser",
+            DiagId::PARSE_OBJC_MIRROR_METHOD_MUST_HAVE_RETURN_TYPE => "parser",
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_BE_SEALED => "parser",
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_HAVE_PRIVATE_MEMBER => "parser",
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_HAVE_STATIC_INIT => "parser",
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_HAVE_FINALIZER => "parser",
+            DiagId::PARSE_OBJC_MIRROR_CANNOT_HAVE_CONST_MEMBER => "parser",
+            DiagId::PARSE_OBJC_IMPL_CANNOT_BE_GENERIC => "parser",
+            DiagId::PARSE_OBJC_IMPL_CANNOT_BE_ABSTRACT => "parser",
+            DiagId::PARSE_OBJC_IMPL_CANNOT_BE_SEALED => "parser",
+            DiagId::PARSE_OBJC_IMPL_CANNOT_HAVE_STATIC_INIT => "parser",
+            DiagId::PARSE_OBJC_IMPL_CANNOT_BE_OPEN => "parser",
+            DiagId::PARSE_OBJC_IMPL_CANNOT_BE_INTERFACE => "parser",
+            DiagId::PARSE_OBJC_MIRROR_FIELD_CANNOT_HAVE_INITIALIZER => "parser",
+            DiagId::PARSE_OBJC_MIRROR_FIELD_CANNOT_BE_STATIC => "parser",
+            DiagId::PARSE_OBJC_MIRROR_PROP_CANNOT_HAVE_GETTER => "parser",
+            DiagId::PARSE_OBJC_MIRROR_PROP_CANNOT_HAVE_SETTER => "parser",
+            DiagId::PARSE_OBJC_MIRROR_FUNC_CANNOT_BE_FOREIGN => "parser",
+            DiagId::PARSE_OBJC_MIRROR_FUNC_CANNOT_BE_C => "parser",
+            DiagId::PARSE_OBJC_MIRROR_FUNC_CANNOT_BE_GENERIC => "parser",
+            DiagId::PARSE_OBJC_MIRROR_FUNC_CANNOT_HAVE_BODY => "parser",
+            DiagId::PARSE_OBJC_MIRROR_FUNC_MUST_HAVE_EXPLICIT_TYPE => "parser",
+            DiagId::PARSE_OBJC_MIRROR_FUNC_CANNOT_BE_CONST => "parser",
+            DiagId::PARSE_OBJC_MIRROR_FUNC_MUST_BE_TOP_LEVEL => "parser",
+            DiagId::PARSE_OBJC_INIT_METHOD_MUST_BE_STATIC => "parser",
+            DiagId::PARSE_OBJC_INIT_METHOD_MUST_BE_IN_MIRROR_CLASS => "parser",
+            DiagId::PARSE_OBJC_OPTIONAL_METHOD_MUST_BE_IN_MIRROR_CLASS => "parser",
+            DiagId::PARSE_OBJC_INTEROP_NOT_SUPPORTED => "parser",
+            DiagId::PARSE_DIAG_ERROR => "parser",
+            DiagId::PARSE_DIAG_WARNING => "parser",
+            DiagId::PARSE_DIAG_END => "parser",
+            DiagId::LEX_DIAG_BEGIN => "lexer",
+            DiagId::LEX_UNKNOWN_START_OF_TOKEN => "lexer",
+            DiagId::LEX_UNEXPECTED_DIGIT => "lexer",
+            DiagId::LEX_CANNOT_START_WITH_DIGIT => "lexer",
+            DiagId::LEX_EXPECTED_DIGIT => "lexer",
+            DiagId::LEX_UNEXPECTED_DECIMAL_POINT => "lexer",
+            DiagId::LEX_UNEXPECTED_EXPONENT_PART => "lexer",
+            DiagId::LEX_EXPECTED_EXPONENT_PART => "lexer",
+            DiagId::LEX_EXPECTED_IDENTIFIER_AFTER_DOLLAR => "lexer",
+            DiagId::LEX_UNRECOGNIZED_SYMBOL => "lexer",
+            DiagId::LEX_EXPECTED_IDENTIFIER => "lexer",
+            DiagId::LEX_EXPECTED_BACK_QUOTE => "lexer",
+            DiagId::LEX_UNTERMINATED_SINGLE_LINE_STRING => "lexer",
+            DiagId::LEX_UNTERMINATED_MULTI_LINE_STRING => "lexer",
+            DiagId::LEX_UNTERMINATED_INTERPOLATION => "lexer",
+            DiagId::LEX_MULTILINE_STRING_START_FROM_NEWLINE => "lexer",
+            DiagId::LEX_UNTERMINATED_RAW_STRING => "lexer",
+            DiagId::LEX_EXPECTED_QUOTE_IN_RAW_STRING => "lexer",
+            DiagId::LEX_UNRECOGNIZED_ESCAPE => "lexer",
+            DiagId::LEX_UNTERMINATED_BLOCK_COMMENT => "lexer",
+            DiagId::LEX_EXPECTED_LEFT_BRACKET => "lexer",
+            DiagId::LEX_EXPECTED_RIGHT_BRACKET => "lexer",
+            DiagId::LEX_EXPECTED_RIGHT_BRACKET_OR_HEXADECIMAL => "lexer",
+            DiagId::LEX_EXPECTED_CHARACTER => "lexer",
+            DiagId::LEX_EXPECTED_LETTER_AFTER_UNDERSCORE => "lexer",
+            DiagId::LEX_ILLEGAL_INTEGER_SUFFIX => "lexer",
+            DiagId::LEX_ILLEGAL_FLOAT_SUFFIX => "lexer",
+            DiagId::LEX_ILLEGAL_NON_DECIMAL_FLOAT => "lexer",
+            DiagId::LEX_EXPECTED_CHARACTER_IN_CHAR_LITERAL => "lexer",
+            DiagId::LEX_UNTERMINATED_CHAR_LITERAL => "lexer",
+            DiagId::LEX_CHARACTERS_OVERFLOW => "lexer",
+            DiagId::LEX_UNKNOWN_SUFFIX => "lexer",
+            DiagId::LEX_ILLEGAL_UTF8_ENCODING_BYTE => "lexer",
+            DiagId::LEX_ILLEGAL_UNICODE => "lexer",
+            DiagId::LEX_UNSECURE_UNICODE => "lexer",
+            DiagId::LEX_ILLEGAL_UNI_CHARACTER_LITERAL => "lexer",
+            DiagId::LEX_TOO_MANY_DIGITS => "lexer",
+            DiagId::LEX_UNRECOGNIZED_CHAR_IN_BINARY_STRING => "lexer",
+            DiagId::LEX_DIAG_END => "lexer",
+            DiagId::SEMA_DIAG_BEGIN => "sema",
+            DiagId::SEMA_INVALID_NODE_AFTER_CHECK => "sema",
+            DiagId::SEMA_UNABLE_TO_INFER_DECL => "sema",
+            DiagId::SEMA_MISMATCHED_TYPES => "sema",
+            DiagId::SEMA_MISMATCHED_TYPES_MULTIPLE_ASSIGN => "sema",
+            DiagId::SEMA_MISMATCHED_TYPES_BECAUSE => "sema",
+            DiagId::SEMA_AMBIGUOUS_USE => "sema",
+            DiagId::SEMA_UNDECLARED_IDENTIFIER => "sema",
+            DiagId::SEMA_UNDEFINED_VARIABLE => "sema",
+            DiagId::SEMA_REDEFINITION => "sema",
+            DiagId::SEMA_CONFLICT_WITH_SUB_PACKAGE => "sema",
+            DiagId::SEMA_CORE_OBJECT_NOT_FOUND_WHEN_NO_PRELUDE => "sema",
+            DiagId::SEMA_ACCESSIBILITY_WITH_MAIN_HINT => "sema",
+            DiagId::SEMA_ACCESSIBILITY => "sema",
+            DiagId::SEMA_PARAM_MISS_MATCH => "sema",
+            DiagId::SEMA_UNABLE_TO_INFER_RETURN_TYPE => "sema",
+            DiagId::SEMA_UNABLE_TO_INFER_GENERIC_FUNC => "sema",
+            DiagId::SEMA_INVALID_CALLED_OBJECT => "sema",
+            DiagId::SEMA_INVALID_RETURN => "sema",
+            DiagId::SEMA_INVALID_RETURN_IN_STATIC_INIT => "sema",
+            DiagId::SEMA_WRONG_NUMBER_OF_ARGUMENTS => "sema",
+            DiagId::SEMA_UNORDERED_ARGUMENTS => "sema",
+            DiagId::SEMA_PARAM_NAMED_MISMATCHED => "sema",
+            DiagId::SEMA_NEED_NAMED_ARGUMENT => "sema",
+            DiagId::SEMA_INVALID_SUBSCRIPT_ASSIGN_PARAMETER => "sema",
+            DiagId::SEMA_INVALID_SUBSCRIPT_ASSIGN_PARAMETER_NUM => "sema",
+            DiagId::SEMA_INVALID_SUBSCRIPT_ASSIGN_RETURN => "sema",
+            DiagId::SEMA_OVERLOAD_CONFLICTS => "sema",
+            DiagId::SEMA_STATIC_FUNCTION_OVERLOAD_CONFLICTS => "sema",
+            DiagId::SEMA_USE_MUTABLE_FUNC_ALONE => "sema",
+            DiagId::SEMA_UNSAFE_FUNC_CAN_ONLY_BE_CALLED => "sema",
+            DiagId::SEMA_AMBIGUOUS_MATCH_PRIMITIVE_EXTEND => "sema",
+            DiagId::SEMA_IMMUTABLE_ACCESS_MUTABLE_FUNC => "sema",
+            DiagId::SEMA_RECURSIVE_CONSTRUCTOR_CALL => "sema",
+            DiagId::SEMA_CANNOT_HAVE_DEFAULT_PARAM => "sema",
+            DiagId::SEMA_TRAILING_LAMBDA_CANNOT_USED_FOR_NON_FUNCTION => "sema",
+            DiagId::SEMA_UNABLE_TO_INFER_EXPR => "sema",
+            DiagId::SEMA_EXCEED_NUM_VALUE_RANGE => "sema",
+            DiagId::SEMA_EXCEED_FLOAT_LITERAL_RANGE => "sema",
+            DiagId::SEMA_FLOAT_LITERAL_TOO_LARGE => "sema",
+            DiagId::SEMA_FLOAT_LITERAL_TOO_SMALL => "sema",
+            DiagId::SEMA_INVALID_UNARY_EXPR => "sema",
+            DiagId::SEMA_INVALID_UNARY_EXPR_WITH_TARGET => "sema",
+            DiagId::SEMA_INVALID_BINARY_EXPR => "sema",
+            DiagId::SEMA_INVALID_SUBSCRIPT_EXPR => "sema",
+            DiagId::SEMA_CANNOT_ASSIGN_TO_SUBSCRIPT => "sema",
+            DiagId::SEMA_NOT_MEMBER_OF => "sema",
+            DiagId::SEMA_MEMBER_NOT_IMPORTED => "sema",
+            DiagId::SEMA_CANNOT_ASSIGN_TO_IMMUTABLE => "sema",
+            DiagId::SEMA_UNQUALIFIED_LEFT_VALUE_ASSIGNED => "sema",
+            DiagId::SEMA_NOT_FOUND_FROM_GENERIC_UPPER_BOUNDS => "sema",
+            DiagId::SEMA_DIFFERENT_OR_PATTERN => "sema",
+            DiagId::SEMA_VAR_IN_OR_PATTERN => "sema",
+            DiagId::SEMA_VAR_IN_OR_CONDITION => "sema",
+            DiagId::SEMA_NONEXHUASTIVE_PATTERNS => "sema",
+            DiagId::SEMA_UNREACHABLE_PATTERN => "sema",
+            DiagId::SEMA_LAMBDAEXPR_MUST_HAVE_TYPE_ANNOTATION => "sema",
+            DiagId::SEMA_USE_FUNC_CAPTURE_VAR_ALONE => "sema",
+            DiagId::SEMA_ENUM_CONSTRUCTOR_WITH_PARAM_MUST_HAVE_ARGS => "sema",
+            DiagId::SEMA_OPTIONAL_CHAIN_NON_OPTIONAL => "sema",
+            DiagId::SEMA_CAPTURE_BEFORE_INITIALIZATION => "sema",
+            DiagId::SEMA_INTERPOLATION_IN_CONST_PATTERN => "sema",
+            DiagId::SEMA_CANNOT_REF_TO_PKG_NAME => "sema",
+            DiagId::SEMA_USE_EXPR_WITHOUT_IMPORT => "sema",
+            DiagId::SEMA_GENERIC_FUNC_WITHOUT_TYPE_ARG => "sema",
+            DiagId::SEMA_GENERIC_TYPE_INCONSISTENT => "sema",
+            DiagId::SEMA_GENERIC_ARGUMENT_NO_MATCH => "sema",
+            DiagId::SEMA_GENERIC_CONSTRAINT_NOT_LOOSER => "sema",
+            DiagId::SEMA_GENERIC_INSTANTIATION_CAUSES_AMBIGUOUS_FUNCTIONS => "sema",
+            DiagId::SEMA_MULTIPLE_CLASS_UPPERBOUNDS => "sema",
+            DiagId::SEMA_GENERIC_PARAM_EXIST_IN_CLASS_IRRELEVANT_UPPERBOUND_RECURSIVELY => "sema",
+            DiagId::SEMA_GENERIC_PARAM_DIRECTLY_RECURSIVE => "sema",
+            DiagId::SEMA_UPPER_BOUND_MUST_BE_CLASS_OR_INTERFACE => "sema",
+            DiagId::SEMA_INHERIT_MEMBER_KIND_INCONSISTENT => "sema",
+            DiagId::SEMA_INHERIT_SUPER_MEMBER_KIND_INCONSISTENT => "sema",
+            DiagId::SEMA_INHERIT_MEMBER_TYPE_INCONSISTENT => "sema",
+            DiagId::SEMA_INHERIT_ABSTRACT_CLASS_STATIC_UNIMPLEMENT_FUNC => "sema",
+            DiagId::SEMA_CANNOT_OVERRIDE => "sema",
+            DiagId::SEMA_INVALID_MEMBER_VISIBILITY_IN_CLASS => "sema",
+            DiagId::SEMA_WEAK_VISIBILITY => "sema",
+            DiagId::SEMA_CANNOT_INHERIT_SEALED => "sema",
+            DiagId::SEMA_INHERIT_THREAD_CONTEXT_INVALID => "sema",
+            DiagId::SEMA_INHERIT_THREAD_CONTEXT_NOT_OPEN => "sema",
+            DiagId::SEMA_INHERIT_NOT_RETURN_THIS => "sema",
+            DiagId::SEMA_RETURN_TYPE_INCOMPATIBLE => "sema",
+            DiagId::SEMA_SPAWN_ARG_INVALID => "sema",
+            DiagId::SEMA_SPAWN_ARG_NO_EFFECT => "sema",
+            DiagId::SEMA_INTERFACE_CALL_WITH_UNIMPLEMENTED_CALL => "sema",
+            DiagId::SEMA_TYPE_UNINITIALIZED_STATIC_FIELD => "sema",
+            DiagId::SEMA_INSTANCE_FUNC_CANNOT_BE_USED_IN_FINALIZER => "sema",
+            DiagId::SEMA_NO_NON_PARAM_CONSTRUCTOR_IN_SUPER_CLASS => "sema",
+            DiagId::SEMA_NON_ABSTRACT_CLASS_CANNOT_BE_SEALED => "sema",
+            DiagId::SEMA_STATIC_VARIABLE_USE_GENERIC_PARAMETER => "sema",
+            DiagId::SEMA_CSTRUCT_CANNOT_IMPL_INTERFACES => "sema",
+            DiagId::SEMA_CLASS_NEED_ABSTRACT_MODIFIER_OR_FUNC_NEED_IMPL => "sema",
+            DiagId::SEMA_NEED_MEMBER_IMPLEMENTATION => "sema",
+            DiagId::SEMA_EXPORT_SAME_PRIVATE_DECL => "sema",
+            DiagId::SEMA_EXTEND_FUNCTION_CANNOT_OVERRIDDEN => "sema",
+            DiagId::SEMA_EXTEND_MEMBER_CANNOT_SHADOW => "sema",
+            DiagId::SEMA_ILLEGAL_EXTENDED_TYPE => "sema",
+            DiagId::SEMA_EXTEND_GENERIC_MUST_BE_USED => "sema",
+            DiagId::SEMA_EXTEND_DUPLICATE_INTERFACE => "sema",
+            DiagId::SEMA_EXTEND_NOT_INTERFACE => "sema",
+            DiagId::SEMA_EXTEND_ILLEGAL_MEMBER => "sema",
+            DiagId::SEMA_EXTEND_USE_SUPER => "sema",
+            DiagId::SEMA_TYPE_CANNOT_EXTEND_IMPORTED_INTERFACE => "sema",
+            DiagId::SEMA_C_TYPE_CANNOT_EXTEND_INTERFACE => "sema",
+            DiagId::SEMA_IMMUTABLE_TYPE_EXTEND_ASSIGNMENT_INDEX_OPERATOR => "sema",
+            DiagId::SEMA_IMMUTABLE_TYPE_ILLEGAL_PROPERTY => "sema",
+            DiagId::SEMA_INTERFACE_IS_NOT_EXTENDABLE => "sema",
+            DiagId::SEMA_INVALID_MUT_MODIFIER_EXTEND_OF_STRUCT => "sema",
+            DiagId::SEMA_EXTEND_CHECK_SEQUENCE_CANNOT_DECIDE => "sema",
+            DiagId::SEMA_EXPORT_EXTEND_DEPEND_NON_EXPORT_EXTEND => "sema",
+            DiagId::SEMA_PROPERTY_MUST_HAVE_ACCESSORS => "sema",
+            DiagId::SEMA_IMMUTABLE_PROPERTY_WITH_SETTER => "sema",
+            DiagId::SEMA_PROPERTY_HAVE_SAME_DECLARATION_IN_INHERIT_MUT => "sema",
+            DiagId::SEMA_PROPERTY_HAVE_SAME_DECLARATION_IN_INHERIT_IMMUT => "sema",
+            DiagId::SEMA_PROPERTY_MUST_IMPLEMENT_BOTH => "sema",
+            DiagId::SEMA_EXPECT_CONST => "sema",
+            DiagId::SEMA_CANNOT_DEFINE_VAR_IN_CONST_FUNCITON => "sema",
+            DiagId::SEMA_NO_CONST_INIT => "sema",
+            DiagId::SEMA_CLASS_CONST_INIT_WITH_VAR => "sema",
+            DiagId::SEMA_ANNOTATION_NO_CONST_INIT => "sema",
+            DiagId::SEMA_ANNOTATION_ARG_TARGET => "sema",
+            DiagId::SEMA_ANNOTATION_ARG_TARGET_ARRAY_LIT => "sema",
+            DiagId::SEMA_ANNOTATION_NON_PUBLIC => "sema",
+            DiagId::SEMA_ANNOTATION_CUSTOM_PLACE => "sema",
+            DiagId::SEMA_INOUT_MODIFY_CSTRING_OR_ZEROSIZED => "sema",
+            DiagId::SEMA_INOUT_MODIFY_NON_CTYPE => "sema",
+            DiagId::SEMA_INOUT_MUST_BE_VAR_VARIABLE => "sema",
+            DiagId::SEMA_INOUT_MODIFY_HEAP_VARIABLE => "sema",
+            DiagId::SEMA_INOUT_CAN_ONLY_USED_IN_CFUNC_CALLING => "sema",
+            DiagId::SEMA_INOUT_MISMATCH => "sema",
+            DiagId::SEMA_ANNOTATION_ERROR_ARG_NUM => "sema",
+            DiagId::SEMA_ANNOTATION_ERROR_ARG_RANGE => "sema",
+            DiagId::SEMA_ANNOTATION_ERROR_OBJECT => "sema",
+            DiagId::SEMA_JAVA_NON_JTYPE => "sema",
+            DiagId::SEMA_JAVA_INVALID_UNIT => "sema",
+            DiagId::SEMA_JAVA_APP_INHERIT_EXT => "sema",
+            DiagId::SEMA_JAVA_UNSUPPORTED_DECL => "sema",
+            DiagId::SEMA_MISSING_JAVA_INTEROP_ANNOTATION => "sema",
+            DiagId::SEMA_GENERIC_STATIC_ACCESS => "sema",
+            DiagId::SEMA_PRIMITIVE_TYPE_AS_GENERICS_ARG => "sema",
+            DiagId::SEMA_MEET_CONSTRAINT_INDIRECTLY => "sema",
+            DiagId::SEMA_STATIC_MEMBER_IN_INTERFACE_MUST_HAS_BODY => "sema",
+            DiagId::SEMA_EXTEND_A_JAVA_TYPE => "sema",
+            DiagId::SEMA_GENERIC_UPPER_BOUNDS_MUST_BE_JAVA_IN_JAVA => "sema",
+            DiagId::SEMA_DEFINE_JAVA_ANNOTATION => "sema",
+            DiagId::SEMA_INVALID_USE_OF_JAVA_ANNOTATION => "sema",
+            DiagId::SEMA_INVALID_USE_OF_ANNOTATION_JFFI => "sema",
+            DiagId::SEMA_ANNOTATION_NOT_APPLICABLE_JFFI => "sema",
+            DiagId::SEMA_CANNOT_USE_ANNOTATION_JFFI => "sema",
+            DiagId::SEMA_SHADOW_CANNOT_IN_TYPE_ARGS => "sema",
+            DiagId::SEMA_UNSUPPORTED_TYPE_ARGUMENT_IN_JAVA_INTEROP => "sema",
+            DiagId::SEMA_CJMAPPING_STRUCT_GENERIC_NOT_SUPPORTED => "sema",
+            DiagId::SEMA_CJMAPPING_STRUCT_INHERITANCE_INTERFACE_NOT_SUPPORTED => "sema",
+            DiagId::SEMA_CJMAPPING_DECL_NOT_SUPPORTED => "sema",
+            DiagId::SEMA_CJMAPPING_METHOD_ARG_NOT_SUPPORTED => "sema",
+            DiagId::SEMA_CJMAPPING_METHOD_RET_UNSUPPORTED => "sema",
+            DiagId::SEMA_CJ_MAPPING_GENERIC_METHOD_NOT_GET_INSTANCE_CONFIG => "sema",
+            DiagId::SEMA_VARRAY_SIZE_MATCH => "sema",
+            DiagId::SEMA_VARRAY_ARGS_NUMBER_MISMATCH => "sema",
+            DiagId::SEMA_VARRAY_SUBSCRIPT_NUM => "sema",
+            DiagId::SEMA_VARRAY_IN_CFUNC => "sema",
+            DiagId::SEMA_VARRAY_ARG_TYPE_WITH_REFTYPE => "sema",
+            DiagId::SEMA_INVALID_CFUNC_RETURN_TYPE => "sema",
+            DiagId::SEMA_MOCK_UNSUPPORTED_TYPE => "sema",
+            DiagId::SEMA_MOCK_WRONG_STATIC_DECL => "sema",
+            DiagId::SEMA_MOCK_FROZEN_UNSUPPORTED => "sema",
+            DiagId::SEMA_MOCK_FROZEN_REQUIRED => "sema",
+            DiagId::SEMA_COMMAND_HANDLE_TYPE_ERROR => "sema",
+            DiagId::SEMA_RESUMPTION_HANDLE_TYPE_ERROR => "sema",
+            DiagId::SEMA_RESUMPTION_INCORRECT_RETURN_TYPE => "sema",
+            DiagId::SEMA_COMMAND_RESUMPTION_MISMATCH => "sema",
+            DiagId::SEMA_IMPLICIT_RESUME_OUTSIDE_HANDLER => "sema",
+            DiagId::SEMA_RESUME_NO_WITH => "sema",
+            DiagId::SEMA_RESUME_WRONG_RESUMPTION_TYPE => "sema",
+            DiagId::SEMA_MISMATCHING_HANDLE_BLOCK => "sema",
+            DiagId::SEMA_RETURN_IN_TRY_HANDLE_BLOCK => "sema",
+            DiagId::SEMA_COMMAND_INCOMPATIBLE_TYPE => "sema",
+            DiagId::SEMA_RESUME_THROWING_MISMATCH_TYPE => "sema",
+            DiagId::SEMA_USELESS_COMMAND_TYPE => "sema",
+            DiagId::SEMA_DEPRECATED_ERROR => "sema",
+            DiagId::SEMA_DEPRECATED_WARNING => "sema",
+            DiagId::SEMA_DEPRECATION_WEAKENING => "sema",
+            DiagId::SEMA_DEPRECATION_OVERRIDE_ERROR => "sema",
+            DiagId::SEMA_DEPRECATION_OVERRIDE_WARNING => "sema",
+            DiagId::SEMA_DEPRECATION_REDEF_ERROR => "sema",
+            DiagId::SEMA_DEPRECATION_REDEF_WARNING => "sema",
+            DiagId::SEMA_COMMON_OPEN_CLASS_NO_INIT => "sema",
+            DiagId::SEMA_MULTIPLE_COMMON_IMPLEMENTATIONS => "sema",
+            DiagId::SEMA_COMMON_DIRECT_EXTENSION_HAS_DUPLICATE_PRIVATE_MEMBERS => "sema",
+            DiagId::SEMA_COMMON_DIRECT_EXTENSION_HAS_COMMON_PRIVATE_MEMBERS => "sema",
+            DiagId::SEMA_NOT_MATCHED => "sema",
+            DiagId::SEMA_SPECIFIC_VAR_NOT_MATCH_LET => "sema",
+            DiagId::SEMA_SPECIFIC_INIT_COMMON_PRIMARY_CONSTRUCTOR => "sema",
+            DiagId::SPECIFIC_HAS_DIFFERENT_KIND => "sema",
+            DiagId::COMMON_NON_EXAUSTIVE_PLATFROM_EXAUSTIVE_MISMATCH => "sema",
+            DiagId::SEMA_SPECIFIC_HAS_DIFFERENT_TYPE => "sema",
+            DiagId::SEMA_SPECIFIC_MEMBER_MUST_HAVE_IMPLEMENTATION => "sema",
+            DiagId::SEMA_SPECIFIC_HAS_DIFFERENT_MODIFIER => "sema",
+            DiagId::SEMA_SPECIFIC_HAS_DIFFERENT_ANNOTATION => "sema",
+            DiagId::SEMA_SPECIFIC_HAS_DEPRECATED_ANNOTATION => "sema",
+            DiagId::SEMA_CJMP_PARAMETER_DEFAULT_VALUE_BOTH_SIDES => "sema",
+            DiagId::SEMA_SPECIFIC_HAS_DIFFERENT_PARAMETER => "sema",
+            DiagId::SEMA_SPECIFIC_HAS_DIFFERENT_SUPER_TYPE => "sema",
+            DiagId::SEMA_SPECIFIC_HAS_DUPLICATE_EXTENSIONS => "sema",
+            DiagId::SEMA_COMMON_PACKAGE_HAS_MAIN => "sema",
+            DiagId::SEMA_COMMON_STATIC_LET_CANT_BE_INITIALIZED_IN_STATIC_INIT => "sema",
+            DiagId::SEMA_COMMON_ASSIGN_TO_COMMON_IMMUTABLE_IN_CTOR => "sema",
+            DiagId::SEMA_CJMP_ABSTRACT_CLASS_MEMBER_HAS_NO_EXPLICIT_MODIFIER => "sema",
+            DiagId::SEMA_EXPLICITLY_ABSTRACT_CAN_NOT_HAVE_BODY => "sema",
+            DiagId::SEMA_EXPLICITLY_ABSTRACT_ONLY_FOR_CJMP_ABSTRACT_CLASS => "sema",
+            DiagId::SEMA_OPEN_ABSTRACT_SPECIFIC_CAN_NOT_REPLACE_OPEN_COMMON => "sema",
+            DiagId::SEMA_CJMP_NON_SPECIFIC_ABSTRACT_MEMBER_IN_SPECIFIC_CLASS => "sema",
+            DiagId::SEMA_COMMON_GENERIC_FROZEN_NOT_SUPPORTED => "sema",
+            DiagId::SEMA_COMMON_GENERIC_RENAME_NOT_SUPPORTED => "sema",
+            DiagId::SEMA_COMMON_SPECIFIC_ANNOTATION_NOT_ALLOWED => "sema",
+            DiagId::SEMA_JAVA_MIRROR_CTOR_ARG_MUST_BE_JAVA_MIRROR => "sema",
+            DiagId::SEMA_JAVA_MIRROR_METHOD_ARG_MUST_BE_JAVA_MIRROR => "sema",
+            DiagId::SEMA_JAVA_MIRROR_METHOD_RET_UNSUPPORTED => "sema",
+            DiagId::SEMA_JAVA_MIRROR_PROP_MUST_BE_JAVA_MIRROR => "sema",
+            DiagId::SEMA_JAVA_MIRROR_SUBTYPE_MUST_BE_ANNOTATED => "sema",
+            DiagId::SEMA_JAVA_MIRROR_CANNOT_INHERIT_PURE_CANGJIE_TYPE => "sema",
+            DiagId::SEMA_JAVA_IMPL_CANNOT_INHERIT_PURE_CANGJIE_TYPE => "sema",
+            DiagId::SEMA_JAVA_MIRROR_SUBTYPE_ANNO_MUST_INHERIT_MIRROR => "sema",
+            DiagId::SEMA_JAVA_MIRROR_CANNOT_BE_EXTENDED_WITH_INTERFACE => "sema",
+            DiagId::SEMA_JAVA_IMPL_CANNOT_BE_EXTENDED_WITH_INTERFACE => "sema",
+            DiagId::SEMA_JAVA_IMPL_REDEFINITION => "sema",
+            DiagId::SEMA_JAVA_MIRROR_INTEROPLIB_MUST_BE_IMPORTED => "sema",
+            DiagId::SEMA_JAVA_INTEROP_NOT_SUPPORTED => "sema",
+            DiagId::SEMA_EXTEND_REF_TARGET_CANNOT_BE_JAVA_IMPL => "sema",
+            DiagId::SEMA_VARIABLE_OF_JAVA_TYPE => "sema",
+            DiagId::SEMA_GENERIC_PARAMETER_OF_JAVA_TYPE => "sema",
+            DiagId::SEMA_JAVA_HAS_DEFAULT_ANNOTATION_ARGS => "sema",
+            DiagId::SEMA_JAVA_HAS_DEFAULT_ANNOTATION_IS_IN_WRONG_PLACE => "sema",
+            DiagId::SEMA_JAVA_HAS_DEFAULT_CONFLICT_WITH_STATIC => "sema",
+            DiagId::SEMA_OBJC_INTEROP_CTOR_PARAM_MUST_BE_OBJC_COMPATIBLE => "sema",
+            DiagId::SEMA_OBJC_INTEROP_METHOD_PARAM_MUST_BE_OBJC_COMPATIBLE => "sema",
+            DiagId::SEMA_OBJC_INTEROP_METHOD_RET_MUST_BE_OBJC_COMPATIBLE => "sema",
+            DiagId::SEMA_OBJC_INTEROP_PROP_MUST_BE_OBJC_COMPATIBLE => "sema",
+            DiagId::SEMA_OBJC_INTEROP_FIELD_MUST_BE_OBJC_COMPATIBLE => "sema",
+            DiagId::SEMA_OBJC_MIRROR_DECL_CANNOT_INHERIT => "sema",
+            DiagId::SEMA_OBJC_MIRROR_SUBTYPE_CANNOT_MULTIPLE_INHERIT => "sema",
+            DiagId::SEMA_OBJC_MIRROR_SUBTYPE_MUST_BE_ANNOTATED => "sema",
+            DiagId::SEMA_OBJC_MIRROR_SUBTYPE_MUST_INHERIT_MIRROR => "sema",
+            DiagId::SEMA_OBJC_MIRROR_MUST_INHERIT_MIRROR => "sema",
+            DiagId::SEMA_OBJC_MIRROR_INTEROPLIB_MUST_BE_IMPORTED => "sema",
+            DiagId::SEMA_OBJC_INTEROP_NOT_SUPPORTED => "sema",
+            DiagId::SEMA_OBJC_POINTER_ARGUMENT_MUST_BE_OBJC_COMPATIBLE => "sema",
+            DiagId::SEMA_OBJC_INTEROP_TOPLEVEL_PARAM_MUST_BE_OBJC_COMPATIBLE => "sema",
+            DiagId::SEMA_OBJC_INTEROP_TOPLEVEL_RET_MUST_BE_OBJC_COMPATIBLE => "sema",
+            DiagId::SEMA_OBJC_METHOD_MUST_HAVE_FOREIGN_NAME => "sema",
+            DiagId::SEMA_OBJC_CTOR_MUST_HAVE_FOREIGN_NAME => "sema",
+            DiagId::SEMA_OBJC_FUNC_ARGUMENT_MUST_BE_OBJC_COMPATIBLE => "sema",
+            DiagId::SEMA_OBJC_FUNC_CALL_PROPERTY_CAN_ONLY_BE_CALLED => "sema",
+            DiagId::SEMA_OBJC_IMPL_MUST_HAVE_OBJC_MIRROR_SUPER_CLASS => "sema",
+            DiagId::SEMA_OBJC_SETTER_NAME_ON_IMMUTABLE_PROP => "sema",
+            DiagId::SEMA_OBJC_CJMAPPING_INHERITANCE_INTERFACE_NOT_SUPPORTED => "sema",
+            DiagId::SEMA_OBJC_CJMAPPING_GENERIC_NOT_SUPPORTED => "sema",
+            DiagId::SEMA_FOREIGN_NAME_APPEARED_IN_CHILD => "sema",
+            DiagId::SEMA_FOREIGN_NAME_CONFLICTING_ANNOTATION => "sema",
+            DiagId::SEMA_FOREIGN_NAME_CONFLICTING_DERIVED_ANNOTATION => "sema",
+            DiagId::SEMA_IFAVAILABLE_ARG_NO_NAME => "sema",
+            DiagId::SEMA_IFAVAILABLE_ARG_NOT_LITERAL => "sema",
+            DiagId::SEMA_IFAVAILABLE_UNKNOW_ARG_NAME => "sema",
+            DiagId::SEMA_APILEVEL_MULTI_ANNO => "sema",
+            DiagId::SEMA_APILEVEL_MISSING_ARG => "sema",
+            DiagId::SEMA_APILEVEL_INVALID_VERSION_FORMAT => "sema",
+            DiagId::SEMA_ONLY_LITERAL_SUPPORT => "sema",
+            DiagId::SEMA_APILEVEL_REF_HIGHER => "sema",
+            DiagId::SEMA_APILEVEL_SYSCAP_WARNING => "sema",
+            DiagId::SEMA_APILEVEL_SYSCAP_ERROR => "sema",
+            DiagId::SEMA_APILEVEL_MULTI_DIFF_SYSCAP => "sema",
+            DiagId::SEMA_HIDE_MULTI_ANNOTATION => "sema",
+            DiagId::SEMA_HIDE_AT_FUNC_PARAM => "sema",
+            DiagId::SEMA_HIDE_MISSING_HIDE => "sema",
+            DiagId::SEMA_HIDE_COMPILE_TIME_INVISIBLE => "sema",
+            DiagId::SEMA_HIDE_DIFF_PARAM => "sema",
+            DiagId::SEMA_HIDE_MUST_AT_END => "sema",
+            DiagId::SEMA_UNUSED_IMPORT => "sema",
+            DiagId::SEMA_DIAG_END => "sema",
+            DiagId::CHIR_DIAG_BEGIN => "chir",
+            DiagId::CHIR_USED_BEFORE_INITIALIZATION => "chir",
+            DiagId::CHIR_ILLEGAL_USAGE_OF_MEMBER => "chir",
+            DiagId::CHIR_CANNOT_ASSIGN_INITIALIZED_LET_VARIABLE => "chir",
+            DiagId::CHIR_CLASS_UNINITIALIZED_FIELD => "chir",
+            DiagId::CHIR_ILLEGAL_USAGE_OF_SUPER_MEMBER => "chir",
+            DiagId::CHIR_ARITHMETIC_OPERATOR_OVERFLOW => "chir",
+            DiagId::CHIR_IDX_OUT_OF_BOUNDS => "chir",
+            DiagId::CHIR_DIVISOR_IS_ZERO => "chir",
+            DiagId::CHIR_SHIFT_LENGTH_OVERFLOW => "chir",
+            DiagId::CHIR_TYPECAST_OVERFLOW => "chir",
+            DiagId::CHIR_STEP_NON_ZERO_RANGE => "chir",
+            DiagId::CHIR_DCE_UNREACHABLE_STATEMENT => "chir",
+            DiagId::CHIR_DCE_UNREACHABLE_RETURN => "chir",
+            DiagId::CHIR_DCE_UNREACHABLE_IF => "chir",
+            DiagId::CHIR_DCE_UNREACHABLE => "chir",
+            DiagId::CHIR_DCE_UNREACHABLE_EXPRESSION_HINT => "chir",
+            DiagId::CHIR_DCE_UNREACHABLE_BLOCK_IN_EXPRESSION => "chir",
+            DiagId::CHIR_DCE_UNREACHABLE_BLOCK => "chir",
+            DiagId::CHIR_DCE_UNUSED_EXPRESSION => "chir",
+            DiagId::CHIR_DCE_UNUSED_FUNCTION => "chir",
+            DiagId::CHIR_DCE_UNUSED_FUNCTION_MAIN => "chir",
+            DiagId::CHIR_DCE_UNREACHABLE_EXPRESSION => "chir",
+            DiagId::CHIR_DCE_UNUSED_VARIABLE => "chir",
+            DiagId::CHIR_DCE_UNUSED_OPERATOR => "chir",
+            DiagId::CHIR_UNREACHABLE_PATTERN => "chir",
+            DiagId::CHIR_EVAL_SUPPORT => "chir",
+            DiagId::CHIR_ANNOTATION_NOT_APPLICABLE => "chir",
+            DiagId::FRONTEND_CAN_NOT_HANDLE_TO_MANY_CHIR => "chir",
+            DiagId::CHIR_NATIVE_FFI_JAVA_ILLEGAL_TYPE_CAST => "chir",
+            DiagId::CHIR_DIAG_END => "chir",
+            DiagId::IMPORT_PACKAGE_DIAG_BEGIN => "package",
+            DiagId::PACKAGE_UNSUPPORT_SAVE => "package",
+            DiagId::PACKAGE_UNSUPPORTED_LOAD => "package",
+            DiagId::PACKAGE_INVALID_CJO_DEPENDENCY => "package",
+            DiagId::PACKAGE_DECL_NOT_FIND_IN_PACKAGE => "package",
+            DiagId::PACKAGE_SEARCH_ERROR => "package",
+            DiagId::BC_CJO_ERROR => "package",
+            DiagId::PACKAGE_IMPORT_ITSELF_ILLEGAL => "package",
+            DiagId::PACKAGE_MISSED_CJO_MAIN_PKG_PART_FOR_TEST_PKG => "package",
+            DiagId::PACKAGE_MULTIPLE_PACKAGE_DECLARATIONS => "package",
+            DiagId::PACKAGE_NAME_NOT_IDENTICAL_LSP => "package",
+            DiagId::PACKAGE_NAME_INCONSISTENT_WITH_MACRO => "package",
+            DiagId::PACKAGE_SHADOWED_IMPORT => "package",
+            DiagId::PACKAGE_CONFLICT_IMPORT => "package",
+            DiagId::PACKAGE_CANNOT_EXPORT_MACRO_PACKAGE => "package",
+            DiagId::PACKAGE_IMPORT_INCONSISTENT => "package",
+            DiagId::PACKAGE_MOCKING_SUPPORT_INCONSISTENCY => "package",
+            DiagId::PACKAGE_ACCESSIBILITY => "package",
+            DiagId::PACKAGE_RE_EXPORT_PACKAGE_NAME => "package",
+            DiagId::PACKAGE_ROOT_PACKAGE_SHOULD_BE_PUBLIC => "package",
+            DiagId::PACKAGES_VISIBILITY_INCONSISTENT => "package",
+            DiagId::PACKAGES_MACRO_INCONSISTENT => "package",
+            DiagId::FEATURE_ALREADY_SEEN_NAME => "package",
+            DiagId::FEATURE_NULL_DECLARATION => "package",
+            DiagId::FEATURE_DIFFERENT_CONSISTENCY => "package",
+            DiagId::IMPORT_PACKAGE_DIAG_END => "package",
+            DiagId::MODULE_DIAG_BEGIN => "module",
+            DiagId::MODULE_READ_FILE_TO_BUFFER_FAILED => "module",
+            DiagId::MODULE_COMMON_PART_PATH_IS_REQUIRED => "module",
+            DiagId::MODULE_READ_FILE_CONFLICTED => "module",
+            DiagId::MODULE_VERSION_NOT_IDENTICAL => "module",
+            DiagId::MODULE_OPEN_BCFILE_FAILED => "module",
+            DiagId::MODULE_LOADED_AST_FAILED => "module",
+            DiagId::MODULE_SAME_NAME_WITH_INDIRECT_DEPENDENT_PKG => "module",
+            DiagId::MODULE_UNSUPPORT_CIRCULAR_DEPENDENCIES => "module",
+            DiagId::MODULE_COMMON_CJO_WRONG_PACKAGE => "module",
+            DiagId::MODULE_DIAG_END => "module",
+        }
+    }
 }
 
 /// A diagnostic message template (official def entry).
@@ -1296,6 +2992,11 @@ pub fn template(id: DiagId) -> DiagTemplate {
             message: "expected 'import' after module name, found %s",
             here: Some("expected 'import' here"),
             notes: &["after module name"],
+        },
+        DiagId::PARSE_EXPECTED_MODULE_NAME => DiagTemplate {
+            message: "expected module name after keyword 'from', found %s",
+            here: Some("expected module name here"),
+            notes: &["after keyword 'from'"],
         },
         DiagId::PARSE_EXPECTED_RIGHT_DELIMITER => DiagTemplate {
             message: "unclosed delimiter: '%s'",
@@ -1972,6 +3673,11 @@ pub fn template(id: DiagId) -> DiagTemplate {
             here: None,
             notes: &["declare annotation before this"],
         },
+        DiagId::PARSE_COMMON_AND_SPECIFIC_IN_THE_SAME_FILE => DiagTemplate {
+            message: "'common' and 'specific' declarations can not be in the same file",
+            here: None,
+            notes: &[],
+        },
         DiagId::PARSE_COMMON_FUNCTION_MUST_HAVE_RETURN_TYPE => DiagTemplate {
             message: "'common' function return type must be specified",
             here: None,
@@ -2007,8 +3713,13 @@ pub fn template(id: DiagId) -> DiagTemplate {
             here: None,
             notes: &[],
         },
-        DiagId::PARSE_UNEXPECTED_CJMP_DECL => DiagTemplate {
-            message: "to compile with common/specific declarations, correct compiler options must be specified",
+        DiagId::PARSE_COMMON_IN_NON_COMMON_FILE => DiagTemplate {
+            message: "common declaration must be defined in common package part",
+            here: None,
+            notes: &[],
+        },
+        DiagId::PARSE_SPECIFIC_IN_NON_SPECIFIC_FILE => DiagTemplate {
+            message: "specific declaration must be defined in specific package part",
             here: None,
             notes: &[],
         },
@@ -2162,8 +3873,18 @@ pub fn template(id: DiagId) -> DiagTemplate {
             here: Some("java-mirrored function must have return type"),
             notes: &[],
         },
-        DiagId::PARSE_JAVA_MIRROR_PROP_IS_FORBIDDEN => DiagTemplate {
-            message: "java-mirrored property is forbidden, use field instead",
+        DiagId::PARSE_JAVA_MIRROR_PROP_CANNOT_HAVE_SETTER => DiagTemplate {
+            message: "java-mirrored property cannot have setter",
+            here: Some("java-mirrored property cannot have setter"),
+            notes: &[],
+        },
+        DiagId::PARSE_JAVA_MIRROR_PROP_CANNOT_HAVE_GETTER => DiagTemplate {
+            message: "java-mirrored property cannot have getter",
+            here: Some("java-mirrored property cannot have getter"),
+            notes: &[],
+        },
+        DiagId::PARSE_JAVA_MIRROR_PROP_IS_DEPRECATED => DiagTemplate {
+            message: "java-mirrored property is deprecated, use field instead",
             here: None,
             notes: &[],
         },
@@ -2219,6 +3940,11 @@ pub fn template(id: DiagId) -> DiagTemplate {
         },
         DiagId::PARSE_JAVA_IMPL_CANNOT_HAVE_STATIC_INIT => DiagTemplate {
             message: "@JavaImpl declaration cannot have static initializer",
+            here: None,
+            notes: &[],
+        },
+        DiagId::PARSE_JAVA_MIRROR_CANNOT_HAVE_OPEN_PROP => DiagTemplate {
+            message: "java-mirrored declaration cannot have open property",
             here: None,
             notes: &[],
         },
@@ -2742,8 +4468,8 @@ pub fn template(id: DiagId) -> DiagTemplate {
             here: None,
             notes: &[],
         },
-        DiagId::SEMA_FUNC_CAN_ONLY_BE_CALLED => DiagTemplate {
-            message: "the %s function can only be called rather than as name reference",
+        DiagId::SEMA_UNSAFE_FUNC_CAN_ONLY_BE_CALLED => DiagTemplate {
+            message: "the unsafe function can only be called rather than as name reference",
             here: None,
             notes: &[],
         },
@@ -3024,11 +4750,6 @@ pub fn template(id: DiagId) -> DiagTemplate {
         },
         DiagId::SEMA_SPAWN_ARG_NO_EFFECT => DiagTemplate {
             message: "argument of spawn expr does not take effect at current backend",
-            here: None,
-            notes: &[],
-        },
-        DiagId::SEMA_SPAWN_CAPTURE_VAR => DiagTemplate {
-            message: "'spawn' expressions cannot capture mutable variables; consider using 'let' or boxing",
             here: None,
             notes: &[],
         },
@@ -3367,6 +5088,36 @@ pub fn template(id: DiagId) -> DiagTemplate {
             here: None,
             notes: &[],
         },
+        DiagId::SEMA_CJMAPPING_STRUCT_GENERIC_NOT_SUPPORTED => DiagTemplate {
+            message: "cangjie mirror struct type generic %s is not supported",
+            here: None,
+            notes: &[],
+        },
+        DiagId::SEMA_CJMAPPING_STRUCT_INHERITANCE_INTERFACE_NOT_SUPPORTED => DiagTemplate {
+            message: "cangjie mirror struct type inheritance interface is not supported",
+            here: None,
+            notes: &[],
+        },
+        DiagId::SEMA_CJMAPPING_DECL_NOT_SUPPORTED => DiagTemplate {
+            message: "cangjie mirror decl type is not supported for %s",
+            here: None,
+            notes: &[],
+        },
+        DiagId::SEMA_CJMAPPING_METHOD_ARG_NOT_SUPPORTED => DiagTemplate {
+            message: "argument type of cangjie mirror decl type member function is not supported",
+            here: None,
+            notes: &[],
+        },
+        DiagId::SEMA_CJMAPPING_METHOD_RET_UNSUPPORTED => DiagTemplate {
+            message: "return type '%s' of function inside %s type is not supported",
+            here: None,
+            notes: &[],
+        },
+        DiagId::SEMA_CJ_MAPPING_GENERIC_METHOD_NOT_GET_INSTANCE_CONFIG => DiagTemplate {
+            message: "Instance configuration '%s' has incorrect format.",
+            here: None,
+            notes: &[],
+        },
         DiagId::SEMA_VARRAY_SIZE_MATCH => DiagTemplate {
             message: "mismatch 'VArray' type's size",
             here: Some("expected size is %s, found %s"),
@@ -3390,26 +5141,6 @@ pub fn template(id: DiagId) -> DiagTemplate {
         DiagId::SEMA_VARRAY_ARG_TYPE_WITH_REFTYPE => DiagTemplate {
             message: "'%s' directly or indirectly contains an unsupported type",
             here: Some("contain unsupported instance member variable with type '%s'"),
-            notes: &[],
-        },
-        DiagId::SEMA_ONLY_CFUNC_CAN_USE_ANNOTATION => DiagTemplate {
-            message: "only CFunc can use '%s'",
-            here: None,
-            notes: &[],
-        },
-        DiagId::SEMA_ANNOTATION_CALLING_CONV_NOT_SUPPORT => DiagTemplate {
-            message: "'@CallingConv' have not supported '%s' yet",
-            here: None,
-            notes: &[],
-        },
-        DiagId::SEMA_ANNOTATION_INVALID_ARGS_TYPE => DiagTemplate {
-            message: "'%s' arg should be right type",
-            here: None,
-            notes: &[],
-        },
-        DiagId::SEMA_ILLEGAL_SCOPE_USE_OF_ANNOTATION => DiagTemplate {
-            message: "'%s' can only be used in top-level scope",
-            here: None,
             notes: &[],
         },
         DiagId::SEMA_INVALID_CFUNC_RETURN_TYPE => DiagTemplate {
@@ -3479,11 +5210,6 @@ pub fn template(id: DiagId) -> DiagTemplate {
         },
         DiagId::SEMA_RETURN_IN_TRY_HANDLE_BLOCK => DiagTemplate {
             message: "Return statements are not allowed within try/handle blocks",
-            here: None,
-            notes: &[],
-        },
-        DiagId::SEMA_TRY_HANDLE_CAPTURE_VAR => DiagTemplate {
-            message: "'try'-'handle' expressions cannot capture mutable variables; consider using 'let' or boxing",
             here: None,
             notes: &[],
         },
@@ -3738,7 +5464,7 @@ pub fn template(id: DiagId) -> DiagTemplate {
             notes: &[],
         },
         DiagId::SEMA_JAVA_MIRROR_INTEROPLIB_MUST_BE_IMPORTED => DiagTemplate {
-            message: "java.lang must be imported to use java interoperability",
+            message: "interoplib.interop must be imported to use java interoperability",
             here: None,
             notes: &[],
         },
@@ -3749,6 +5475,11 @@ pub fn template(id: DiagId) -> DiagTemplate {
         },
         DiagId::SEMA_EXTEND_REF_TARGET_CANNOT_BE_JAVA_IMPL => DiagTemplate {
             message: "extend declaration ref target cannot be java impl",
+            here: None,
+            notes: &[],
+        },
+        DiagId::SEMA_VARIABLE_OF_JAVA_TYPE => DiagTemplate {
+            message: "%s can not store objects of java interoperability type '%s'",
             here: None,
             notes: &[],
         },
@@ -3823,7 +5554,7 @@ pub fn template(id: DiagId) -> DiagTemplate {
             notes: &[],
         },
         DiagId::SEMA_OBJC_MIRROR_INTEROPLIB_MUST_BE_IMPORTED => DiagTemplate {
-            message: "objc.lang must be imported to use Objective-C interoperability",
+            message: "interoplib.objc must be imported to use Objective-C interoperability",
             here: None,
             notes: &[],
         },
@@ -3874,6 +5605,16 @@ pub fn template(id: DiagId) -> DiagTemplate {
         },
         DiagId::SEMA_OBJC_SETTER_NAME_ON_IMMUTABLE_PROP => DiagTemplate {
             message: "@ForeignSetterName cannot be specified on immutable property",
+            here: None,
+            notes: &[],
+        },
+        DiagId::SEMA_OBJC_CJMAPPING_INHERITANCE_INTERFACE_NOT_SUPPORTED => DiagTemplate {
+            message: "cangjie mirror decl type inheritance interface is not supported",
+            here: None,
+            notes: &[],
+        },
+        DiagId::SEMA_OBJC_CJMAPPING_GENERIC_NOT_SUPPORTED => DiagTemplate {
+            message: "cangjie mirror decl type generic %s is not supported",
             here: None,
             notes: &[],
         },
@@ -3963,7 +5704,7 @@ pub fn template(id: DiagId) -> DiagTemplate {
             notes: &[],
         },
         DiagId::SEMA_HIDE_COMPILE_TIME_INVISIBLE => DiagTemplate {
-            message: "'@!Hide' annotation must be visible at compile time",
+            message: "'Hide' annotation must be visible at compile time",
             here: None,
             notes: &[],
         },
@@ -4127,6 +5868,16 @@ pub fn template(id: DiagId) -> DiagTemplate {
             here: None,
             notes: &[],
         },
+        DiagId::FRONTEND_CAN_NOT_HANDLE_TO_MANY_CHIR => DiagTemplate {
+            message: "Can't handle more than one CHIR file",
+            here: None,
+            notes: &[],
+        },
+        DiagId::CHIR_NATIVE_FFI_JAVA_ILLEGAL_TYPE_CAST => DiagTemplate {
+            message: "Illegal type cast from Java type '%s' to non Java type '%s'",
+            here: None,
+            notes: &[],
+        },
         DiagId::CHIR_DIAG_END => DiagTemplate {
             message: "chir_diag_end",
             here: None,
@@ -4257,11 +6008,6 @@ pub fn template(id: DiagId) -> DiagTemplate {
             here: None,
             notes: &[],
         },
-        DiagId::FEATURE_IS_NOT_SUBSET_OF_CHILD_SET => DiagTemplate {
-            message: "parent feature set must be subset of child feature set, package: '%s', file with conflicted features: '%s'",
-            here: None,
-            notes: &[],
-        },
         DiagId::IMPORT_PACKAGE_DIAG_END => DiagTemplate {
             message: "",
             here: None,
@@ -4304,21 +6050,6 @@ pub fn template(id: DiagId) -> DiagTemplate {
         },
         DiagId::MODULE_SAME_NAME_WITH_INDIRECT_DEPENDENT_PKG => DiagTemplate {
             message: "failed to load dependent package '%s' for package '%s', which have same package name with source package",
-            here: None,
-            notes: &[],
-        },
-        DiagId::MODULE_COMMON_CJO_NO_OPTIONS => DiagTemplate {
-            message: "common part cjo is missing serialized options, possibly compiled by an old cjc",
-            here: None,
-            notes: &[],
-        },
-        DiagId::MODULE_COMMON_CJO_DEBUG_MISMATCH => DiagTemplate {
-            message: "common part is compiled with different debug mode: %s in common and %s in current",
-            here: None,
-            notes: &[],
-        },
-        DiagId::MODULE_COMMON_CJO_OPT_MISMATCH => DiagTemplate {
-            message: "common part is compiled with different optimization level: %s in common and %s in the current compilation",
             here: None,
             notes: &[],
         },

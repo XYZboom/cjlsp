@@ -14,6 +14,7 @@ use cj_parser::Parser;
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
     let mut mode = "parse";
+    let mut diagnostic_format = "text";
     let mut path: Option<&str> = None;
     let mut i = 1;
     while i < args.len() {
@@ -29,8 +30,20 @@ fn main() -> ExitCode {
             "-frontend" => {
                 i += 1;
             }
+            "--diagnostic-format" => {
+                let Some(value) = args.get(i + 1) else {
+                    eprintln!("error: --diagnostic-format requires text or json");
+                    return ExitCode::from(2);
+                };
+                diagnostic_format = value;
+                i += 2;
+            }
+            s if s.starts_with("--diagnostic-format=") => {
+                diagnostic_format = &s["--diagnostic-format=".len()..];
+                i += 1;
+            }
             s if s.starts_with('-') && s != "-" => {
-                // ignore unknown flags for now (e.g. -o, --diagnostic-format)
+                // Ignore unknown flags for now (for example, `-o`).
                 i += 1;
             }
             s => {
@@ -44,6 +57,10 @@ fn main() -> ExitCode {
         eprintln!("usage: cj-frontend [--dump-parse|--dump-ast] <file.cj>");
         return ExitCode::from(2);
     };
+    if !matches!(diagnostic_format, "text" | "json") {
+        eprintln!("error: invalid diagnostic format '{diagnostic_format}'; expected text or json");
+        return ExitCode::from(2);
+    }
 
     // Read as raw bytes (sources may contain invalid UTF-8 for diagnostics).
     let bytes = match fs::read(path) {
@@ -58,7 +75,7 @@ fn main() -> ExitCode {
     match mode {
         "tokens" => dump_tokens(&src, path),
         "ast" => dump_ast(&src),
-        _ => parse_and_report(&src, path),
+        _ => parse_and_report(&src, path, diagnostic_format),
     }
 }
 
@@ -97,7 +114,7 @@ fn dump_ast(src: &str) -> ExitCode {
 }
 
 /// Default: parse + sema and report diagnostics (SCAN-format text).
-fn parse_and_report(src: &str, path: &str) -> ExitCode {
+fn parse_and_report(src: &str, path: &str, diagnostic_format: &str) -> ExitCode {
     // Lexer errors (unknown token, illegal number suffix...) surface as
     // diagnostics, matching the LSP pipeline (lexer runs before the parser).
     let mut lexer = Lexer::new(src);
@@ -128,19 +145,30 @@ fn parse_and_report(src: &str, path: &str) -> ExitCode {
     };
     let mut errors = 0;
     let mut warnings = 0;
-    for d in lex_diags
+    let diagnostics: Vec<cj_diag::Diag> = lex_diags
         .iter()
         .chain(parser.diags.iter())
         .chain(sema_result.diags.iter())
         .chain(resolve_diags.iter())
         .chain(dep_diags.iter())
         .chain(call_diags.iter())
-    {
+        .cloned()
+        .collect();
+    for d in &diagnostics {
         match d.severity {
             cj_diag::Severity::Warning => warnings += 1,
             _ => errors += 1,
         }
-        eprint!("{}", fmt.render(d));
+        if diagnostic_format == "text" {
+            eprint!("{}", fmt.render(d));
+        }
+    }
+    if diagnostic_format == "json" {
+        let json = cj_diag::JsonFormatter { file_name: path }
+            .render(&diagnostics)
+            .expect("diagnostic JSON serialization cannot fail");
+        eprintln!("{json}");
+        return ExitCode::SUCCESS;
     }
     if errors > 0 {
         eprint!("{}", cj_diag::render_summary(errors, warnings));

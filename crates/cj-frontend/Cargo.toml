@@ -16,3 +16,6 @@ cj-parser = { path = "../cj-parser" }
 cj-cfg = { path = "../cj-cfg" }
 cj-sema = { path = "../cj-sema" }
 cj-diag = { path = "../cj-diag" }
+
+[dev-dependencies]
+serde_json.workspace = true

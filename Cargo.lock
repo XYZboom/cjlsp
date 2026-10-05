@@ -107,6 +107,7 @@ dependencies = [
  "cj-lexer",
  "cj-parser",
  "cj-sema",
+ "serde_json",
 ]
 
 [[package]]

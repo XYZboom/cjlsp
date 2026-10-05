@@ -62,7 +62,7 @@ RE_ERROR = re.compile(
     re.S | re.M,
 )
 
-def parse_def(path: str) -> list[dict]:
+def parse_def(path: str, category: str) -> list[dict]:
     out = []
     with open(path, encoding="utf-8") as f:
         content = f.read()
@@ -79,6 +79,7 @@ def parse_def(path: str) -> list[dict]:
         out.append({
             "kind": kind,
             "ident": ident,
+            "category": category,
             "msg": msg,
             "here": here or "",
             "notes": note_list,
@@ -93,7 +94,8 @@ def build() -> str:
     all_diags = []
     for fn in FILES:
         path = os.path.join(DIAG_DIR, fn)
-        diags = parse_def(path)
+        category = fn.removeprefix("Diagnostic").removesuffix(".def").lower()
+        diags = parse_def(path, category)
         all_diags.extend(diags)
         print(f"// {fn}: {len(diags)} diags", file=sys.stderr)
 
@@ -114,6 +116,24 @@ def build() -> str:
     for d in all_diags:
         w(f"    /// {d['kind'].lower()} (from {d['ident']})")
         w(f"    {d['ident'].upper()},")
+    w("}")
+    w("")
+    w("impl DiagId {")
+    w("    /// Stable diagnostic code from the official definition identifier.")
+    w("    pub const fn code(self) -> &'static str {")
+    w("        match self {")
+    for d in all_diags:
+        w(f"            DiagId::{d['ident'].upper()} => {rust_str(d['ident'])},")
+    w("        }")
+    w("    }")
+    w("")
+    w("    /// Stable diagnostic producer category.")
+    w("    pub const fn category(self) -> &'static str {")
+    w("        match self {")
+    for d in all_diags:
+        w(f"            DiagId::{d['ident'].upper()} => {rust_str(d['category'])},")
+    w("        }")
+    w("    }")
     w("}")
     w("")
     w("/// A diagnostic message template (official def entry).")

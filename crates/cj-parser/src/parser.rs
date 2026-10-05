@@ -271,6 +271,7 @@ impl<'a> Parser<'a> {
         let t = cj_diag::templates::template(id);
         let msg = fill_placeholders(t.message, args);
         let mut d = cj_diag::Diag::error(tok.begin.line, tok.begin.column, msg)
+            .with_id(id)
             .with_span(tok.end.line, tok.end.column);
         if let Some(here) = t.here {
             d = d.with_here(fill_placeholders(here, args));
@@ -286,6 +287,7 @@ impl<'a> Parser<'a> {
         let t = cj_diag::templates::template(id);
         let msg = fill_placeholders(t.message, args);
         let mut d = cj_diag::Diag::warning(tok.begin.line, tok.begin.column, msg)
+            .with_id(id)
             .with_span(tok.end.line, tok.end.column);
         if let Some(here) = t.here {
             d = d.with_here(fill_placeholders(here, args));
@@ -308,6 +310,7 @@ impl<'a> Parser<'a> {
         let t = cj_diag::templates::template(id);
         let msg = fill_placeholders(t.message, args);
         let mut d = cj_diag::Diag::error(tok.begin.line, tok.begin.column, msg)
+            .with_id(id)
             .with_span(tok.end.line, tok.end.column);
         if let Some(here) = t.here {
             d = d.with_here(fill_placeholders(here, args));
