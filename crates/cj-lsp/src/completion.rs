@@ -3600,7 +3600,33 @@ pub fn complete_at(
         if receiver.is_empty() {
             return Value::Null;
         }
-        collect_member_access(&docs, &receiver, line, &mut candidates, &mut seen);
+        if let Some(package) = import_alias_package(source, &receiver) {
+            let start = candidates.len();
+            for (doc, doc_source) in &docs {
+                if doc.package.as_deref() == Some(package) {
+                    collect_file_decls(doc, doc_source, &mut candidates, &mut seen);
+                }
+            }
+            for candidate in &mut candidates[start..] {
+                if candidate.kind == KIND_VARIABLE {
+                    if let Some((declaration, _)) = candidate.detail.split_once(" = ") {
+                        candidate.detail = declaration.to_string();
+                    }
+                }
+            }
+            candidates[start..].sort_by(|left, right| {
+                let rank = |candidate: &Candidate| match candidate.kind {
+                    KIND_CLASS | KIND_STRUCT | KIND_INTERFACE | KIND_ENUM => 0,
+                    KIND_FUNCTION => 1,
+                    _ => 2,
+                };
+                rank(left)
+                    .cmp(&rank(right))
+                    .then_with(|| left.label.cmp(&right.label))
+            });
+        } else {
+            collect_member_access(&docs, &receiver, line, &mut candidates, &mut seen);
+        }
     } else {
         // 1. File top-level decls
         collect_file_decls(file, source, &mut candidates, &mut seen);
@@ -3661,6 +3687,14 @@ pub fn complete_at(
     }
     let _ = uri;
     json!(items)
+}
+
+fn import_alias_package<'a>(source: &'a str, alias: &str) -> Option<&'a str> {
+    source.lines().find_map(|line| {
+        let import = line.trim().strip_prefix("import ")?;
+        let (package, imported_alias) = import.split_once(" as ")?;
+        (imported_alias.trim() == alias).then(|| package.trim())
+    })
 }
 
 /// Extract the receiver expression immediately before the completion dot,
@@ -4086,5 +4120,32 @@ mod tests {
         assert!(candidates
             .iter()
             .any(|candidate| candidate.label == "ixy" && candidate.detail == "let ixy: Int64"));
+    }
+
+    #[test]
+    fn package_alias_member_access_uses_imported_package() {
+        let source = "package app\nimport pkg.two as test\nfunc main() { test.";
+        let sibling_source = "package pkg.two\npublic class AB {}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let mut sibling_parser = cj_parser::Parser::new(
+            sibling_source,
+            cj_lexer::Lexer::new(sibling_source).tokenize(),
+        );
+        let sibling = sibling_parser.run();
+
+        let result = complete_at(
+            &file,
+            source,
+            2,
+            19,
+            None,
+            &[(&sibling, sibling_source)],
+            None,
+            "file:///test.cj",
+        );
+        let items = result.as_array().expect("package alias completion items");
+
+        assert!(items.iter().any(|item| item["label"] == "AB"));
     }
 }
