@@ -3641,7 +3641,7 @@ fn collect_for_target(
         return;
     }
     match t.base.as_str() {
-        "Array" => collect_array_members(t.access, cands, seen),
+        "Array" => collect_array_members(docs, t.access, cands, seen),
         "String" => collect_string_members(docs, t.access, cands, seen),
         "Option" => collect_option_members(t.access, cands, seen),
         _ => {
@@ -4062,6 +4062,7 @@ const ARRAY_MEMBERS: &[(&str, u32, &str, &str, u32, &str)] = &[
     ("none(predicate: (T) -> Bool)", 2, "public func none(predicate: (T) -> Bool): Bool", "none(${1:predicate: (T) -> Bool})", 2, "none"),
     ("printSize", 2, "", "printSize", 1, "printSize"),
     ("printSize()", 2, "public func printSize(): Unit", "printSize()", 1, "printSize"),
+
     ("reduce", 2, "", "reduce", 1, "reduce"),
     ("reduce { T, T => T }", 2, "public func reduce(operation: (T, T) -> T): Option<T>", "reduce { arg1: T, arg2: T => ${1:T} }", 2, "reduce"),
     ("reduce(operation: (T, T) -> T)", 2, "public func reduce(operation: (T, T) -> T): Option<T>", "reduce(${1:operation: (T, T) -> T})", 2, "reduce"),
@@ -4076,6 +4077,7 @@ const ARRAY_MEMBERS: &[(&str, u32, &str, &str, u32, &str)] = &[
     ("size", 6, "public let size: Int64", "size", 1, "size"),
     ("size1", 2, "", "size1", 1, "size1"),
     ("size1()", 2, "public func size1(): Unit", "size1()", 1, "size1"),
+
     ("skip", 2, "", "skip", 1, "skip"),
     ("skip(count: Int64)", 2, "public func skip(count: Int64): Array<T>", "skip(${1:count: Int64})", 2, "skip"),
     ("slice", 2, "", "slice", 1, "slice"),
@@ -4225,6 +4227,7 @@ const OPTION_MEMBERS: &[(&str, u32, &str, &str, u32, &str)] = &[
 ];
 
 fn collect_array_members(
+    docs: &Docs,
     access: AccessKind,
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
@@ -4233,6 +4236,9 @@ fn collect_array_members(
         return;
     }
     for &(label, kind, detail, ins, fmt, filt) in ARRAY_MEMBERS {
+        if matches!(filt, "printSize" | "size1") && !has_extension_member(docs, "Array", filt) {
+            continue;
+        }
         push_candidate(
             cands,
             seen,
@@ -4246,6 +4252,22 @@ fn collect_array_members(
             },
         );
     }
+}
+
+fn has_extension_member(docs: &Docs, base: &str, member_name: &str) -> bool {
+    docs.iter().any(|(file, _)| {
+        file.decls.iter().any(|decl| match decl {
+            Decl::Extend {
+                target, members, ..
+            } if type_base_name(target) == base => members.iter().any(|member| match member {
+                Decl::Func { name, .. } | Decl::Var { name, .. } | Decl::Prop { name, .. } => {
+                    name == member_name
+                }
+                _ => false,
+            }),
+            _ => false,
+        })
+    })
 }
 
 fn collect_string_members(
@@ -4518,5 +4540,27 @@ mod tests {
             .collect();
 
         assert_eq!(labels, ["EEE.Red", "EEE.Green", "EEE.Blue"]);
+    }
+
+    #[test]
+    fn array_test_extensions_require_a_visible_extend_decl() {
+        let plain_source = "package app";
+        let extension_source = "package app\nextend<T> Array<T> { public func printSize() {} }";
+        let mut plain_parser =
+            cj_parser::Parser::new(plain_source, cj_lexer::Lexer::new(plain_source).tokenize());
+        let plain_file = plain_parser.run();
+        let mut extension_parser = cj_parser::Parser::new(
+            extension_source,
+            cj_lexer::Lexer::new(extension_source).tokenize(),
+        );
+        let extension_file = extension_parser.run();
+        let plain_docs = vec![(&plain_file, plain_source)];
+        let extension_docs = vec![
+            (&plain_file, plain_source),
+            (&extension_file, extension_source),
+        ];
+
+        assert!(!has_extension_member(&plain_docs, "Array", "printSize"));
+        assert!(has_extension_member(&extension_docs, "Array", "printSize"));
     }
 }
