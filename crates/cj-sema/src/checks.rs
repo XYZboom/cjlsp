@@ -149,75 +149,154 @@ fn walk_names(e: &Expr, on_name: &mut dyn FnMut(&NameRef)) {
     }
 }
 
-/// Collect every declared (reference) type name in the file with its position.
-/// Skips the builtin type names (the set used by resolver/unused).
-fn collect_used_type_names(d: &Decl, out: &mut Vec<NameRef>) {
-    match d {
-        Decl::Func { params, ret, .. } => {
-            for p in params {
-                collect_type_refs(&p.ty, out);
+/// Check all type references in a declaration with the generic parameters that
+/// are visible in its lexical scope. A declaration's generic parameters are
+/// visible in its own signature and body, and class-like parameters are also
+/// visible in nested member declarations.
+fn check_decl_type_names(
+    d: &Decl,
+    declared: &HashSet<&str>,
+    inherited_type_params: &HashSet<String>,
+    diags: &mut Vec<Diag>,
+) {
+    let check_type = |ty: &Type, type_params: &HashSet<String>, diags: &mut Vec<Diag>| {
+        let mut refs = Vec::new();
+        collect_type_refs(ty, &mut refs);
+        for r in refs {
+            if !declared.contains(r.name.as_str())
+                && !type_params.contains(&r.name)
+                && !is_builtin_type(&r.name)
+            {
+                diags.push(Diag::error(
+                    r.pos.line,
+                    r.pos.col,
+                    format!("undeclared type name '{}'", r.name),
+                ));
             }
-            if let Some(r) = ret {
-                collect_type_refs(r, out);
+        }
+    };
+
+    match d {
+        Decl::Func {
+            type_params,
+            params,
+            ret,
+            ..
+        } => {
+            let mut scope = inherited_type_params.clone();
+            scope.extend(type_params.iter().map(|tp| tp.name.clone()));
+            for tp in type_params {
+                for bound in &tp.bounds {
+                    check_type(bound, &scope, diags);
+                }
+            }
+            for param in params {
+                check_type(&param.ty, &scope, diags);
+            }
+            if let Some(ret) = ret {
+                check_type(ret, &scope, diags);
             }
         }
         Decl::Macro { params, .. } => {
-            for p in params {
-                collect_type_refs(&p.ty, out);
+            for param in params {
+                check_type(&param.ty, inherited_type_params, diags);
             }
         }
-        Decl::Var { ty: Some(t), .. } => collect_type_refs(t, out),
-        Decl::Prop { ty, .. } => collect_type_refs(ty, out),
-        Decl::TypeAlias { target, .. } => collect_type_refs(target, out),
-        Decl::Class {
-            parents,
+        Decl::Var { ty: Some(ty), .. } | Decl::VarWithPattern { ty: Some(ty), .. } => {
+            check_type(ty, inherited_type_params, diags);
+        }
+        Decl::Prop { ty, .. } => check_type(ty, inherited_type_params, diags),
+        Decl::TypeAlias {
             type_params,
+            target,
+            ..
+        } => {
+            let mut scope = inherited_type_params.clone();
+            scope.extend(type_params.iter().map(|tp| tp.name.clone()));
+            for tp in type_params {
+                for bound in &tp.bounds {
+                    check_type(bound, &scope, diags);
+                }
+            }
+            check_type(target, &scope, diags);
+        }
+        Decl::Class {
+            type_params,
+            parents,
             members,
             ..
         }
         | Decl::Interface {
-            parents,
             type_params,
+            parents,
+            members,
+            ..
+        }
+        | Decl::Struct {
+            type_params,
+            parents,
             members,
             ..
         } => {
-            for p in parents {
-                collect_type_refs(p, out);
-            }
+            let mut scope = inherited_type_params.clone();
+            scope.extend(type_params.iter().map(|tp| tp.name.clone()));
             for tp in type_params {
-                for b in &tp.bounds {
-                    collect_type_refs(b, out);
+                for bound in &tp.bounds {
+                    check_type(bound, &scope, diags);
                 }
             }
-            for m in members {
-                collect_used_type_names(m, out);
+            for parent in parents {
+                check_type(parent, &scope, diags);
+            }
+            for member in members {
+                check_decl_type_names(member, declared, &scope, diags);
             }
         }
-        Decl::Struct {
+        Decl::Enum {
             type_params,
-            members,
+            parents,
+            cases,
             ..
         } => {
+            let mut scope = inherited_type_params.clone();
+            scope.extend(type_params.iter().map(|tp| tp.name.clone()));
             for tp in type_params {
-                for b in &tp.bounds {
-                    collect_type_refs(b, out);
+                for bound in &tp.bounds {
+                    check_type(bound, &scope, diags);
                 }
             }
-            for m in members {
-                collect_used_type_names(m, out);
+            for parent in parents {
+                check_type(parent, &scope, diags);
+            }
+            for case in cases {
+                for payload in &case.payloads {
+                    check_type(payload, &scope, diags);
+                }
             }
         }
         Decl::Extend {
             target, members, ..
         } => {
-            collect_type_refs(target, out);
-            for m in members {
-                collect_used_type_names(m, out);
+            // The generated Extend node has no type_params field. The parser
+            // preserves `extend<T>` parameters as GenericParam marker members.
+            let mut scope = inherited_type_params.clone();
+            scope.extend(members.iter().filter_map(|member| match member {
+                Decl::GenericParam { name, .. } => Some(name.clone()),
+                _ => None,
+            }));
+            check_type(target, &scope, diags);
+            for member in members {
+                check_decl_type_names(member, declared, &scope, diags);
             }
         }
         Decl::PrimaryCtor { params, .. } => {
-            for p in params {
-                collect_type_refs(&p.ty, out);
+            for param in params {
+                check_type(&param.ty, inherited_type_params, diags);
+            }
+        }
+        Decl::GenericParam { bounds, .. } => {
+            for bound in bounds {
+                check_type(bound, inherited_type_params, diags);
             }
         }
         _ => {}
@@ -335,18 +414,9 @@ fn check_undeclared_type(file: &File, package: &PackageTable) -> Vec<Diag> {
         }
     }
     let mut diags = Vec::new();
+    let type_params = HashSet::new();
     for d in &file.decls {
-        let mut refs: Vec<NameRef> = Vec::new();
-        collect_used_type_names(d, &mut refs);
-        for r in &refs {
-            if !declared.contains(r.name.as_str()) && !is_builtin_type(&r.name) {
-                diags.push(Diag::error(
-                    r.pos.line,
-                    r.pos.col,
-                    format!("undeclared type name '{}'", r.name),
-                ));
-            }
-        }
+        check_decl_type_names(d, &declared, &type_params, &mut diags);
     }
     diags
 }
@@ -726,9 +796,7 @@ fn check_bare_type_in_expr(e: &Expr, type_names: &HashSet<String>) -> Vec<Diag> 
             diags.push(Diag::error(
                 pos.line,
                 pos.col,
-                format!(
-                    "expected member name or constructor call after '{name}' type name"
-                ),
+                format!("expected member name or constructor call after '{name}' type name"),
             ));
         }
     }
@@ -1028,6 +1096,69 @@ mod tests {
         // declared types are not reported
         let ok = check("class A {}\nfunc f(a: A) {}\n");
         assert!(!has(&ok, "undeclared type name"), "{ok:?}");
+    }
+
+    #[test]
+    fn declared_generic_types_are_in_scope() {
+        let diags = check(
+            "open class Box<T> {\n\
+                 var value: T\n\
+                 func get(input: T): T { input }\n\
+             }\n\
+             interface Mapper<T> { func map(value: T): T }\n\
+             struct Pair<T> { var first: T }\n\
+             enum Maybe<T> { Some(T) | None }\n\
+             type Identity<T> = T\n\
+             func identity<T>(value: T): T { value }\n\
+             extend<T> Box<T> { func replace(value: T): T { value } }\n",
+        );
+        assert!(!has(&diags, "undeclared type name"), "{diags:?}");
+    }
+
+    #[test]
+    fn undeclared_type_is_still_reported_inside_generic_scope() {
+        let diags = check("class Box<T> { func bad(value: U): T { value } }\n");
+        assert!(has(&diags, "undeclared type name 'U'"), "{diags:?}");
+        assert!(!has(&diags, "undeclared type name 'T'"), "{diags:?}");
+    }
+
+    #[test]
+    fn generic_type_scope_is_nested_and_does_not_leak() {
+        let diags = check(
+            "class Outer<T> {\n\
+                 class Inner<U> { func pair(left: T, right: U): T { left } }\n\
+                 func notInner(value: U): T { value }\n\
+             }\n\
+             func leaked(value: T): Unit {}\n",
+        );
+        assert_eq!(
+            diags
+                .iter()
+                .filter(|d| d.message.contains("undeclared type name 'T'"))
+                .count(),
+            1,
+            "{diags:?}"
+        );
+        assert_eq!(
+            diags
+                .iter()
+                .filter(|d| d.message.contains("undeclared type name 'U'"))
+                .count(),
+            1,
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn multiple_generic_type_params_have_stable_scope() {
+        let diags = check(
+            "class Map<Key, Value> {\n\
+                 func transform<Result>(key: Key, value: Value, result: Result): (Key, Value, Result) {\n\
+                     (key, value, result)\n\
+                 }\n\
+             }\n",
+        );
+        assert!(!has(&diags, "undeclared type name"), "{diags:?}");
     }
 
     #[test]
