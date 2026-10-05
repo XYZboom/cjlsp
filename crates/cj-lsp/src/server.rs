@@ -173,6 +173,21 @@ impl LspServer {
             if !pkg.is_empty() && !imported.contains(&pkg) {
                 imported.push(pkg);
             }
+            // `import a.b.Type as Alias` is represented by the parser as the
+            // full dotted path. Include the containing package so completion
+            // can resolve the imported type/alias declaration.
+            if imp.path.len() > 1
+                && imp
+                    .path
+                    .last()
+                    .and_then(|segment| segment.chars().next())
+                    .is_some_and(char::is_uppercase)
+            {
+                let parent = imp.path[..imp.path.len() - 1].join(".");
+                if !parent.is_empty() && !imported.contains(&parent) {
+                    imported.push(parent);
+                }
+            }
         }
         let siblings = project_root.as_deref().map(|r| {
             let cache = self.scan_cache.entry(r.to_path_buf()).or_default();

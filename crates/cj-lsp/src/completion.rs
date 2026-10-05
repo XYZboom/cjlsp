@@ -3700,30 +3700,8 @@ pub fn complete_at(
                 &mut candidates,
                 &mut seen,
             );
-        } else if let Some(package) = import_alias_package(source, &receiver) {
-            let start = candidates.len();
-            for (doc, doc_source) in &docs {
-                if doc.package.as_deref() == Some(package) {
-                    collect_file_decls(doc, doc_source, &mut candidates, &mut seen);
-                }
-            }
-            for candidate in &mut candidates[start..] {
-                if candidate.kind == KIND_VARIABLE {
-                    if let Some((declaration, _)) = candidate.detail.split_once(" = ") {
-                        candidate.detail = declaration.to_string();
-                    }
-                }
-            }
-            candidates[start..].sort_by(|left, right| {
-                let rank = |candidate: &Candidate| match candidate.kind {
-                    KIND_CLASS | KIND_STRUCT | KIND_INTERFACE | KIND_ENUM => 0,
-                    KIND_FUNCTION => 1,
-                    _ => 2,
-                };
-                rank(left)
-                    .cmp(&rank(right))
-                    .then_with(|| left.label.cmp(&right.label))
-            });
+        } else if let Some(import_path) = import_alias_package(source, &receiver) {
+            collect_import_alias_access(&docs, import_path, &mut candidates, &mut seen);
         } else {
             collect_member_access(&docs, &receiver, line, &mut candidates, &mut seen);
         }
@@ -3795,6 +3773,90 @@ fn import_alias_package<'a>(source: &'a str, alias: &str) -> Option<&'a str> {
         let (package, imported_alias) = import.split_once(" as ")?;
         (imported_alias.trim() == alias).then(|| package.trim())
     })
+}
+
+fn collect_import_alias_access(
+    docs: &Docs,
+    import_path: &str,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    let start = cands.len();
+    let mut matched_package = false;
+    for (doc, source) in docs {
+        if doc.package.as_deref() == Some(import_path) {
+            matched_package = true;
+            collect_file_decls(doc, source, cands, seen);
+        }
+    }
+    if matched_package {
+        for candidate in &mut cands[start..] {
+            if candidate.kind == KIND_VARIABLE {
+                if let Some((declaration, _)) = candidate.detail.split_once(" = ") {
+                    candidate.detail = declaration.to_string();
+                }
+            }
+        }
+        cands[start..].sort_by(|left, right| {
+            let rank = |candidate: &Candidate| match candidate.kind {
+                KIND_CLASS | KIND_STRUCT | KIND_INTERFACE | KIND_ENUM => 0,
+                KIND_FUNCTION => 1,
+                _ => 2,
+            };
+            rank(left)
+                .cmp(&rank(right))
+                .then_with(|| left.label.cmp(&right.label))
+        });
+        return;
+    }
+
+    let Some((package, symbol)) = import_path.rsplit_once('.') else {
+        return;
+    };
+    let imported = docs.iter().enumerate().find_map(|(idx, (doc, _))| {
+        (doc.package.as_deref() == Some(package))
+            .then(|| {
+                doc.decls.iter().find(|decl| match decl {
+                    Decl::Class { name, .. }
+                    | Decl::Struct { name, .. }
+                    | Decl::Interface { name, .. }
+                    | Decl::Enum { name, .. }
+                    | Decl::TypeAlias { name, .. } => name == symbol,
+                    _ => false,
+                })
+            })?
+            .map(|decl| (idx, decl))
+    });
+    let Some((idx, imported)) = imported else {
+        return;
+    };
+    let resolved = if let Decl::TypeAlias { target, .. } = imported {
+        let target_name = type_base_name(target);
+        docs.iter().enumerate().find_map(|(target_idx, (doc, _))| {
+            (doc.package.as_deref() == Some(package))
+                .then(|| {
+                    doc.decls.iter().find(|decl| match decl {
+                        Decl::Class { name, .. }
+                        | Decl::Struct { name, .. }
+                        | Decl::Interface { name, .. }
+                        | Decl::Enum { name, .. } => name == &target_name,
+                        _ => false,
+                    })
+                })?
+                .map(|decl| (target_idx, decl))
+        })
+    } else {
+        Some((idx, imported))
+    };
+    let Some((resolved_idx, decl)) = resolved else {
+        return;
+    };
+    let access = if matches!(decl, Decl::Enum { .. }) {
+        AccessKind::Enum
+    } else {
+        AccessKind::Static
+    };
+    collect_type_members(docs, resolved_idx, decl, access, cands, seen);
 }
 
 fn import_completion_package(before_cursor: &str) -> Option<&str> {
@@ -4424,5 +4486,37 @@ mod tests {
         assert!(!candidates
             .iter()
             .any(|candidate| candidate.label == "Hidden"));
+    }
+
+    #[test]
+    fn imported_type_alias_resolves_enum_members() {
+        let source = "package app\nimport pkg.two.TE as TT\nfunc main() { TT.";
+        let package_source =
+            "package pkg.two\npublic enum EEE { Red | Green | Blue }\npublic type TE = EEE";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let mut package_parser = cj_parser::Parser::new(
+            package_source,
+            cj_lexer::Lexer::new(package_source).tokenize(),
+        );
+        let package_file = package_parser.run();
+        let result = complete_at(
+            &file,
+            source,
+            2,
+            17,
+            None,
+            &[(&package_file, package_source)],
+            None,
+            "file:///test.cj",
+        );
+        let labels: Vec<&str> = result
+            .as_array()
+            .expect("enum alias completion items")
+            .iter()
+            .filter_map(|item| item["label"].as_str())
+            .collect();
+
+        assert_eq!(labels, ["EEE.Red", "EEE.Green", "EEE.Blue"]);
     }
 }
