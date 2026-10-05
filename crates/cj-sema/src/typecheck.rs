@@ -18,7 +18,7 @@
 use crate::resolver::is_known_builtin;
 use crate::FuncSig;
 use cj_ast::{Body, Decl, Expr, File, InterpPart, Type};
-use cj_diag::Diag;
+use cj_diag::{Diag, DiagId};
 use std::collections::HashMap;
 
 /// Literal type: what an expression's literal is (for display).
@@ -235,11 +235,14 @@ fn check_call(
         // Cross-file sibling functions ARE in `funcs`, so they never hit this.
         if !is_known_builtin(name) {
             if let Expr::Name { pos, .. } = callee {
-                diags.push(Diag::error(
-                    pos.line,
-                    pos.col,
-                    format!("undeclared identifier '{name}'"),
-                ));
+                diags.push(
+                    Diag::error(
+                        pos.line,
+                        pos.col,
+                        format!("undeclared identifier '{name}'"),
+                    )
+                    .with_id(DiagId::SEMA_UNDECLARED_IDENTIFIER),
+                );
             }
         }
         return;
@@ -249,14 +252,18 @@ fn check_call(
     // list '(T1, T2)' in call" reported at the call's '(' position.
     if args.len() < sig.params.len() {
         let list: Vec<String> = sig.params.iter().map(|p| type_display(&p.ty)).collect();
-        diags.push(Diag::error(
+        let mut diag = Diag::error(
             call_pos.line,
             call_pos.col,
             format!(
                 "missing arguments for parameter list '({})' in call",
                 list.join(", ")
             ),
-        ));
+        )
+        .with_id(DiagId::SEMA_PARAM_MISS_MATCH);
+        diag.expected = Some(format!("{}", sig.params.len()));
+        diag.actual = Some(format!("{}", args.len()));
+        diags.push(diag);
     }
 
     // Named parameters (`b!: T`) must be passed with their name prefix;
@@ -268,14 +275,17 @@ fn check_call(
         };
         if psig.is_named && arg.name.is_none() {
             let arg_pos = expr_pos(arg);
-            diags.push(Diag::error(
-                arg_pos.line,
-                arg_pos.col,
-                format!(
-                    "missing argument prefix '{}:' for named parameter",
-                    psig.name
-                ),
-            ));
+            diags.push(
+                Diag::error(
+                    arg_pos.line,
+                    arg_pos.col,
+                    format!(
+                        "missing argument prefix '{}:' for named parameter",
+                        psig.name
+                    ),
+                )
+                .with_id(DiagId::SEMA_NEED_NAMED_ARGUMENT),
+            );
         }
     }
 
@@ -295,19 +305,27 @@ fn check_call(
         match (lit_ty, declared.as_str()) {
             // Rune/String literal into a non-string param: mismatched types.
             (LitType::Char | LitType::Str, d) if d != "Struct-String" => {
-                diags.push(Diag::error(
+                let mut diag = Diag::error(
                     lit_pos.line,
                     lit_pos.col,
                     format!("mismatched types expected '{d}', found 'Struct-String'"),
-                ));
+                )
+                .with_id(DiagId::SEMA_MISMATCHED_TYPES);
+                diag.expected = Some(d.to_string());
+                diag.actual = Some("Struct-String".to_string());
+                diags.push(diag);
             }
             // Integer literal into a string param: cannot convert.
             (LitType::Int, "Struct-String") => {
-                diags.push(Diag::error(
+                let mut diag = Diag::error(
                     lit_pos.line,
                     lit_pos.col,
                     "cannot convert an integer literal to type 'Struct-String'",
-                ));
+                )
+                .with_id(DiagId::SEMA_MISMATCHED_TYPES);
+                diag.expected = Some("Struct-String".to_string());
+                diag.actual = Some("Int64".to_string());
+                diags.push(diag);
             }
             // Integer literal into an integer param: value range check.
             (LitType::Int, d) if is_int_type(&declared) => {
@@ -315,13 +333,17 @@ fn check_call(
                     if let Some(n) = parse_integer(value) {
                         if let Some((lo, hi)) = int_range(&declared) {
                             if n < lo || n > hi {
-                                diags.push(Diag::error(
+                                let mut diag = Diag::error(
                                     lit_pos.line,
                                     lit_pos.col,
                                     format!(
                                         "the number '{value}' exceeds the value range of type '{d}'"
                                     ),
-                                ));
+                                )
+                                .with_id(DiagId::SEMA_EXCEED_NUM_VALUE_RANGE);
+                                diag.expected = Some(d.to_string());
+                                diag.actual = Some(format!("number '{value}'"));
+                                diags.push(diag);
                             }
                         }
                     }
@@ -361,19 +383,27 @@ fn check_typed_var(
     match (lit_ty, declared.as_str()) {
         // String target with int literal: cannot convert an integer literal.
         (LitType::Int, "Struct-String") => {
-            diags.push(Diag::error(
+            let mut diag = Diag::error(
                 lit_pos.line,
                 lit_pos.col,
                 "cannot convert an integer literal to type 'Struct-String'",
-            ));
+            )
+            .with_id(DiagId::SEMA_MISMATCHED_TYPES);
+            diag.expected = Some("Struct-String".to_string());
+            diag.actual = Some("Int64".to_string());
+            diags.push(diag);
         }
         // Char/Str literal into a non-string type: mismatched types.
         (LitType::Char | LitType::Str, d) if d != "Struct-String" => {
-            diags.push(Diag::error(
+            let mut diag = Diag::error(
                 lit_pos.line,
                 lit_pos.col,
                 format!("mismatched types expected '{d}', found 'Struct-String'"),
-            ));
+            )
+            .with_id(DiagId::SEMA_MISMATCHED_TYPES);
+            diag.expected = Some(d.to_string());
+            diag.actual = Some("Struct-String".to_string());
+            diags.push(diag);
         }
         // Int literal into fixed-width int type: range check.
         (LitType::Int, d) if is_int_type(&declared) => {
@@ -381,13 +411,17 @@ fn check_typed_var(
                 if let Some(n) = parse_integer(value) {
                     if let Some((lo, hi)) = int_range(&declared) {
                         if n < lo || n > hi {
-                            diags.push(Diag::error(
+                            let mut diag = Diag::error(
                                 lit_pos.line,
                                 lit_pos.col,
                                 format!(
                                     "the number '{value}' exceeds the value range of type '{d}'"
                                 ),
-                            ));
+                            )
+                            .with_id(DiagId::SEMA_EXCEED_NUM_VALUE_RANGE);
+                            diag.expected = Some(d.to_string());
+                            diag.actual = Some(format!("number '{value}'"));
+                            diags.push(diag);
                         }
                     }
                 }
@@ -396,11 +430,15 @@ fn check_typed_var(
         // Int literal into a non-int non-string typed var is an error we
         // approximate as mismatched (official may say conversion).
         (LitType::Int, d) => {
-            diags.push(Diag::error(
+            let mut diag = Diag::error(
                 lit_pos.line,
                 lit_pos.col,
                 format!("mismatched types expected '{d}', found 'Int64'"),
-            ));
+            )
+            .with_id(DiagId::SEMA_MISMATCHED_TYPES);
+            diag.expected = Some(d.to_string());
+            diag.actual = Some("Int64".to_string());
+            diags.push(diag);
         }
         _ => {}
     }
@@ -510,6 +548,8 @@ mod tests {
         assert!(diags[0]
             .message
             .contains("cannot convert an integer literal"));
+        assert_eq!(diags[0].expected.as_deref(), Some("Struct-String"));
+        assert_eq!(diags[0].actual.as_deref(), Some("Int64"));
     }
 
     #[test]
@@ -520,6 +560,8 @@ mod tests {
         assert!(diags[0]
             .message
             .contains("mismatched types expected 'Int8', found 'Struct-String'"));
+        assert_eq!(diags[0].expected.as_deref(), Some("Int8"));
+        assert_eq!(diags[0].actual.as_deref(), Some("Struct-String"));
     }
 
     #[test]
@@ -530,6 +572,8 @@ mod tests {
         assert!(diags[0]
             .message
             .contains("exceeds the value range of type 'Int8'"));
+        assert_eq!(diags[0].expected.as_deref(), Some("Int8"));
+        assert_eq!(diags[0].actual.as_deref(), Some("number '999999'"));
     }
 
     #[test]
@@ -557,6 +601,12 @@ mod tests {
             "expected Int8/Struct-String mismatch: {:?}",
             diags
         );
+        let diag = diags
+            .iter()
+            .find(|d| d.message.contains("mismatched types expected 'Int8'"))
+            .unwrap();
+        assert_eq!(diag.expected.as_deref(), Some("Int8"));
+        assert_eq!(diag.actual.as_deref(), Some("Struct-String"));
         // integer literal 1 -> Bool is NOT reported (matches official 013).
         assert!(diags.len() == 1, "only the rune mismatch: {:?}", diags);
     }
@@ -569,6 +619,9 @@ mod tests {
         assert!(diags
             .iter()
             .any(|d| d.message.contains("exceeds the value range of type 'Int8'")));
+        let diag = diags[0].clone();
+        assert_eq!(diag.expected.as_deref(), Some("Int8"));
+        assert_eq!(diag.actual.as_deref(), Some("number '999999'"));
     }
 
     #[test]

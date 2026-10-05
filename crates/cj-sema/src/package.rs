@@ -91,7 +91,8 @@ pub fn check_package(file: &File, expected: Option<&str>) -> Vec<Diag> {
                         name_pos.col,
                         format!("can not find package '{p}'"),
                     )
-                    .with_span(name_pos.end_line, name_pos.end_col),
+                    .with_span(name_pos.end_line, name_pos.end_col)
+                    .with_id(cj_diag::DiagId::PACKAGE_SEARCH_ERROR),
                 );
             }
         }
