@@ -2369,19 +2369,66 @@ fn infer_constructor_instance_type(
     args: &[cj_ast::FuncArg],
 ) -> Option<String> {
     let (_, decl) = find_type_decl_in(docs, name)?;
-    let type_params = match decl {
-        Decl::Class { type_params, .. }
-        | Decl::Struct { type_params, .. }
-        | Decl::Enum { type_params, .. } => type_params,
+    let (type_params, members) = match decl {
+        Decl::Class {
+            type_params,
+            members,
+            ..
+        }
+        | Decl::Struct {
+            type_params,
+            members,
+            ..
+        } => (type_params, Some(members)),
+        Decl::Enum { type_params, .. } => (type_params, None),
         _ => return None,
     };
-    if type_params.is_empty() || type_params.len() != args.len() {
+    if type_params.is_empty() {
         return None;
     }
-    let inferred = args
+
+    let argument_types = args
         .iter()
         .map(|arg| infer_expr_type(docs, &arg.value))
         .collect::<Option<Vec<_>>>()?;
+    let constructor_params = members.and_then(|members| {
+        members.iter().find_map(|member| match member {
+            Decl::PrimaryCtor { params, .. } if params.len() == args.len() => Some(params),
+            Decl::Func {
+                name: constructor_name,
+                params,
+                ..
+            } if constructor_name == name && params.len() == args.len() => Some(params),
+            _ => None,
+        })
+    });
+
+    let inferred = if let Some(params) = constructor_params {
+        let mut inferred = vec![None; type_params.len()];
+        for (param, argument_type) in params.iter().zip(&argument_types) {
+            if let Type::Ref {
+                name: parameter_type,
+                args: nested,
+                ..
+            } = &param.ty
+            {
+                if nested.is_empty() {
+                    if let Some(index) = type_params
+                        .iter()
+                        .position(|type_param| type_param.name == *parameter_type)
+                    {
+                        inferred[index] = Some(argument_type.clone());
+                    }
+                }
+            }
+        }
+        inferred.into_iter().collect::<Option<Vec<_>>>()?
+    } else if type_params.len() == argument_types.len() {
+        argument_types
+    } else {
+        return None;
+    };
+
     Some(format!("{name}<{}>", inferred.join(", ")))
 }
 
@@ -3184,17 +3231,37 @@ fn resolve_var_type(docs: &Docs, var_name: &str, line: u32) -> Option<String> {
 }
 
 fn infer_func_ret_with_locals(docs: &Docs, func: &Decl) -> Option<String> {
-    let Decl::Func { body, .. } = func else {
+    let Decl::Func { params, body, .. } = func else {
         return None;
     };
-    let mut locals = HashMap::new();
-    collect_func_locals(docs, func, &mut locals);
-    match body {
-        Body::Block(expressions) => expressions
-            .last()
-            .and_then(|expression| infer_expr_type_with_locals(docs, expression, &locals)),
-        Body::Empty => None,
+    let Body::Block(expressions) = body else {
+        return None;
+    };
+    let (tail, preceding) = expressions.split_last()?;
+    let mut locals: HashMap<String, String> = params
+        .iter()
+        .map(|param| (param.name.clone(), display_type(&param.ty)))
+        .collect();
+    for expression in preceding {
+        let Expr::LetPatternDestructor {
+            patterns,
+            initializer,
+            ..
+        } = expression
+        else {
+            continue;
+        };
+        let inferred = infer_expr_type_with_locals(docs, initializer, &locals);
+        for pattern in patterns {
+            if let Pattern::Var { name, ty, .. } = pattern {
+                if let Some(local_type) = ty.as_ref().map(display_type).or_else(|| inferred.clone())
+                {
+                    locals.insert(name.clone(), local_type);
+                }
+            }
+        }
     }
+    infer_expr_type_with_locals(docs, tail, &locals)
 }
 
 fn infer_expr_type_with_locals(
@@ -4665,20 +4732,17 @@ fn item_json_with_context(
         | "trimStart()" => Some("import std.unicode.UnicodeStringExtension\n"),
         _ => None,
     };
-    if let Value::Object(object) = &mut item {
-        let additional_text_edits = import.map_or_else(
-            || Value::String("##".to_string()),
-            |new_text| {
-                json!([{
-                    "newText": new_text,
-                    "range": {
-                        "start": { "line": import_line, "character": 0 },
-                        "end": { "line": import_line, "character": 0 }
-                    }
-                }])
-            },
+    if let (Value::Object(object), Some(new_text)) = (&mut item, import) {
+        object.insert(
+            "additionalTextEdits".to_string(),
+            json!([{
+                "newText": new_text,
+                "range": {
+                    "start": { "line": import_line, "character": 0 },
+                    "end": { "line": import_line, "character": 0 }
+                }
+            }]),
         );
-        object.insert("additionalTextEdits".to_string(), additional_text_edits);
     }
     item
 }
@@ -5002,7 +5066,25 @@ mod tests {
 
     #[test]
     fn generic_constructor_locals_infer_tail_member_return_type() {
-        let source = "class Pair<T, U> {\n    var first: T\n    var second: U\n}\nfunc value() {\n    let pair = Pair(3, 4)\n    pair.first\n}";
+        let source = "class Pair<T, U> {\n    var first: T\n    var second: U\n    init(u: U, t: T) {}\n}\nfunc value() {\n    let pair = Pair(\"u\", 3)\n    pair.first\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let docs = vec![(&file, source)];
+        let function = file
+            .decls
+            .iter()
+            .find(|declaration| matches!(declaration, Decl::Func { name, .. } if name == "value"))
+            .expect("value function");
+
+        assert_eq!(
+            infer_func_ret_with_locals(&docs, function).as_deref(),
+            Some("Int64")
+        );
+    }
+
+    #[test]
+    fn function_return_inference_ignores_nested_shadowing_locals() {
+        let source = "func value() {\n    let x: Int64 = 1\n    if (true) { let x: String = \"nested\" }\n    x\n}";
         let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
         let file = parser.run();
         let docs = vec![(&file, source)];
@@ -5036,5 +5118,17 @@ mod tests {
             "import std.unicode.UnicodeStringExtension\n"
         );
         assert_eq!(item["additionalTextEdits"][0]["range"]["start"]["line"], 9);
+
+        let unrelated = Candidate {
+            label: "clone()".to_string(),
+            kind: KIND_METHOD,
+            detail: String::new(),
+            insert_text: "clone()".to_string(),
+            insert_text_format: 1,
+            filter_text: "clone".to_string(),
+        };
+        assert!(item_json_with_context(&unrelated, true, 9)
+            .get("additionalTextEdits")
+            .is_none());
     }
 }
