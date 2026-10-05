@@ -1907,6 +1907,7 @@ fn collect_local_scope(
     }
 
     collect_enclosing_member_scope(file, source, cursor_line, cands, seen);
+    collect_enclosing_extend_scope(file, cursor_line, cands, seen);
 }
 
 fn collect_lambda_params(
@@ -2026,6 +2027,49 @@ fn member_params_body(member: &Decl) -> Option<(&[Param], &Body)> {
         | Decl::PrimaryCtor { params, body, .. } => Some((params, body)),
         _ => None,
     }
+}
+
+/// A property name is in scope inside its own getter/setter. Property bodies
+/// are not retained in the current AST, so recover the enclosing extend/member
+/// from declaration ordering and expose the property as a local binding.
+fn collect_enclosing_extend_scope(
+    file: &File,
+    cursor_line: u32,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    let cursor = cursor_line + 1;
+    let Some(decl) = file
+        .decls
+        .iter()
+        .filter(|decl| decl_pos(decl).line <= cursor)
+        .max_by_key(|decl| decl_pos(decl).line)
+    else {
+        return;
+    };
+    let Decl::Extend { members, .. } = decl else {
+        return;
+    };
+    let Some(Decl::Prop { name, ty, .. }) = members
+        .iter()
+        .filter(|member| decl_pos(member).line <= cursor)
+        .max_by_key(|member| decl_pos(member).line)
+    else {
+        return;
+    };
+
+    push_candidate(
+        cands,
+        seen,
+        Candidate {
+            label: name.clone(),
+            kind: KIND_VARIABLE,
+            detail: format!("let {name}: {}", display_type(ty)),
+            insert_text: name.clone(),
+            insert_text_format: 1,
+            filter_text: name.clone(),
+        },
+    );
 }
 
 /// Recursively collect let/var statements in a block of expressions.
@@ -4026,5 +4070,21 @@ mod tests {
         assert!(items.iter().any(|item| {
             item["label"] == "CType" && item["detail"] == "public sealed open interface CType"
         }));
+    }
+
+    #[test]
+    fn property_name_is_local_inside_extend_accessor() {
+        let source =
+            "extend Int64 {\n    prop ixy: Int64 {\n        get() { return ixy }\n    }\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+
+        collect_enclosing_extend_scope(&file, 2, &mut candidates, &mut seen);
+
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.label == "ixy" && candidate.detail == "let ixy: Int64"));
     }
 }
