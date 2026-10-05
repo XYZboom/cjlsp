@@ -58,6 +58,12 @@ const STD_CORE: &[StdSym] = &[
         ctors: &[],
     },
     StdSym {
+        name: "CType",
+        kind: KIND_INTERFACE,
+        detail: "public sealed open interface CType",
+        ctors: &[],
+    },
+    StdSym {
         name: "CFunc",
         kind: KIND_CLASS,
         detail: "public Type CFunc<T>",
@@ -1888,7 +1894,69 @@ fn collect_local_scope(
         }
     }
 
+    // Top-level initializers may contain trailing lambdas. Their parameters
+    // are local bindings at the completion cursor (for example
+    // `Foo() { item => ite }`).
+    for d in &file.decls {
+        if let Decl::Var {
+            init: Some(init), ..
+        } = d
+        {
+            collect_lambda_params(init, cursor_line, cands, seen);
+        }
+    }
+
     collect_enclosing_member_scope(file, source, cursor_line, cands, seen);
+}
+
+fn collect_lambda_params(
+    expr: &Expr,
+    cursor_line: u32,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    match expr {
+        Expr::Lambda {
+            params, body, pos, ..
+        } => {
+            // CodePos is 1-based while LSP lines are 0-based. Limit this
+            // lightweight scope recovery to the lambda's line so parameters
+            // from earlier lambdas do not leak into later completions.
+            if pos.line == cursor_line + 1 {
+                for param in params {
+                    push_candidate(
+                        cands,
+                        seen,
+                        Candidate {
+                            label: param.name.clone(),
+                            kind: KIND_VARIABLE,
+                            detail: format!("let {}", param.name),
+                            insert_text: param.name.clone(),
+                            insert_text_format: 1,
+                            filter_text: param.name.clone(),
+                        },
+                    );
+                }
+            }
+            collect_lambda_params(body, cursor_line, cands, seen);
+        }
+        Expr::TrailingClosure { call, closure, .. } => {
+            collect_lambda_params(call, cursor_line, cands, seen);
+            collect_lambda_params(closure, cursor_line, cands, seen);
+        }
+        Expr::Call { callee, args, .. } => {
+            collect_lambda_params(callee, cursor_line, cands, seen);
+            for arg in args {
+                collect_lambda_params(&arg.value, cursor_line, cands, seen);
+            }
+        }
+        Expr::Block { stmts, .. } => {
+            for stmt in stmts {
+                collect_lambda_params(stmt, cursor_line, cands, seen);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Collect parameters and locals from the class/struct member containing the
@@ -3932,5 +4000,31 @@ mod tests {
 
         assert_eq!(annotation.len(), 1);
         assert_eq!(annotation[0]["detail"], "let annotation: String");
+    }
+
+    #[test]
+    fn top_level_trailing_lambda_param_is_in_completion_scope() {
+        let source = "let value = Factory() { iabc => iabc }";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let result = complete_at(&file, source, 0, 36, None, &[], None, "file:///test.cj");
+        let items = result.as_array().expect("completion items");
+
+        assert!(items
+            .iter()
+            .any(|item| item["label"] == "iabc" && item["detail"] == "let iabc"));
+    }
+
+    #[test]
+    fn ctype_is_available_as_an_implicit_core_symbol() {
+        let source = "type";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let result = complete_at(&file, source, 0, 4, None, &[], None, "file:///test.cj");
+        let items = result.as_array().expect("completion items");
+
+        assert!(items.iter().any(|item| {
+            item["label"] == "CType" && item["detail"] == "public sealed open interface CType"
+        }));
     }
 }
