@@ -4221,7 +4221,7 @@ mod tests {
 
     #[test]
     fn local_function_is_available_in_completion_scope() {
-        let source = "func outer() { func add(a: Int32, b: Int32) { a + b }; add(1, 2) }";
+        let source = "func outer() {\n    func add(a: Int32, b: Int32) { a + b }\n    add(1, 2)\n    func later() { 0 }\n}";
         let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
         let file = parser.run();
         let Decl::Func {
@@ -4234,11 +4234,14 @@ mod tests {
         let mut candidates = Vec::new();
         let mut seen = HashSet::new();
 
-        collect_lets_in_block(stmts, source, 0, &mut candidates, &mut seen);
+        collect_lets_in_block(stmts, source, 2, &mut candidates, &mut seen);
 
         assert!(candidates.iter().any(|candidate| {
             candidate.label == "add(a: Int32, b: Int32)"
                 && candidate.detail == "func add(a: Int32, b: Int32): Int32"
         }));
+        assert!(!candidates
+            .iter()
+            .any(|candidate| candidate.filter_text == "later"));
     }
 }
