@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "diagnostics": [
+    {
+      "severity": "error",
+      "message": "redefinition of declaration 'x'",
+      "location": {
+        "file": "input.cj",
+        "range": {
+          "start": {
+            "line": 2,
+            "column": 5
+          },
+          "end": {
+            "line": 2,
+            "column": 6
+          }
+        }
+      },
+      "notes": [
+        "'x' is previously declared here"
+      ]
+    },
+    {
+      "severity": "hint",
+      "message": "Variable 'x' is declared but never used",
+      "location": {
+        "file": "input.cj",
+        "range": {
+          "start": {
+            "line": 1,
+            "column": 5
+          },
+          "end": {
+            "line": 1,
+            "column": 6
+          }
+        }
+      }
+    },
+    {
+      "severity": "hint",
+      "message": "Variable 'x' is declared but never used",
+      "location": {
+        "file": "input.cj",
+        "range": {
+          "start": {
+            "line": 2,
+            "column": 5
+          },
+          "end": {
+            "line": 2,
+            "column": 6
+          }
+        }
+      }
+    }
+  ]
+}
