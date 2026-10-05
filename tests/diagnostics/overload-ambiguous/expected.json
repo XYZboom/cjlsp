@@ -70,21 +70,27 @@
       }
     },
     {
-      "severity": "error",
-      "message": "function 'f' has overload conflicts",
+      "candidates": [
+        "func f(a: Int64)",
+        "func f(a: Int64)"
+      ],
+      "category": "sema",
+      "code": "sema_overload_conflicts",
       "location": {
         "file": "input.cj",
         "range": {
-          "start": {
-            "line": 2,
-            "column": 6
-          },
           "end": {
-            "line": 2,
-            "column": 6
+            "column": 6,
+            "line": 2
+          },
+          "start": {
+            "column": 6,
+            "line": 2
           }
         }
-      }
+      },
+      "message": "function 'f' has overload conflicts",
+      "severity": "error"
     }
   ]
 }

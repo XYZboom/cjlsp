@@ -85,10 +85,8 @@ pub fn detect_overload_conflicts(file: &File) -> Vec<Diag> {
             .iter()
             .any(|(n2, p2, _, _)| n2 == name && same_signature(params, p2));
         if conflict {
-            let candidates: Vec<String> = matching
-                .iter()
-                .map(|p| format_signature(name, p))
-                .collect();
+            let candidates: Vec<String> =
+                matching.iter().map(|p| format_signature(name, p)).collect();
 
             let mut diag = Diag {
                 code: None,

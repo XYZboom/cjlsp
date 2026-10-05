@@ -236,12 +236,8 @@ fn check_call(
         if !is_known_builtin(name) {
             if let Expr::Name { pos, .. } = callee {
                 diags.push(
-                    Diag::error(
-                        pos.line,
-                        pos.col,
-                        format!("undeclared identifier '{name}'"),
-                    )
-                    .with_id(DiagId::SEMA_UNDECLARED_IDENTIFIER),
+                    Diag::error(pos.line, pos.col, format!("undeclared identifier '{name}'"))
+                        .with_id(DiagId::SEMA_UNDECLARED_IDENTIFIER),
                 );
             }
         }

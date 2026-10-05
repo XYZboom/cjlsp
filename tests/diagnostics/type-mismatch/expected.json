@@ -19,21 +19,25 @@
       }
     },
     {
-      "severity": "error",
-      "message": "mismatched types expected 'Int8', found 'Struct-String'",
+      "actual": "Struct-String",
+      "category": "sema",
+      "code": "sema_mismatched_types",
+      "expected": "Int8",
       "location": {
         "file": "input.cj",
         "range": {
-          "start": {
-            "line": 1,
-            "column": 15
-          },
           "end": {
-            "line": 1,
-            "column": 15
+            "column": 15,
+            "line": 1
+          },
+          "start": {
+            "column": 15,
+            "line": 1
           }
         }
-      }
+      },
+      "message": "mismatched types expected 'Int8', found 'Struct-String'",
+      "severity": "error"
     }
   ]
 }

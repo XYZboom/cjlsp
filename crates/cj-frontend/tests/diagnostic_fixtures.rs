@@ -55,12 +55,13 @@ fn run_fixture(fixture_dir: &Path) {
     );
 
     let actual_raw = String::from_utf8(output.stderr).expect("invalid utf-8 in cj-frontend stderr");
-    let mut actual_json: serde_json::Value = serde_json::from_str(&actual_raw).unwrap_or_else(|e| {
-        panic!(
-            "failed to parse JSON from cj-frontend stderr for {}: {e}\noutput: {actual_raw}",
-            input_path.display()
-        )
-    });
+    let mut actual_json: serde_json::Value =
+        serde_json::from_str(&actual_raw).unwrap_or_else(|e| {
+            panic!(
+                "failed to parse JSON from cj-frontend stderr for {}: {e}\noutput: {actual_raw}",
+                input_path.display()
+            )
+        });
 
     let expected_raw = fs::read_to_string(&expected_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", expected_path.display()));

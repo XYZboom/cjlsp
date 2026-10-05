@@ -2,24 +2,44 @@
   "schemaVersion": 1,
   "diagnostics": [
     {
-      "severity": "error",
-      "message": "redefinition of declaration 'x'",
+      "category": "sema",
+      "code": "sema_redefinition",
       "location": {
         "file": "input.cj",
         "range": {
-          "start": {
-            "line": 2,
-            "column": 5
-          },
           "end": {
-            "line": 2,
-            "column": 6
+            "column": 6,
+            "line": 2
+          },
+          "start": {
+            "column": 5,
+            "line": 2
           }
         }
       },
+      "message": "redefinition of declaration 'x'",
       "notes": [
         "'x' is previously declared here"
-      ]
+      ],
+      "relatedLocations": [
+        {
+          "location": {
+            "file": "",
+            "range": {
+              "end": {
+                "column": 6,
+                "line": 1
+              },
+              "start": {
+                "column": 5,
+                "line": 1
+              }
+            }
+          },
+          "message": "'x' is previously declared here"
+        }
+      ],
+      "severity": "error"
     },
     {
       "severity": "hint",
