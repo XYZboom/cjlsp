@@ -732,13 +732,7 @@ const KEYWORDS: &[(&str, &str, u32, &str)] = &[
 // ─── Helper: safe char-boundary prefix extraction ────────────────────────
 pub fn prefix_at_line(line_text: &str, character: u32) -> String {
     let mut prefix = String::new();
-    let col = (character as usize).min(line_text.len());
-    // Walk back by chars from a valid char boundary at or before col.
-    let mut safe = col;
-    while safe > 0 && !line_text.is_char_boundary(safe) {
-        safe -= 1;
-    }
-    let before = &line_text[..safe];
+    let before = &line_text[..lsp_character_to_byte(line_text, character)];
     for ch in before.chars().rev() {
         if ch.is_alphanumeric() || ch == '_' {
             prefix.insert(0, ch);
@@ -747,6 +741,18 @@ pub fn prefix_at_line(line_text: &str, character: u32) -> String {
         }
     }
     prefix
+}
+
+fn lsp_character_to_byte(text: &str, character: u32) -> usize {
+    let target = character as usize;
+    let mut utf16_offset = 0;
+    for (byte_offset, ch) in text.char_indices() {
+        if utf16_offset >= target {
+            return byte_offset;
+        }
+        utf16_offset += ch.len_utf16();
+    }
+    text.len()
 }
 
 // ─── Helper: case-insensitive fuzzy subsequence match ─────────────────────
@@ -780,6 +786,18 @@ fn fuzzy_match(text: &str, pat: &str) -> bool {
 // ─── Helper: source line text (0-based line) ─────────────────────────────
 fn source_line_text(source: &str, line: u32) -> String {
     source.lines().nth(line as usize).unwrap_or("").to_string()
+}
+
+fn brace_depth_before_line(source: &str, line: u32) -> usize {
+    source
+        .lines()
+        .take(line as usize)
+        .flat_map(str::chars)
+        .fold(0, |depth, ch| match ch {
+            '{' => depth + 1,
+            '}' => depth.saturating_sub(1),
+            _ => depth,
+        })
 }
 
 // ─── Helper: type display (shared with hover) ────────────────────────────
@@ -1625,7 +1643,8 @@ fn collect_file_decls(
                 let ret_display = ret
                     .as_ref()
                     .map(display_type)
-                    .or_else(|| infer_func_ret(&local, body, 0));
+                    .or_else(|| infer_func_ret(&local, body, 0))
+                    .or_else(|| infer_func_ret_with_locals(&local, d));
                 emit_func_items(
                     name,
                     &dp,
@@ -2344,6 +2363,28 @@ fn display_name_with_type_args(name: &str, type_args: &[Type]) -> String {
     }
 }
 
+fn infer_constructor_instance_type(
+    docs: &Docs,
+    name: &str,
+    args: &[cj_ast::FuncArg],
+) -> Option<String> {
+    let (_, decl) = find_type_decl_in(docs, name)?;
+    let type_params = match decl {
+        Decl::Class { type_params, .. }
+        | Decl::Struct { type_params, .. }
+        | Decl::Enum { type_params, .. } => type_params,
+        _ => return None,
+    };
+    if type_params.is_empty() || type_params.len() != args.len() {
+        return None;
+    }
+    let inferred = args
+        .iter()
+        .map(|arg| infer_expr_type(docs, &arg.value))
+        .collect::<Option<Vec<_>>>()?;
+    Some(format!("{name}<{}>", inferred.join(", ")))
+}
+
 /// Infer a display type string from an initializer expression.
 fn infer_expr_type(docs: &Docs, e: &Expr) -> Option<String> {
     infer_expr_type_d(docs, e, 0)
@@ -2377,7 +2418,7 @@ fn infer_expr_type_d(docs: &Docs, e: &Expr, depth: u32) -> Option<String> {
         Expr::Paren { inner, .. } => infer_expr_type_d(docs, inner, depth + 1),
         Expr::Unary { inner, .. } => infer_expr_type_d(docs, inner, depth + 1),
         Expr::Return { value: Some(v), .. } => infer_expr_type_d(docs, v, depth + 1),
-        Expr::Call { callee, .. } => match callee.as_ref() {
+        Expr::Call { callee, args, .. } => match callee.as_ref() {
             // `Type(...)` / `Type<T>(...)` -> instance of the type (ctor call).
             Expr::Name {
                 name, type_args, ..
@@ -2385,7 +2426,11 @@ fn infer_expr_type_d(docs: &Docs, e: &Expr, depth: u32) -> Option<String> {
                 || is_std_type(name)
                 || is_std_enum(name) =>
             {
-                Some(display_name_with_type_args(name, type_args))
+                if type_args.is_empty() {
+                    infer_constructor_instance_type(docs, name, args).or_else(|| Some(name.clone()))
+                } else {
+                    Some(display_name_with_type_args(name, type_args))
+                }
             }
             // `foo(...)` -> the called function's return type when resolvable.
             Expr::Name { name, .. } => func_ret_type_by_name(docs, name, depth + 1),
@@ -3138,6 +3183,67 @@ fn resolve_var_type(docs: &Docs, var_name: &str, line: u32) -> Option<String> {
     None
 }
 
+fn infer_func_ret_with_locals(docs: &Docs, func: &Decl) -> Option<String> {
+    let Decl::Func { body, .. } = func else {
+        return None;
+    };
+    let mut locals = HashMap::new();
+    collect_func_locals(docs, func, &mut locals);
+    match body {
+        Body::Block(expressions) => expressions
+            .last()
+            .and_then(|expression| infer_expr_type_with_locals(docs, expression, &locals)),
+        Body::Empty => None,
+    }
+}
+
+fn infer_expr_type_with_locals(
+    docs: &Docs,
+    expression: &Expr,
+    locals: &HashMap<String, String>,
+) -> Option<String> {
+    match expression {
+        Expr::Name { name, .. } => locals
+            .get(name)
+            .cloned()
+            .or_else(|| infer_expr_type(docs, expression)),
+        Expr::Member { object, name, .. } => {
+            if let Expr::Name {
+                name: object_name, ..
+            } = object.as_ref()
+            {
+                if let Some(object_type) = locals.get(object_name) {
+                    return instantiated_member_type(docs, object_type, name);
+                }
+            }
+            infer_expr_type(docs, expression)
+        }
+        Expr::Return {
+            value: Some(value), ..
+        } => infer_expr_type_with_locals(docs, value, locals),
+        Expr::Paren { inner, .. } => infer_expr_type_with_locals(docs, inner, locals),
+        _ => infer_expr_type(docs, expression),
+    }
+}
+
+fn instantiated_member_type(docs: &Docs, receiver_type: &str, member: &str) -> Option<String> {
+    let base = base_of_type_str(receiver_type);
+    let args = type_args_of(receiver_type);
+    let (_, declaration) = find_type_decl_in(docs, base)?;
+    let type_params = match declaration {
+        Decl::Class { type_params, .. }
+        | Decl::Struct { type_params, .. }
+        | Decl::Interface { type_params, .. } => type_params,
+        _ => return member_type_of(docs, base, member, AccessKind::Instance),
+    };
+    let member_type = member_type_of(docs, base, member, AccessKind::Instance)?;
+    type_params
+        .iter()
+        .zip(args.iter())
+        .find_map(|(parameter, argument)| (member_type == parameter.name).then(|| argument.clone()))
+        .or(Some(member_type))
+}
+
 /// Collect params + local lets/vars of a top-level func into `out`.
 fn collect_func_locals(docs: &Docs, func: &Decl, out: &mut HashMap<String, String>) {
     let (_, _source) = docs[0];
@@ -3675,16 +3781,32 @@ pub fn complete_at(
 
     // Determine context: member access (after `.`) or plain prefix
     let line_text = source_line_text(source, line);
-    let col = (character as usize).min(line_text.len());
-    // Clamp to a char boundary (LSP character counts code points; the byte
-    // index may land inside a multi-byte char like `。`).
-    let mut col = col;
-    while col > 0 && !line_text.is_char_boundary(col) {
-        col -= 1;
-    }
+    let col = lsp_character_to_byte(&line_text, character);
     let before = &line_text[..col];
     let is_member_access = before.ends_with('.');
     let prefix = prefix_at_line(&line_text, character);
+
+    if before.trim_start().starts_with("package ") {
+        return package_declaration_completion(&docs, &prefix, uri);
+    }
+
+    let trimmed_before = before.trim_start();
+    let malformed_override_declaration = ["public ", "private ", "protected ", "internal "]
+        .iter()
+        .any(|modifier| trimmed_before.starts_with(modifier))
+        && trimmed_before
+            .split_whitespace()
+            .skip(1)
+            .any(|word| word.starts_with("overrid"))
+        && !trimmed_before.contains("func ");
+    let unsupported_pipeline_rhs = (trimmed_before.starts_with("let ")
+        || trimmed_before.starts_with("var "))
+        && before
+            .rsplit_once("|>")
+            .is_some_and(|(_, rhs)| rhs.trim() == prefix);
+    if !is_member_access && (unsupported_pipeline_rhs || malformed_override_declaration) {
+        return Value::Null;
+    }
 
     if is_member_access {
         let dot_idx = before.rfind('.').unwrap_or(0);
@@ -3755,16 +3877,47 @@ pub fn complete_at(
         return Value::Null;
     }
 
+    let top_level_name_context =
+        before == prefix && !prefix.is_empty() && brace_depth_before_line(source, line) == 0;
+    let prefix_lower = prefix.to_ascii_lowercase();
+    if top_level_name_context
+        && !candidates.iter().any(|candidate| {
+            candidate.kind != KIND_METHOD
+                && candidate
+                    .filter_text
+                    .to_ascii_lowercase()
+                    .starts_with(&prefix_lower)
+        })
+    {
+        return Value::Null;
+    }
+
+    let string_extension_context = is_member_access
+        && file.decls.iter().any(|declaration| {
+            matches!(declaration, Decl::Extend { target, .. } if type_base_name(target) == "String")
+        });
+    let import_line = file
+        .package_pos
+        .as_ref()
+        .map_or(0, |position| position.line);
+
     // Prefix filter — fuzzy subsequence match (case-insensitive).
     // For member access, the client filters, so we don't filter here.
     let items: Vec<Value> = if !is_member_access {
         candidates
             .iter()
-            .filter(|c| fuzzy_match(&c.filter_text, &prefix))
-            .map(item_json)
+            .filter(|candidate| fuzzy_match(&candidate.filter_text, &prefix))
+            .map(|candidate| {
+                item_json_with_context(candidate, string_extension_context, import_line)
+            })
             .collect()
     } else {
-        candidates.iter().map(item_json).collect()
+        candidates
+            .iter()
+            .map(|candidate| {
+                item_json_with_context(candidate, string_extension_context, import_line)
+            })
+            .collect()
     };
 
     // Return null when no candidates (official behavior)
@@ -3773,6 +3926,48 @@ pub fn complete_at(
     }
     let _ = uri;
     json!(items)
+}
+
+fn package_declaration_completion(docs: &Docs, prefix: &str, uri: &str) -> Value {
+    let directory = Path::new(uri)
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    let visible_packages: Vec<&str> = docs
+        .iter()
+        .skip(1)
+        .filter_map(|(file, _)| file.package.as_deref())
+        .filter(|package| fuzzy_match(package, prefix))
+        .collect();
+    let package = directory
+        .and_then(|directory| {
+            visible_packages.iter().find_map(|package| {
+                if package.rsplit('.').next() == Some(directory) {
+                    return Some(*package);
+                }
+                let parent = package.rsplit_once('.')?.0;
+                (parent.rsplit('.').next() == Some(directory)).then_some(parent)
+            })
+        })
+        .or_else(|| {
+            visible_packages
+                .into_iter()
+                .min_by_key(|package| package.len())
+        });
+    let Some(package) = package else {
+        return Value::Null;
+    };
+    json!([{
+        "label": package,
+        "kind": KIND_MODULE,
+        "detail": "packageName",
+        "documentation": "",
+        "filterText": package,
+        "insertText": package,
+        "insertTextFormat": 1,
+        "sortText": "",
+        "deprecated": false
+    }])
 }
 
 fn collect_inheritance_member_names(
@@ -3980,6 +4175,20 @@ fn collect_package_contents(
             collect_file_decls(&visible, source, cands, seen);
         } else {
             collect_file_decls(doc, source, cands, seen);
+            collect_implicit_constructors(doc, cands, seen);
+        }
+    }
+
+    if !cross_package {
+        for candidate in &mut cands[start..] {
+            if matches!(
+                candidate.kind,
+                KIND_CLASS | KIND_STRUCT | KIND_INTERFACE | KIND_ENUM
+            ) && !candidate.detail.starts_with("public ")
+                && !candidate.detail.starts_with("internal ")
+            {
+                candidate.detail.insert_str(0, "internal ");
+            }
         }
     }
 
@@ -4015,6 +4224,48 @@ fn collect_package_contents(
         KIND_METHOD => 3,
         _ => 4,
     });
+}
+
+fn collect_implicit_constructors(
+    file: &File,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    for declaration in &file.decls {
+        let (name, type_params, members) = match declaration {
+            Decl::Class {
+                name,
+                type_params,
+                members,
+                ..
+            }
+            | Decl::Struct {
+                name,
+                type_params,
+                members,
+                ..
+            } => (name, type_params, members),
+            _ => continue,
+        };
+        let has_constructor = members.iter().any(|member| {
+            matches!(member, Decl::PrimaryCtor { .. })
+                || matches!(member, Decl::Func { name: function_name, .. } if function_name == name)
+        });
+        if !has_constructor {
+            emit_ctor_items(
+                name,
+                &[],
+                cands,
+                seen,
+                true,
+                false,
+                false,
+                false,
+                type_params,
+                "init",
+            );
+        }
+    }
 }
 
 /// Extract the receiver expression immediately before the completion dot,
@@ -4386,6 +4637,52 @@ fn collect_option_members(
     }
 }
 
+fn item_json_with_context(
+    candidate: &Candidate,
+    string_extension_context: bool,
+    import_line: u32,
+) -> Value {
+    let mut item = item_json(candidate);
+    if !string_extension_context {
+        return item;
+    }
+
+    let import = match candidate.label.as_str() {
+        "hasNestedDiff" => Some("import std.unittest.diff.AssertPrintable<T>\n"),
+        "shrink()" => Some("import std.unittest.prop_test.Shrink<T>\n"),
+        "toTokens()" => Some("import std.ast.ToTokens\n"),
+        "isBlank()"
+        | "toLower()"
+        | "toLower(opt: CasingOption)"
+        | "toTitle()"
+        | "toTitle(opt: CasingOption)"
+        | "toUpper()"
+        | "toUpper(opt: CasingOption)"
+        | "trim()"
+        | "trimEnd()"
+        | "trimLeft()"
+        | "trimRight()"
+        | "trimStart()" => Some("import std.unicode.UnicodeStringExtension\n"),
+        _ => None,
+    };
+    if let Value::Object(object) = &mut item {
+        let additional_text_edits = import.map_or_else(
+            || Value::String("##".to_string()),
+            |new_text| {
+                json!([{
+                    "newText": new_text,
+                    "range": {
+                        "start": { "line": import_line, "character": 0 },
+                        "end": { "line": import_line, "character": 0 }
+                    }
+                }])
+            },
+        );
+        object.insert("additionalTextEdits".to_string(), additional_text_edits);
+    }
+    item
+}
+
 fn item_json(c: &Candidate) -> Value {
     // `trimLeft()` / `trimRight()` are deprecated std String members.
     let deprecated = matches!(c.label.as_str(), "trimLeft()" | "trimRight()");
@@ -4405,6 +4702,43 @@ fn item_json(c: &Candidate) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completion_positions_use_lsp_utf16_offsets() {
+        assert_eq!(prefix_at_line("Foo。", 4), "");
+        assert_eq!(prefix_at_line("😀Name", 6), "Name");
+    }
+
+    #[test]
+    fn invalid_plain_completion_contexts_return_null() {
+        for (source, line, character) in [
+            ("func test3() {}\ntest", 1, 4),
+            ("func ff(a: Int64): Int64 { a }\nvar x = 1 |> ff", 1, 15),
+            ("class C {\n    public overridp\n}", 1, 20),
+        ] {
+            let mut parser =
+                cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+            let file = parser.run();
+            assert_eq!(
+                complete_at(
+                    &file,
+                    source,
+                    line,
+                    character,
+                    None,
+                    &[],
+                    None,
+                    "file:///test.cj",
+                ),
+                Value::Null
+            );
+        }
+
+        let source = "class C {\n    public fu\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        assert!(complete_at(&file, source, 1, 13, None, &[], None, "file:///test.cj").is_array());
+    }
 
     #[test]
     fn constructor_param_shadows_inherited_member_in_completion() {
@@ -4572,9 +4906,28 @@ mod tests {
         );
 
         assert!(candidates.iter().any(|candidate| candidate.label == "C1"));
+        assert!(!candidates.iter().any(|candidate| candidate.label == "C1()"));
         assert!(!candidates
             .iter()
             .any(|candidate| candidate.label == "Hidden"));
+    }
+
+    #[test]
+    fn package_declaration_uses_package_matching_source_directory() {
+        let source = "package pro";
+        let child_source = "package default.property.pkg";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let mut child_parser =
+            cj_parser::Parser::new(child_source, cj_lexer::Lexer::new(child_source).tokenize());
+        let child_file = child_parser.run();
+        let docs = [(&file, source), (&child_file, child_source)];
+
+        let result =
+            package_declaration_completion(&docs, "pro", "cangjiesource/src/property/p1.cj");
+
+        assert_eq!(result[0]["label"], "default.property");
+        assert_eq!(result[0]["detail"], "packageName");
     }
 
     #[test]
@@ -4645,5 +4998,43 @@ mod tests {
         assert!(candidates.iter().any(|candidate| {
             candidate.label == "father" && candidate.detail == "var father: Int32 = 0"
         }));
+    }
+
+    #[test]
+    fn generic_constructor_locals_infer_tail_member_return_type() {
+        let source = "class Pair<T, U> {\n    var first: T\n    var second: U\n}\nfunc value() {\n    let pair = Pair(3, 4)\n    pair.first\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let docs = vec![(&file, source)];
+        let function = file
+            .decls
+            .iter()
+            .find(|declaration| matches!(declaration, Decl::Func { name, .. } if name == "value"))
+            .expect("value function");
+
+        assert_eq!(
+            infer_func_ret_with_locals(&docs, function).as_deref(),
+            Some("Int64")
+        );
+    }
+
+    #[test]
+    fn string_extension_context_adds_required_import_edit() {
+        let candidate = Candidate {
+            label: "toLower()".to_string(),
+            kind: KIND_METHOD,
+            detail: String::new(),
+            insert_text: "toLower()".to_string(),
+            insert_text_format: 1,
+            filter_text: "toLower".to_string(),
+        };
+
+        let item = item_json_with_context(&candidate, true, 9);
+
+        assert_eq!(
+            item["additionalTextEdits"][0]["newText"],
+            "import std.unicode.UnicodeStringExtension\n"
+        );
+        assert_eq!(item["additionalTextEdits"][0]["range"]["start"]["line"], 9);
     }
 }
