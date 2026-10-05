@@ -1079,28 +1079,8 @@ pub fn check_visibility(file: &File, package: &PackageTable) -> Vec<Diag> {
             continue;
         }
 
-        // Check imported members: single member import `a.b.C` or selected members `a.b: A, B`
-        let mut members_to_check = Vec::new();
-        if !imp.glob && imp.path.len() >= 2 {
-            let member = imp.path.last().expect("non-empty");
-            let start_col = imp.name_pos.end_col.saturating_sub(member.len() as u32);
-            let pos = cj_ast::CodePos::new(
-                imp.name_pos.end_line,
-                start_col,
-                0,
-                imp.name_pos.end_line,
-                imp.name_pos.end_col,
-                0,
-            );
-            members_to_check.push((member.clone(), pos));
-        }
-        for s in &imp.selected {
-            members_to_check.push((s.clone(), imp.name_pos));
-        }
-
-        for (member, pos) in members_to_check {
-            if let Some(sym) = package.lookup(&member) {
-                // If found in package table and marked non-public
+        let mut check_member = |member: &str, pos: cj_ast::CodePos| {
+            if let Some(sym) = package.lookup(member) {
                 if !sym.is_public {
                     let mut diag = Diag::error(
                         pos.line,
@@ -1128,6 +1108,23 @@ pub fn check_visibility(file: &File, package: &PackageTable) -> Vec<Diag> {
                     diags.push(diag);
                 }
             }
+        };
+
+        if !imp.glob && imp.path.len() >= 2 {
+            let member = imp.path.last().expect("non-empty");
+            let start_col = imp.name_pos.end_col.saturating_sub(member.len() as u32);
+            let pos = cj_ast::CodePos::new(
+                imp.name_pos.end_line,
+                start_col,
+                0,
+                imp.name_pos.end_line,
+                imp.name_pos.end_col,
+                0,
+            );
+            check_member(member, pos);
+        }
+        for s in &imp.selected {
+            check_member(s, imp.name_pos);
         }
     }
 

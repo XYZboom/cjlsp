@@ -75,16 +75,15 @@ pub fn detect_overload_conflicts(file: &File) -> Vec<Diag> {
 
     let mut diags = Vec::new();
     for (i, (name, params, line, col)) in funcs.iter().enumerate() {
-        let matching: Vec<&[Param]> = funcs
-            .iter()
-            .filter(|(n2, p2, _, _)| n2 == name && same_signature(params, p2))
-            .map(|(_, p2, _, _)| *p2)
-            .collect();
-
         let conflict = funcs[..i]
             .iter()
             .any(|(n2, p2, _, _)| n2 == name && same_signature(params, p2));
         if conflict {
+            let matching: Vec<&[Param]> = funcs
+                .iter()
+                .filter(|(n2, p2, _, _)| n2 == name && same_signature(params, p2))
+                .map(|(_, p2, _, _)| *p2)
+                .collect();
             let candidates: Vec<String> =
                 matching.iter().map(|p| format_signature(name, p)).collect();
 
