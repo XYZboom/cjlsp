@@ -17,10 +17,10 @@ pub use templates::DiagId;
 
 use std::fmt::Write;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Severity of a diagnostic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Note,
@@ -38,6 +38,15 @@ impl Severity {
             Severity::Warning => "warning",
             Severity::Error => "error",
             Severity::Fatal => "fatal error",
+        }
+    }
+
+    pub fn lsp_severity(&self) -> i32 {
+        match self {
+            Severity::Error | Severity::Fatal => 1,
+            Severity::Warning => 2,
+            Severity::Note => 3,
+            Severity::Hint => 4,
         }
     }
 }
@@ -73,28 +82,28 @@ pub struct DiagFix {
 }
 
 /// A 1-based source position, as used by text diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Position {
     pub line: u32,
     pub column: u32,
 }
 
 /// A source range whose end follows the existing exclusive span convention.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceRange {
     pub start: Position,
     pub end: Position,
 }
 
 /// A typed source location suitable for machine consumers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceLocation {
     pub file: String,
     pub range: SourceRange,
 }
 
 /// A secondary location related to a diagnostic.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelatedLocation {
     pub location: SourceLocation,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -102,18 +111,49 @@ pub struct RelatedLocation {
 }
 
 /// A source edit proposed by a diagnostic suggestion.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextEdit {
     pub location: SourceLocation,
     pub replacement: String,
 }
 
 /// A general-purpose suggestion, optionally carrying applicable edits.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Suggestion {
     pub message: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub edits: Vec<TextEdit>,
+}
+
+/// Structured core data projected into LSP diagnostic `data.cjlsp` for IDE and AI consumers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CjLspDiagnosticData {
+    pub schema_version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual: Option<String>,
+    pub candidates: Vec<String>,
+    pub suggestions: Vec<Suggestion>,
+}
+
+impl CjLspDiagnosticData {
+    pub fn from_diag(d: &Diag) -> Self {
+        Self {
+            schema_version: 1,
+            code: d.code.map(|s| s.to_string()),
+            category: d.category.map(|s| s.to_string()),
+            expected: d.expected.clone(),
+            actual: d.actual.clone(),
+            candidates: d.candidates.clone(),
+            suggestions: d.suggestions.clone(),
+        }
+    }
 }
 
 /// A single diagnostic message with an optional source range.
@@ -213,6 +253,31 @@ impl Diag {
         self
     }
 
+    pub fn with_expected(mut self, expected: impl Into<String>) -> Self {
+        self.expected = Some(expected.into());
+        self
+    }
+
+    pub fn with_actual(mut self, actual: impl Into<String>) -> Self {
+        self.actual = Some(actual.into());
+        self
+    }
+
+    pub fn with_candidate(mut self, candidate: impl Into<String>) -> Self {
+        self.candidates.push(candidate.into());
+        self
+    }
+
+    pub fn with_suggestion(mut self, suggestion: Suggestion) -> Self {
+        self.suggestions.push(suggestion);
+        self
+    }
+
+    pub fn with_related_location(mut self, location: RelatedLocation) -> Self {
+        self.related_locations.push(location);
+        self
+    }
+
     pub fn source_range(&self) -> SourceRange {
         SourceRange {
             start: Position {
@@ -225,6 +290,142 @@ impl Diag {
             },
         }
     }
+
+    pub fn lsp_message(&self) -> String {
+        const TOPLEVEL_NOTE: &str =
+            "only declarations or macro expressions can be used in the top-level";
+        for n in &self.notes {
+            if n == TOPLEVEL_NOTE {
+                return format!("{}, {}", self.message, n);
+            }
+        }
+        self.message.clone()
+    }
+
+    pub fn cjlsp_data(&self) -> CjLspDiagnosticData {
+        CjLspDiagnosticData::from_diag(self)
+    }
+
+    pub fn to_lsp_diagnostic(
+        &self,
+        uri: &str,
+        code_actions: Option<serde_json::Value>,
+        extra_related: Option<&serde_json::Value>,
+    ) -> serde_json::Value {
+        to_lsp_diagnostic(self, uri, code_actions, extra_related)
+    }
+}
+
+/// Projects a `Diag` into a canonical LSP Diagnostic JSON object, maintaining backward compatibility
+/// with official HLT test suites while embedding structured diagnostics in `data.cjlsp`.
+pub fn to_lsp_diagnostic(
+    diag: &Diag,
+    uri: &str,
+    code_actions: Option<serde_json::Value>,
+    extra_related: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let severity = diag.severity.lsp_severity();
+    let end_col = if diag.end_col > diag.col {
+        diag.end_col
+    } else {
+        diag.col + 1
+    };
+
+    let range = serde_json::json!({
+        "start": {
+            "line": diag.line.saturating_sub(1),
+            "character": diag.col.saturating_sub(1)
+        },
+        "end": {
+            "line": diag.end_line.saturating_sub(1),
+            "character": end_col.saturating_sub(1)
+        }
+    });
+
+    let cjlsp = diag.cjlsp_data();
+    let message = diag.lsp_message();
+
+    let mut related_infos: Vec<serde_json::Value> = Vec::new();
+    for rel in &diag.related_locations {
+        let file = if rel.location.file.is_empty() {
+            uri
+        } else {
+            &rel.location.file
+        };
+        let start_line = rel.location.range.start.line.saturating_sub(1);
+        let start_col = rel.location.range.start.column.saturating_sub(1);
+        let end_line = rel.location.range.end.line.saturating_sub(1);
+        let end_col = if rel.location.range.end.line == rel.location.range.start.line
+            && rel.location.range.end.column <= rel.location.range.start.column
+            && rel.location.range.start.column > 0
+        {
+            rel.location.range.start.column + 1
+        } else {
+            rel.location.range.end.column
+        }
+        .saturating_sub(1);
+
+        related_infos.push(serde_json::json!({
+            "location": {
+                "uri": file,
+                "range": {
+                    "start": { "line": start_line, "character": start_col },
+                    "end": { "line": end_line, "character": end_col }
+                }
+            },
+            "message": rel.message.as_deref().unwrap_or("")
+        }));
+    }
+
+    if let Some(extra) = extra_related {
+        if let Some(arr) = extra.as_array() {
+            related_infos.extend(arr.iter().cloned());
+        } else {
+            related_infos.push(extra.clone());
+        }
+    }
+
+    let mut obj = if diag.fix.is_some() {
+        let ca = code_actions.unwrap_or(serde_json::Value::Null);
+        let tags = if diag.tags.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::json!(diag.tags)
+        };
+        serde_json::json!({
+            "code": 0,
+            "codeActions": ca.clone(),
+            "data": {
+                "codeActions": ca,
+                "cjlsp": cjlsp,
+            },
+            "message": message,
+            "range": range,
+            "severity": severity,
+            "source": "Cangjie",
+            "tags": tags,
+        })
+    } else {
+        serde_json::json!({
+            "category": serde_json::Value::Null,
+            "code": serde_json::Value::Null,
+            "codeActions": serde_json::Value::Null,
+            "range": range,
+            "severity": severity,
+            "message": message,
+            "source": "Cangjie",
+            "data": {
+                "codeActions": serde_json::Value::Null,
+                "cjlsp": cjlsp,
+            }
+        })
+    };
+
+    if !related_infos.is_empty() {
+        obj["relatedInformation"] = serde_json::Value::Array(related_infos);
+    }
+
+    obj
 }
 
 #[derive(Serialize)]
@@ -436,5 +637,129 @@ error: expected declaration, found '@!'
         );
         assert!(value["diagnostics"][0].get("relatedLocations").is_none());
         assert!(!json.contains(":null"));
+    }
+
+    #[test]
+    fn lsp_diagnostic_backward_compatible_and_structured() {
+        let mut d = Diag::error(2, 3, "expected declaration")
+            .with_span(2, 5)
+            .with_id(DiagId::PARSE_EXPECTED_DECL)
+            .with_expected("declaration")
+            .with_actual("expression")
+            .with_candidate("func declaration")
+            .with_note("only declarations or macro expressions can be used in the top-level");
+        d.suggestions.push(Suggestion {
+            message: "replace token".into(),
+            edits: vec![TextEdit {
+                location: SourceLocation {
+                    file: "file:///test.cj".into(),
+                    range: d.source_range(),
+                },
+                replacement: "func".into(),
+            }],
+        });
+
+        let lsp_diag = d.to_lsp_diagnostic("file:///test.cj", None, None);
+        // Top-level backward compatibility for official HLT suite
+        assert_eq!(lsp_diag["code"], serde_json::Value::Null);
+        assert_eq!(lsp_diag["category"], serde_json::Value::Null);
+        assert_eq!(lsp_diag["codeActions"], serde_json::Value::Null);
+        assert_eq!(lsp_diag["source"], "Cangjie");
+        assert_eq!(lsp_diag["severity"], 1);
+        assert_eq!(
+            lsp_diag["message"],
+            "expected declaration, only declarations or macro expressions can be used in the top-level"
+        );
+        assert_eq!(lsp_diag["range"]["start"]["line"], 1);
+        assert_eq!(lsp_diag["range"]["start"]["character"], 2);
+        assert_eq!(lsp_diag["range"]["end"]["line"], 1);
+        assert_eq!(lsp_diag["range"]["end"]["character"], 4);
+        assert!(lsp_diag.get("tags").is_none());
+        assert!(lsp_diag.get("relatedInformation").is_none());
+
+        // Structured data inside data.cjlsp
+        assert_eq!(lsp_diag["data"]["codeActions"], serde_json::Value::Null);
+        let cjlsp = &lsp_diag["data"]["cjlsp"];
+        assert_eq!(cjlsp["schemaVersion"], 1);
+        assert_eq!(cjlsp["code"], "parse_expected_decl");
+        assert_eq!(cjlsp["category"], "parser");
+        assert_eq!(cjlsp["expected"], "declaration");
+        assert_eq!(cjlsp["actual"], "expression");
+        assert_eq!(cjlsp["candidates"], serde_json::json!(["func declaration"]));
+        assert_eq!(cjlsp["suggestions"][0]["message"], "replace token");
+        assert_eq!(cjlsp["suggestions"][0]["edits"][0]["replacement"], "func");
+    }
+
+    #[test]
+    fn lsp_diagnostic_unused_symbol_backward_compatibility() {
+        let mut d =
+            Diag::warning(10, 5, "Variable 'x' is declared but never used").with_span(10, 6);
+        d.severity = Severity::Hint;
+        d.tags = vec![1];
+        d.fix = Some(DiagFix {
+            title: "Remove unused variable 'x'".into(),
+            kind: FixKind::Var,
+            start_line: 10,
+            start_col: 5,
+        });
+
+        let ca = serde_json::json!([{
+            "kind": "quickfix.removeUnusedSymbol",
+            "title": "Remove unused variable 'x'",
+        }]);
+
+        let lsp_diag = d.to_lsp_diagnostic("file:///test.cj", Some(ca.clone()), None);
+        assert_eq!(lsp_diag["code"], 0);
+        assert_eq!(lsp_diag["codeActions"], ca);
+        assert_eq!(lsp_diag["data"]["codeActions"], ca);
+        assert_eq!(lsp_diag["severity"], 4);
+        assert_eq!(lsp_diag["source"], "Cangjie");
+        assert_eq!(lsp_diag["tags"], serde_json::json!([1]));
+        assert!(lsp_diag.get("category").is_none());
+
+        // Structured data inside data.cjlsp
+        let cjlsp = &lsp_diag["data"]["cjlsp"];
+        assert_eq!(cjlsp["schemaVersion"], 1);
+        assert_eq!(cjlsp["candidates"], serde_json::json!([]));
+        assert_eq!(cjlsp["suggestions"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn lsp_diagnostic_related_locations_projection() {
+        let mut d = Diag::error(5, 1, "redefinition of 'foo'");
+        d.related_locations.push(RelatedLocation {
+            location: SourceLocation {
+                file: "file:///other.cj".into(),
+                range: SourceRange {
+                    start: Position { line: 1, column: 1 },
+                    end: Position { line: 1, column: 4 },
+                },
+            },
+            message: Some("previously declared here".into()),
+        });
+
+        let extra = serde_json::json!([{
+            "location": {
+                "uri": "file:///test.cj",
+                "range": {
+                    "start": { "line": 4, "character": 0 },
+                    "end": { "line": 4, "character": 3 }
+                }
+            },
+            "message": "note: extra info"
+        }]);
+
+        let lsp_diag = d.to_lsp_diagnostic("file:///test.cj", None, Some(&extra));
+        let ri = lsp_diag["relatedInformation"].as_array().expect("array");
+        assert_eq!(ri.len(), 2);
+        assert_eq!(ri[0]["location"]["uri"], "file:///other.cj");
+        assert_eq!(ri[0]["location"]["range"]["start"]["line"], 0);
+        assert_eq!(ri[0]["location"]["range"]["start"]["character"], 0);
+        assert_eq!(ri[0]["location"]["range"]["end"]["line"], 0);
+        assert_eq!(ri[0]["location"]["range"]["end"]["character"], 3);
+        assert_eq!(ri[0]["message"], "previously declared here");
+
+        assert_eq!(ri[1]["location"]["uri"], "file:///test.cj");
+        assert_eq!(ri[1]["message"], "note: extra info");
     }
 }

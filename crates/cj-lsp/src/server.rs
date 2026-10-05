@@ -1081,89 +1081,32 @@ fn analyze_source(
     all_diags.extend(macro_diags.iter().cloned());
     attach_expansion_notes(&mut all_diags, &expansions);
 
-    // Convert (line, col) 1-based -> LSP 0-based positions.
+    // Convert Diags to canonical LSP Diagnostic JSON using the unified structured projection.
     let mut out = Vec::new();
     let mut push = |d: &cj_diag::Diag| {
-        let severity = match d.severity {
-            cj_diag::Severity::Error => 1,
-            cj_diag::Severity::Warning => 2,
-            cj_diag::Severity::Note => 3,
-            cj_diag::Severity::Hint => 4,
-            cj_diag::Severity::Fatal => 1,
-        };
-        let end_col = if d.end_col > d.col {
-            d.end_col
-        } else {
-            d.col + 1
-        };
-        // LSP `relatedInformation` entries for the macro-expansion preview
-        // note. Only emitted when the diag actually carries that note (the
-        // official diagnostic key set stays unchanged for all other cases).
+        let code_actions = d
+            .fix
+            .as_ref()
+            .map(|fix| match compute_remove_range(src, &toks, fix) {
+                Some(((sl, sc), (el, ec))) => json!([{
+                    "edit": {
+                        "changes": {
+                            uri: [{
+                                "newText": "",
+                                "range": {
+                                    "start": {"line": sl, "character": sc},
+                                    "end": {"line": el, "character": ec}
+                                }
+                            }]
+                        }
+                    },
+                    "kind": "quickfix.removeUnusedSymbol",
+                    "title": fix.title,
+                }]),
+                None => Value::Null,
+            });
         let related = expansion_related_info(d, uri);
-        // Unused-declaration diagnostics carry `tags: [Unnecessary]` plus a
-        // `quickfix.removeUnusedSymbol` code action deleting the declaration.
-        // The official key set for these is `code/codeActions/data/message/
-        // range/severity/source/tags` — note there is NO `category` key, and
-        // `code` is 0. Other diagnostics keep the plain shape below.
-        if let Some(fix) = &d.fix {
-            let (ca, data) = match compute_remove_range(src, &toks, fix) {
-                Some(((sl, sc), (el, ec))) => {
-                    let ca = json!([{
-                        "edit": {
-                            "changes": {
-                                uri: [{
-                                    "newText": "",
-                                    "range": {
-                                        "start": {"line": sl, "character": sc},
-                                        "end": {"line": el, "character": ec}
-                                    }
-                                }]
-                            }
-                        },
-                        "kind": "quickfix.removeUnusedSymbol",
-                        "title": fix.title,
-                    }]);
-                    let cloned = ca.clone();
-                    (cloned, json!({"codeActions": ca}))
-                }
-                None => (Value::Null, Value::Null),
-            };
-            let mut obj = json!({
-                "code": 0,
-                "codeActions": ca,
-                "data": data,
-                "message": lsp_diag_message(d),
-                "range": {
-                    "start": {"line": d.line.saturating_sub(1), "character": d.col.saturating_sub(1)},
-                    "end": {"line": d.end_line.saturating_sub(1), "character": end_col.saturating_sub(1)}
-                },
-                "severity": severity,
-                "source": "Cangjie",
-                "tags": if d.tags.is_empty() { Value::Null } else { json!(d.tags) },
-            });
-            if let Some(ri) = related {
-                obj["relatedInformation"] = ri;
-            }
-            out.push(obj);
-        } else {
-            let mut obj = json!({
-                "category": null,
-                "code": null,
-                "codeActions": null,
-                "range": {
-                    "start": {"line": d.line.saturating_sub(1), "character": d.col.saturating_sub(1)},
-                    "end": {"line": d.end_line.saturating_sub(1), "character": end_col.saturating_sub(1)}
-                },
-                "severity": severity,
-                "message": lsp_diag_message(d),
-                "source": "Cangjie",
-                "data": {"codeActions": null}
-            });
-            if let Some(ri) = related {
-                obj["relatedInformation"] = ri;
-            }
-            out.push(obj);
-        }
+        out.push(d.to_lsp_diagnostic(uri, code_actions, related.as_ref()));
     };
     for d in &all_diags {
         push(d);
@@ -1175,17 +1118,9 @@ fn analyze_source(
 /// `SubDiagnostic` notes inline in the message (e.g. the top-level note
 /// `only declarations or macro expressions can be used in the top-level`
 /// appended to `expected declaration, found 'test06'` — 008/018). Other notes
-/// (redefinition `'X' is previously declared here`) are relatedInformation, not
-/// message suffixes, so only the known inline note is appended.
+#[allow(dead_code)]
 fn lsp_diag_message(d: &cj_diag::Diag) -> String {
-    const TOPLEVEL_NOTE: &str =
-        "only declarations or macro expressions can be used in the top-level";
-    for n in &d.notes {
-        if n == TOPLEVEL_NOTE {
-            return format!("{}, {}", d.message, n);
-        }
-    }
-    d.message.clone()
+    d.lsp_message()
 }
 
 /// Official macro-expansion note header (mirrors cjc DiagnosticEngine.h
@@ -1733,5 +1668,26 @@ mod tests {
         assert!(!labels.contains(&"main"));
 
         let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn analyze_source_projects_cjlsp_structured_diagnostics() {
+        let src = "package p\n\nlet x = 1\nlet x = 2\n";
+        let mut scan_cache = HashMap::new();
+        let diags = analyze_source(src, None, None, "file:///test.cj", &mut scan_cache);
+        assert!(!diags.is_empty());
+        for d in &diags {
+            // Backward compatibility
+            assert_eq!(d["source"], "Cangjie");
+            assert!(d["range"].is_object());
+            assert!(d["severity"].is_number());
+            assert!(d["message"].is_string());
+            assert!(d["data"].is_object());
+            // Structured data
+            let cjlsp = &d["data"]["cjlsp"];
+            assert_eq!(cjlsp["schemaVersion"], 1);
+            assert!(cjlsp["candidates"].is_array());
+            assert!(cjlsp["suggestions"].is_array());
+        }
     }
 }
