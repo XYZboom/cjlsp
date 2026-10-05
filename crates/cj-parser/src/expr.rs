@@ -16,7 +16,19 @@ pub fn parse_expr(p: &mut Parser) -> Expr {
 
 /// Parse an expression with a minimum precedence floor (0 = any).
 pub fn parse_expr_prec(p: &mut Parser, min_prec: u8) -> Expr {
-    let mut lhs = parse_unary(p);
+    parse_expr_prec_ctx(p, min_prec, false, false)
+}
+
+/// Internal Pratt parser. `allow_wildcard` is set while parsing a tuple on the
+/// left of `=`; `in_assignment_rhs` detects an unparenthesized assignment
+/// chain (`a = b = c`).
+fn parse_expr_prec_ctx(
+    p: &mut Parser,
+    min_prec: u8,
+    allow_wildcard: bool,
+    in_assignment_rhs: bool,
+) -> Expr {
+    let mut lhs = parse_unary(p, allow_wildcard);
     loop {
         let tok_kind = p.peek();
         // Handle assignment operators specially (right-assoc, precedence 0):
@@ -27,7 +39,21 @@ pub fn parse_expr_prec(p: &mut Parser, min_prec: u8) -> Expr {
                 break;
             }
             let assign_tok = p.advance();
-            let rhs = parse_expr_prec(p, 0);
+            if in_assignment_rhs {
+                p.error_id(
+                    &assign_tok,
+                    cj_diag::DiagId::PARSE_CHAINED_NONE_ASSOCIATIVE,
+                    &["assignment"],
+                );
+            }
+            if !is_assignment_target(&lhs, op == AssignOp::Assign) {
+                p.error_id(
+                    &assign_tok,
+                    cj_diag::DiagId::PARSE_INVALID_LEFT_HAND_EXPR,
+                    &[assign_tok.kind.literal()],
+                );
+            }
+            let rhs = parse_expr_prec_ctx(p, 0, false, true);
             let pos = cj_ast::CodePos::new(
                 assign_tok.begin.line,
                 assign_tok.begin.column,
@@ -78,7 +104,7 @@ pub fn parse_expr_prec(p: &mut Parser, min_prec: u8) -> Expr {
         let tok = p.advance();
         let is_right_assoc = tok_kind == TokenKind::COALESCING || tok_kind == TokenKind::EXP;
         let next_min = if is_right_assoc { prec } else { prec + 1 };
-        let rhs = parse_expr_prec(p, next_min);
+        let rhs = parse_expr_prec_ctx(p, next_min, false, false);
         let pos = cj_ast::CodePos::new(
             tok.begin.line,
             tok.begin.column,
@@ -112,11 +138,11 @@ pub fn parse_expr_prec(p: &mut Parser, min_prec: u8) -> Expr {
 }
 
 /// Parse a unary-prefix expression then fall through to postfix.
-fn parse_unary(p: &mut Parser) -> Expr {
+fn parse_unary(p: &mut Parser, allow_wildcard: bool) -> Expr {
     match p.peek() {
         TokenKind::SUB => {
             let tok = p.advance();
-            let inner = parse_unary(p);
+            let inner = parse_unary(p, false);
             return Expr::Unary {
                 op: UnOp::Neg,
                 inner: Box::new(inner),
@@ -125,7 +151,7 @@ fn parse_unary(p: &mut Parser) -> Expr {
         }
         TokenKind::ADD => {
             let tok = p.advance();
-            let inner = parse_unary(p);
+            let inner = parse_unary(p, false);
             return Expr::Unary {
                 op: UnOp::Pos,
                 inner: Box::new(inner),
@@ -134,7 +160,7 @@ fn parse_unary(p: &mut Parser) -> Expr {
         }
         TokenKind::NOT => {
             let tok = p.advance();
-            let inner = parse_unary(p);
+            let inner = parse_unary(p, false);
             return Expr::Unary {
                 op: UnOp::Not,
                 inner: Box::new(inner),
@@ -143,7 +169,7 @@ fn parse_unary(p: &mut Parser) -> Expr {
         }
         TokenKind::BITNOT => {
             let tok = p.advance();
-            let inner = parse_unary(p);
+            let inner = parse_unary(p, false);
             return Expr::Unary {
                 op: UnOp::BitNot,
                 inner: Box::new(inner),
@@ -153,7 +179,18 @@ fn parse_unary(p: &mut Parser) -> Expr {
         TokenKind::INCR | TokenKind::DECR => {
             // prefix `++x` / `--x`
             let tok = p.advance();
-            let inner = parse_unary(p);
+            let inner = parse_unary(p, false);
+            if !is_inc_dec_target(&inner) {
+                p.error_id(
+                    &tok,
+                    cj_diag::DiagId::PARSE_INVALID_INCRE_EXPR,
+                    &[if tok.kind == TokenKind::INCR {
+                        "increment"
+                    } else {
+                        "decrement"
+                    }],
+                );
+            }
             return Expr::IncOrDec {
                 is_inc: tok.kind == TokenKind::INCR,
                 is_prefix: true,
@@ -163,13 +200,18 @@ fn parse_unary(p: &mut Parser) -> Expr {
         }
         _ => {}
     }
-    parse_postfix(p)
+    parse_postfix(p, allow_wildcard)
 }
 
 /// Parse an atom then postfix chains (call / member / index / ...).
-fn parse_postfix(p: &mut Parser) -> Expr {
-    let mut e = parse_atom(p);
+fn parse_postfix(p: &mut Parser, allow_wildcard: bool) -> Expr {
+    let mut e = parse_atom(p, allow_wildcard);
     loop {
+        // A parenthesized expression on the next line starts a new statement;
+        // it is not a call suffix on the preceding expression.
+        if p.at(TokenKind::LPAREN) && line_break_before_next(p) {
+            break;
+        }
         match p.peek() {
             TokenKind::LPAREN => {
                 // Call
@@ -273,6 +315,17 @@ fn parse_postfix(p: &mut Parser) -> Expr {
             TokenKind::INCR | TokenKind::DECR => {
                 // postfix `x++` / `x--`
                 let tok = p.advance();
+                if !is_inc_dec_target(&e) {
+                    p.error_id(
+                        &tok,
+                        cj_diag::DiagId::PARSE_INVALID_INCRE_EXPR,
+                        &[if tok.kind == TokenKind::INCR {
+                            "increment"
+                        } else {
+                            "decrement"
+                        }],
+                    );
+                }
                 let pos = pos_of(&tok);
                 e = Expr::IncOrDec {
                     is_inc: tok.kind == TokenKind::INCR,
@@ -556,7 +609,7 @@ fn lt_is_generic_args(p: &Parser) -> bool {
 }
 
 /// Parse a primary expression (atom).
-fn parse_atom(p: &mut Parser) -> Expr {
+fn parse_atom(p: &mut Parser, allow_wildcard: bool) -> Expr {
     let tok = p.peek_token().clone();
     match tok.kind {
         TokenKind::INTEGER_LITERAL | TokenKind::FLOAT_LITERAL => {
@@ -586,8 +639,16 @@ fn parse_atom(p: &mut Parser) -> Expr {
             }
         }
         TokenKind::WILDCARD => {
-            // `_` as an expression (wildcard lvalue: `_ = 1`, or a discard).
+            // `_` is an expression only as a discard assignment target. Pattern
+            // wildcards are parsed by `parse_pattern` and never enter here.
             p.advance();
+            if !allow_wildcard && !p.at(TokenKind::ASSIGN) {
+                p.error_id(
+                    &tok,
+                    cj_diag::DiagId::PARSE_UNEXPECTED_EXPECTED_FOUND,
+                    &["_ wildcard", "expression", "wildcard"],
+                );
+            }
             Expr::Wildcard(pos_of(&tok))
         }
         TokenKind::UNSAFE => {
@@ -797,8 +858,9 @@ fn parse_atom(p: &mut Parser) -> Expr {
             Expr::MacroExpand { name, args, pos }
         }
         TokenKind::LPAREN => {
+            let tuple_assignment_lhs = allow_wildcard || paren_is_assignment_lhs(p);
             p.advance();
-            // empty parens `()` — the Unit value (spec Ch.02/Ch.05). Parse it
+            // Empty parens `()` are the Unit value (spec Ch.02/Ch.05). Parse it
             // as a Unit literal; the inner expression path would otherwise
             // call parse_atom on `)` and emit a spurious diagnostic.
             if p.at(TokenKind::RPAREN) {
@@ -817,11 +879,11 @@ fn parse_atom(p: &mut Parser) -> Expr {
                 // is a full expression including assignment). The COMMA that
                 // separates tuple elements has precedence 0 and is not an
                 // operator, so it still terminates the element expression.
-                let first = parse_expr_prec(p, 0);
+                let first = parse_expr_prec_ctx(p, 0, tuple_assignment_lhs, false);
                 if p.eat(TokenKind::COMMA) {
                     let mut elems = vec![first];
                     while !p.at(TokenKind::RPAREN) && !p.at(TokenKind::END) {
-                        elems.push(parse_expr_prec(p, 0));
+                        elems.push(parse_expr_prec_ctx(p, 0, tuple_assignment_lhs, false));
                         if !p.eat(TokenKind::COMMA) {
                             break;
                         }
@@ -891,7 +953,10 @@ fn parse_atom(p: &mut Parser) -> Expr {
                 }
             }
             let init = if p.eat(TokenKind::ASSIGN) {
-                parse_expr_prec(p, 1)
+                let start = p.peek_token().clone();
+                let init = parse_expr_prec(p, 0);
+                diagnose_assignment_initializer(p, &start, &init);
+                init
             } else if p.eat(TokenKind::BACKARROW) {
                 // pattern-match bind: `let Some(x) <- v` (spec Ch.12 if-let /
                 // match-with-pattern). Same shape as `=`, different operator.
@@ -1790,6 +1855,90 @@ pub fn is_expr_start(k: TokenKind) -> bool {
             | TokenKind::BITNOT
             | TokenKind::BOOL_LITERAL
     ) || is_primitive_type_kw(k)
+}
+
+/// Report a top-level assignment used as a declaration initializer/default.
+/// Parenthesized assignments are intentionally not classified as top-level.
+pub(crate) fn diagnose_assignment_initializer(
+    p: &mut Parser,
+    start: &cj_lexer::Token,
+    expr: &Expr,
+) {
+    if !matches!(expr, Expr::Assign { .. }) {
+        return;
+    }
+    let mut span = start.clone();
+    let end = p.prev_pos();
+    span.end.line = end.end_line;
+    span.end.column = end.end_col;
+    span.end.offset = end.end_offset;
+    p.error_id(&span, cj_diag::DiagId::PARSE_CANNOT_HAVE_ASSI_IN_INIT, &[]);
+}
+
+fn is_inc_dec_target(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Name { .. } | Expr::Member { .. } | Expr::Subscript { .. }
+    ) || matches!(expr, Expr::Paren { inner, .. } if is_inc_dec_target(inner))
+}
+
+fn is_assignment_target(expr: &Expr, allow_tuple_or_wildcard: bool) -> bool {
+    match expr {
+        Expr::Name { .. } | Expr::Member { .. } | Expr::Subscript { .. } => true,
+        Expr::Wildcard(_) => allow_tuple_or_wildcard,
+        Expr::Paren { inner, .. } => is_assignment_target(inner, allow_tuple_or_wildcard),
+        Expr::Tuple { elements, .. } if allow_tuple_or_wildcard => elements
+            .iter()
+            .all(|element| is_assignment_target(element, true)),
+        _ => false,
+    }
+}
+
+fn line_break_before_next(p: &Parser) -> bool {
+    let mut i = p.cursor();
+    let mut saw_line_break = false;
+    while i < p.token_len() {
+        match p.raw_kind_at(i) {
+            TokenKind::NL => saw_line_break = true,
+            TokenKind::COMMENT => {}
+            _ => break,
+        }
+        i += 1;
+    }
+    saw_line_break
+}
+
+/// Whether the `(` at the cursor closes immediately before an assignment.
+/// This lets wildcard tuple elements parse as discard lvalues without treating
+/// wildcard values in ordinary tuple expressions as legal.
+fn paren_is_assignment_lhs(p: &Parser) -> bool {
+    let mut i = p.cursor();
+    while matches!(p.raw_kind_at(i), TokenKind::COMMENT | TokenKind::NL) {
+        i += 1;
+    }
+    if p.raw_kind_at(i) != TokenKind::LPAREN {
+        return false;
+    }
+    let mut depth = 0usize;
+    while i < p.token_len() {
+        match p.raw_kind_at(i) {
+            TokenKind::LPAREN => depth += 1,
+            TokenKind::RPAREN => {
+                depth -= 1;
+                if depth == 0 {
+                    i += 1;
+                    while matches!(p.raw_kind_at(i), TokenKind::COMMENT | TokenKind::NL) {
+                        i += 1;
+                    }
+                    return assign_op_from_token(p.raw_kind_at(i)).is_some();
+                }
+            }
+            TokenKind::END => return false,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
 }
 
 fn pos_of(tok: &cj_lexer::Token) -> cj_ast::CodePos {

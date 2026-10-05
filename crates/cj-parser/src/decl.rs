@@ -1,6 +1,6 @@
 // cj-parser: declaration parsing.
 
-use super::expr::{parse_block_expr, parse_expr_prec};
+use super::expr::{diagnose_assignment_initializer, parse_block_expr, parse_expr_prec};
 use super::ty::parse_type;
 use super::Parser;
 use cj_ast::{Body, Decl, EnumCase, Expr, Param, Type, TypeParam};
@@ -282,7 +282,10 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
                     None
                 };
                 let init = if p.eat(TokenKind::ASSIGN) {
-                    Some(crate::expr::parse_expr_prec(p, 0))
+                    let start = p.peek_token().clone();
+                    let init = crate::expr::parse_expr_prec(p, 0);
+                    diagnose_assignment_initializer(p, &start, &init);
+                    Some(init)
                 } else {
                     None
                 };
@@ -325,7 +328,10 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
                 None
             };
             let init = if p.eat(TokenKind::ASSIGN) {
-                Some(parse_expr_prec(p, 0))
+                let start = p.peek_token().clone();
+                let init = parse_expr_prec(p, 0);
+                diagnose_assignment_initializer(p, &start, &init);
+                Some(init)
             } else {
                 None
             };
@@ -607,7 +613,10 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
                 None
             };
             let init = if p.eat(TokenKind::ASSIGN) {
-                Some(parse_expr_prec(p, 0))
+                let start = p.peek_token().clone();
+                let init = parse_expr_prec(p, 0);
+                diagnose_assignment_initializer(p, &start, &init);
+                Some(init)
             } else {
                 None
             };
@@ -773,7 +782,10 @@ fn parse_param_list(p: &mut Parser) -> Vec<Param> {
                     );
                 }
                 p.advance();
-                default = Some(parse_expr_prec(p, 0));
+                let start = p.peek_token().clone();
+                let value = parse_expr_prec(p, 0);
+                diagnose_assignment_initializer(p, &start, &value);
+                default = Some(value);
             }
             if is_named {
                 met_named = true;
