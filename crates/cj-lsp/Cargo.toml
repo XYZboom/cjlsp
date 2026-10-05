@@ -20,6 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 [dev-dependencies]
 criterion = "0.5"
+cj-frontend = { path = "../cj-frontend" }
 [[bench]]
 name = "bench_frontend"
 harness = false

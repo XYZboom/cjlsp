@@ -726,9 +726,7 @@ fn check_bare_type_in_expr(e: &Expr, type_names: &HashSet<String>) -> Vec<Diag> 
             diags.push(Diag::error(
                 pos.line,
                 pos.col,
-                format!(
-                    "expected member name or constructor call after '{name}' type name"
-                ),
+                format!("expected member name or constructor call after '{name}' type name"),
             ));
         }
     }

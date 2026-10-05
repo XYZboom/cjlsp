@@ -1,47 +1,19 @@
-//! Frontend performance benchmarks (T27): lexer / parser / LSP diagnostics.
+//! Frontend performance benchmarks.
 //!
-//! Run: `cargo bench -p cj-lsp`  (criterion; writes tools/bench_baseline.txt via
-//! the reporter harness if run from the repo root).
+//! Run the complete release-mode diagnostics benchmark with:
+//! `cargo bench -p cj-lsp --bench bench_frontend -- pipeline/full_diagnostics`
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use std::path::PathBuf;
 
-// ─── Sample sources ──────────────────────────────────────────────────────────
-
-/// A moderately large real-world Cangjie file (from the LLT suite).
-fn real_world_source() -> String {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/samples/large.cj");
-    match std::fs::read_to_string(&p) {
-        Ok(s) => s,
-        Err(_) => synthesized_source(), // fall back if samples missing
-    }
-}
-
-/// A synthesized Cangjie file with many declarations / expressions.
-fn synthesized_source() -> String {
-    let mut s = String::from("package bench\n\n");
-    for i in 0..200 {
-        s.push_str(&format!(
-            "public class C{i}<: Any {{\n    let x: Int64 = {i}\n    let y: Float64 = {i}.5\n    func add(a: Int64, b: Int64): Int64 {{\n        let t = a + b\n        if t > 1 {{ return t }} else {{ return {i} }}\n    }}\n}}\n\n"
-        ));
-    }
-    for i in 0..100 {
-        s.push_str(&format!(
-            "public func f{i}(a: Int64, b: String): String {{\n    let arr = [1, 2, 3, {i}]\n    let m = match a {{ 0 => \"zero\", _ => \"other\" }}\n    return b + m\n}}\n\n"
-        ));
-    }
-    s
-}
-
-// ─── Benchmarks ──────────────────────────────────────────────────────────────
+const NORMAL_SOURCE: &str = include_str!("../../../benchmarks/corpus/large_valid.cj");
+const DENSE_SOURCE: &str = include_str!("../../../benchmarks/corpus/diagnostic_dense.cj");
 
 fn bench_lexer(c: &mut Criterion) {
-    let src = real_world_source();
     let mut group = c.benchmark_group("lexer");
     group.sample_size(20);
-    group.bench_function("tokenize_real", |b| {
+    group.bench_function("tokenize_large_valid", |b| {
         b.iter(|| {
-            let mut lexer = cj_lexer::Lexer::new(black_box(&src));
+            let mut lexer = cj_lexer::Lexer::new(black_box(NORMAL_SOURCE));
             black_box(lexer.tokenize())
         })
     });
@@ -49,42 +21,37 @@ fn bench_lexer(c: &mut Criterion) {
 }
 
 fn bench_parser(c: &mut Criterion) {
-    let src = real_world_source();
+    let mut lexer = cj_lexer::Lexer::new(NORMAL_SOURCE);
+    let tokens = lexer.tokenize();
     let mut group = c.benchmark_group("parser");
     group.sample_size(20);
-    // Pre-tokenize once (lexer is bench_lexer's concern) to isolate parser cost.
-    let mut lexer = cj_lexer::Lexer::new(&src);
-    let tokens = lexer.tokenize();
-    group.bench_function("parse_real", |b| {
+    group.bench_function("parse_large_valid", |b| {
         b.iter(|| {
-            let mut p = cj_parser::Parser::new(black_box(&src), tokens.clone());
-            black_box(p.parse_file())
-        })
-    });
-    group.bench_function("parse_synthesized", |b| {
-        let s = synthesized_source();
-        let mut lx = cj_lexer::Lexer::new(&s);
-        let toks = lx.tokenize();
-        b.iter(|| {
-            let mut p = cj_parser::Parser::new(black_box(&s), toks.clone());
-            black_box(p.parse_file())
+            let mut parser = cj_parser::Parser::new(black_box(NORMAL_SOURCE), tokens.clone());
+            black_box(parser.parse_file())
         })
     });
     group.finish();
 }
 
-/// Full frontend pipeline: tokenize + parse + sema collector (what the LSP
-/// runs per didOpen). Uses the same entry the benchmark contract cares about.
+/// Lexer + parser + every source-local sema pass + SCAN text formatting.
 fn bench_pipeline(c: &mut Criterion) {
-    let src = real_world_source();
     let mut group = c.benchmark_group("pipeline");
     group.sample_size(20);
-    group.bench_function("tokenize_parse", |b| {
+    group.bench_function("full_diagnostics_large_valid", |b| {
         b.iter(|| {
-            let mut lexer = cj_lexer::Lexer::new(black_box(&src));
-            let tokens = lexer.tokenize();
-            let mut p = cj_parser::Parser::new(&src, tokens);
-            black_box(p.parse_file())
+            black_box(cj_frontend::analyze_source(
+                black_box(NORMAL_SOURCE),
+                "large_valid.cj",
+            ))
+        })
+    });
+    group.bench_function("full_diagnostics_dense", |b| {
+        b.iter(|| {
+            black_box(cj_frontend::analyze_source(
+                black_box(DENSE_SOURCE),
+                "diagnostic_dense.cj",
+            ))
         })
     });
     group.finish();

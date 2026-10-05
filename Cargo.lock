@@ -124,6 +124,7 @@ dependencies = [
  "cj-ast",
  "cj-cfg",
  "cj-diag",
+ "cj-frontend",
  "cj-lexer",
  "cj-parser",
  "cj-sema",

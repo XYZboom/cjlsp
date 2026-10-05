@@ -97,6 +97,7 @@ CI=1 ./tools/ci.sh       # 非交互（行为相同）
 | 1 | 格式检查 | `cargo fmt --all --check` | 不允许有格式差异 |
 | 2 | Clippy | `cargo clippy --workspace -- -D warnings` | 警告即错误 |
 | 3 | 单元 / 集成测试 | `cargo test --workspace` | 输出通过用例计数 |
+| 3b | 前端性能门禁 | `python3 tools/perf_gate.py ... --max-ratio 1.05` | 完整诊断流水线；仅在提供同机基线时启用 |
 | 4 | LSP 诊断覆盖率 | `python3 tools/lsp_cov.py` | 覆盖率不得低于 75% |
 | 5 | 宏展开 E2E | `python3 tools/test_macro_e2e.py` | 未解析宏被正确报告 |
 | 5b | 宏预览 note E2E | `python3 tools/test_macro_preview.py` | 展开后的代码预览 note |
@@ -115,7 +116,30 @@ CI=1 ./tools/ci.sh       # 非交互（行为相同）
 - `rustup target list --installed` 含 `x86_64-pc-windows-gnu`
 
 **环境变量**：`SCAN_DIR`（步骤 6 的用例目录，默认指向本机官方测试仓）、
-`FEATURE_FULL=1`（步骤 7 跑全量功能用例而非 smoke）。
+`FEATURE_FULL=1`（步骤 7 跑全量功能用例而非 smoke）。性能门禁默认明确跳过，避免
+把不同机器的绝对耗时或单次噪声当成回归；以下任一方式可启用：
+
+- `PERF_BASELINE_FILE=<同机基线输出>`：CI 在 release 模式运行当前完整流水线 benchmark，
+  然后以各 benchmark 的样本中位数比较，任一 `head / baseline > 1.05` 即失败。
+- 同时设置 `PERF_BASELINE_FILE` 与 `PERF_HEAD_FILE`：比较两份已有的 Criterion 输出或
+  `benchmark value unit` 样本文件。
+- 同时设置 `PERF_BASELINE_COMMAND` 与 `PERF_HEAD_COMMAND`：两个命令在当前 runner
+  顺序执行并比较输出，适合 CI 中对基线 commit 与当前 commit 做同机 A/B。
+
+完整诊断 benchmark 使用仓库内固定语料
+`benchmarks/corpus/{large_valid,diagnostic_dense}.cj`，覆盖 lexer、parser、全部源码内
+sema 检查和 SCAN 文本格式化。手工采样与门禁示例：
+
+```bash
+cargo bench -p cj-lsp --bench bench_frontend -- \
+  'pipeline/full_diagnostics' --noplot > target/perf-baseline.txt
+# 切换到待测版本后运行同一命令，输出到 target/perf-head.txt
+python3 tools/perf_gate.py \
+  --baseline target/perf-baseline.txt --head target/perf-head.txt --max-ratio 1.05
+```
+
+`tools/bench_baseline.txt` 保存一次真实运行用于审计和 smoke；跨机器 CI 不应直接将其
+作为硬阈值，应在同一 runner 生成/恢复对应基线。
 
 > 已知良性提示：Windows debug 链接时 mingw ld 可能打印
 > `corrupt .drectve at end of def file`（release 链接不出现），是 ld 的误报，

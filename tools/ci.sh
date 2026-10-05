@@ -74,6 +74,41 @@ else
 fi
 SUMMARY+=("cargo-test|$TEST_RC")
 
+# 3b. Frontend performance gate. It is intentionally explicit: absolute
+# timings from a different host are not comparable. CI either supplies sample
+# files from the same runner, or two commands which both execute on this host.
+# Criterion's own median and perf_gate.py's median across repeated command
+# samples keep a single noisy observation from deciding the result.
+if [ -n "${PERF_BASELINE_COMMAND:-}" ] || [ -n "${PERF_HEAD_COMMAND:-}" ]; then
+  if [ -z "${PERF_BASELINE_COMMAND:-}" ] || [ -z "${PERF_HEAD_COMMAND:-}" ]; then
+    FAIL=$((FAIL + 1)); echo "FAIL  frontend performance (both PERF_*_COMMAND variables required)"
+    SUMMARY+=("frontend-perf|2")
+  else
+    step "frontend performance (max 1.05x, same host)" python3 tools/perf_gate.py \
+      --baseline-command "$PERF_BASELINE_COMMAND" \
+      --head-command "$PERF_HEAD_COMMAND" --max-ratio 1.05
+  fi
+elif [ -n "${PERF_BASELINE_FILE:-}" ]; then
+  if [ -n "${PERF_HEAD_FILE:-}" ]; then
+    step "frontend performance (max 1.05x)" python3 tools/perf_gate.py \
+      --baseline "$PERF_BASELINE_FILE" --head "$PERF_HEAD_FILE" --max-ratio 1.05
+  else
+    PERF_HEAD_TMP="target/perf-head.txt"
+    mkdir -p target
+    if cargo bench -p cj-lsp --bench bench_frontend -- \
+      'pipeline/full_diagnostics' --noplot >"$PERF_HEAD_TMP" 2>&1; then
+      step "frontend performance (max 1.05x)" python3 tools/perf_gate.py \
+        --baseline "$PERF_BASELINE_FILE" --head "$PERF_HEAD_TMP" --max-ratio 1.05
+    else
+      FAIL=$((FAIL + 1)); echo "FAIL  frontend performance benchmark"
+      tail -20 "$PERF_HEAD_TMP"
+      SUMMARY+=("frontend-perf|1")
+    fi
+  fi
+else
+  echo "SKIP  frontend performance (set PERF_BASELINE_FILE or same-host PERF_*_COMMAND)"
+fi
+
 # 4. LSP diagnostics coverage (must not regress below 75%).
 COV_OUT="$(timeout 300 python3 tools/lsp_cov.py 2>&1)"
 COV_RC=$?
