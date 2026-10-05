@@ -448,13 +448,22 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
         }
         TokenKind::EXTEND => {
             p.advance();
-            // optional generic type params: `extend<U> A<U> {` / `extend<K> A<K>`
-            let _type_params = parse_type_params(p);
+            // Extend has no generated type_params field, so preserve generic
+            // parameters as marker members for lexical-scope consumers.
+            let type_params = parse_type_params(p);
             let target = parse_type(p);
             // optional parent types: `extend Int64 <: Eqq { ... }`
             let _parents = parse_parents(p);
             parse_where_clause(p);
-            let members = parse_class_body(p);
+            let mut members = parse_class_body(p);
+            members.splice(
+                0..0,
+                type_params.into_iter().map(|tp| Decl::GenericParam {
+                    name: tp.name,
+                    bounds: tp.bounds,
+                    pos: tp.pos,
+                }),
+            );
             Some(Decl::Extend {
                 is_public,
                 target,
