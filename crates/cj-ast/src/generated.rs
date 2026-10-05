@@ -658,6 +658,8 @@ pub enum Expr {
     },
     /// INVALID_EXPR
     Invalid(CodePos),
+    /// Declaration nested in an expression block.
+    LocalDecl { decl: Box<Decl>, pos: CodePos },
 }
 
 /// Declaration node.

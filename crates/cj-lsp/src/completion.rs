@@ -2082,6 +2082,35 @@ fn collect_lets_in_block(
 ) {
     for e in exprs {
         match e {
+            Expr::LocalDecl { decl, pos } if pos.line <= cursor_line + 1 => {
+                if let Decl::Func {
+                    name,
+                    type_params,
+                    params,
+                    ret,
+                    body,
+                    ..
+                } = decl.as_ref()
+                {
+                    let param_types: HashMap<&str, String> = params
+                        .iter()
+                        .map(|param| (param.name.as_str(), display_type(&param.ty)))
+                        .collect();
+                    let ret_display = ret
+                        .as_ref()
+                        .map(display_type)
+                        .or_else(|| infer_local_func_ret(body, &param_types));
+                    emit_func_items(
+                        name,
+                        "",
+                        params,
+                        ret_display.as_deref(),
+                        type_params,
+                        cands,
+                        seen,
+                    );
+                }
+            }
             Expr::LetPatternDestructor { patterns, pos, .. } => {
                 if pos.line <= cursor_line {
                     for p in patterns {
@@ -2152,6 +2181,47 @@ fn collect_lets_in_block(
             }
             _ => {}
         }
+    }
+}
+
+fn infer_local_func_ret(body: &Body, params: &HashMap<&str, String>) -> Option<String> {
+    match body {
+        Body::Block(stmts) => stmts
+            .last()
+            .and_then(|expr| infer_local_expr_type(expr, params)),
+        Body::Empty => None,
+    }
+}
+
+fn infer_local_expr_type(expr: &Expr, params: &HashMap<&str, String>) -> Option<String> {
+    match expr {
+        Expr::Name { name, .. } => params.get(name.as_str()).cloned(),
+        Expr::Lit { kind, .. } => Some(
+            match kind {
+                LitKind::String | LitKind::JString => "String",
+                LitKind::Rune | LitKind::RuneByte => "Rune",
+                LitKind::Bool => "Bool",
+                LitKind::Float => "Float64",
+                LitKind::Unit => "Unit",
+                LitKind::None => "None",
+                LitKind::Integer => "Int64",
+            }
+            .to_string(),
+        ),
+        Expr::Paren { inner, .. }
+        | Expr::Unary { inner, .. }
+        | Expr::Return {
+            value: Some(inner), ..
+        } => infer_local_expr_type(inner, params),
+        Expr::Binary { lhs, rhs, .. } => {
+            let left = infer_local_expr_type(lhs, params)?;
+            let right = infer_local_expr_type(rhs, params)?;
+            (left == right).then_some(left)
+        }
+        Expr::Block { stmts, .. } => stmts
+            .last()
+            .and_then(|nested| infer_local_expr_type(nested, params)),
+        _ => None,
     }
 }
 
@@ -4147,5 +4217,28 @@ mod tests {
         let items = result.as_array().expect("package alias completion items");
 
         assert!(items.iter().any(|item| item["label"] == "AB"));
+    }
+
+    #[test]
+    fn local_function_is_available_in_completion_scope() {
+        let source = "func outer() { func add(a: Int32, b: Int32) { a + b }; add(1, 2) }";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let Decl::Func {
+            body: Body::Block(stmts),
+            ..
+        } = &file.decls[0]
+        else {
+            panic!("expected outer function");
+        };
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+
+        collect_lets_in_block(stmts, source, 0, &mut candidates, &mut seen);
+
+        assert!(candidates.iter().any(|candidate| {
+            candidate.label == "add(a: Int32, b: Int32)"
+                && candidate.detail == "func add(a: Int32, b: Int32): Int32"
+        }));
     }
 }

@@ -933,8 +933,13 @@ fn parse_atom(p: &mut Parser, allow_wildcard: bool) -> Expr {
             // branch (matches official ParseDecl's const-func handling).
             if tok.kind == TokenKind::CONST && p.peek_ahead(1) == TokenKind::FUNC {
                 let t = p.peek_token().clone();
-                let _ = crate::decl::parse_decl(p, false);
-                return Expr::Invalid(pos_of(&t));
+                return match crate::decl::parse_decl(p, false) {
+                    Some(decl) => Expr::LocalDecl {
+                        decl: Box::new(decl),
+                        pos: pos_of(&t),
+                    },
+                    None => Expr::Invalid(pos_of(&t)),
+                };
             }
             // `let pattern = expr` / `const pattern = expr` — LetPatternDestructor
             // (a statement-like expr); const is an immutable local
@@ -1069,11 +1074,14 @@ fn parse_atom(p: &mut Parser, allow_wildcard: bool) -> Expr {
         }
         TokenKind::FUNC => {
             // local function declaration inside a block: `func f() { ... }`.
-            // The AST has no local-decl expression node yet, so the decl is
-            // parsed (validating its tokens) and discarded as Invalid.
             let t = p.peek_token().clone();
-            let _ = crate::decl::parse_decl(p, false);
-            Expr::Invalid(pos_of(&t))
+            match crate::decl::parse_decl(p, false) {
+                Some(decl) => Expr::LocalDecl {
+                    decl: Box::new(decl),
+                    pos: pos_of(&t),
+                },
+                None => Expr::Invalid(pos_of(&t)),
+            }
         }
         TokenKind::END => {
             let pos = pos_of(&tok);

@@ -223,4 +223,24 @@ mod tests {
             assert!(diags.is_empty(), "case {name}: {diags:?}");
         }
     }
+
+    #[test]
+    fn preserves_local_function_declarations_in_blocks() {
+        let (file, diags) =
+            parse("func outer() { func add(a: Int32, b: Int32) { a + b }; add(1, 2) }");
+        assert!(diags.is_empty(), "diags: {diags:?}");
+        let Decl::Func {
+            body: Body::Block(stmts),
+            ..
+        } = &file.decls[0]
+        else {
+            panic!("expected outer function");
+        };
+
+        assert!(matches!(
+            &stmts[0],
+            Expr::LocalDecl { decl, .. }
+                if matches!(decl.as_ref(), Decl::Func { name, .. } if name == "add")
+        ));
+    }
 }
