@@ -1887,6 +1887,77 @@ fn collect_local_scope(
             }
         }
     }
+
+    collect_enclosing_member_scope(file, source, cursor_line, cands, seen);
+}
+
+/// Collect parameters and locals from the class/struct member containing the
+/// cursor. Constructor parameters are ordinary local bindings; collecting them
+/// before class members lets the local declaration win candidate de-duplication.
+fn collect_enclosing_member_scope(
+    file: &File,
+    source: &str,
+    cursor_line: u32,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    let docs = [(file, source)];
+    let Some((type_name, _)) = enclosing_type(&docs, cursor_line) else {
+        return;
+    };
+    let Some((_, decl)) = find_type_decl_in(&docs, &type_name) else {
+        return;
+    };
+    let members = match decl {
+        Decl::Class { members, .. } | Decl::Struct { members, .. } => members,
+        _ => return,
+    };
+    let cursor = cursor_line + 1;
+    let current = members
+        .iter()
+        .filter(|member| member_scope_start(member).is_some_and(|line| line <= cursor))
+        .max_by_key(|member| member_scope_start(member).unwrap_or(0));
+    let Some((params, body)) = current.and_then(member_params_body) else {
+        return;
+    };
+
+    for p in params {
+        push_candidate(
+            cands,
+            seen,
+            Candidate {
+                label: p.name.clone(),
+                kind: KIND_VARIABLE,
+                detail: format!("let {}: {}", p.name, display_type(&p.ty)),
+                insert_text: p.name.clone(),
+                insert_text_format: 1,
+                filter_text: p.name.clone(),
+            },
+        );
+    }
+    if let Body::Block(exprs) = body {
+        collect_lets_in_block(exprs, source, cursor_line, cands, seen);
+    }
+}
+
+fn member_scope_start(member: &Decl) -> Option<u32> {
+    match member {
+        Decl::Func { pos, .. }
+        | Decl::Macro { pos, .. }
+        | Decl::PrimaryCtor { pos, .. }
+        | Decl::Var { pos, .. }
+        | Decl::Prop { pos, .. } => Some(pos.line),
+        _ => None,
+    }
+}
+
+fn member_params_body(member: &Decl) -> Option<(&[Param], &Body)> {
+    match member {
+        Decl::Func { params, body, .. }
+        | Decl::Macro { params, body, .. }
+        | Decl::PrimaryCtor { params, body, .. } => Some((params, body)),
+        _ => None,
+    }
 }
 
 /// Recursively collect let/var statements in a block of expressions.
@@ -3841,4 +3912,25 @@ fn item_json(c: &Candidate) -> Value {
         "sortText": "",
         "deprecated": deprecated,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constructor_param_shadows_inherited_member_in_completion() {
+        let source = "class Base {\n    var annotation: String = \"member\"\n}\nclass Child <: Base {\n    Child(name: String, annotation!: String = \"param\") {\n        super(name, annotation)\n        annot\n    }\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let result = complete_at(&file, source, 6, 13, None, &[], None, "file:///test.cj");
+        let items = result.as_array().expect("completion items");
+        let annotation: Vec<_> = items
+            .iter()
+            .filter(|item| item["label"] == "annotation")
+            .collect();
+
+        assert_eq!(annotation.len(), 1);
+        assert_eq!(annotation[0]["detail"], "let annotation: String");
+    }
 }
