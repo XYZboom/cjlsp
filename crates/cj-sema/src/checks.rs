@@ -301,15 +301,14 @@ fn check_used_before_init(file: &File) -> Vec<Diag> {
                     r.pos.line,
                     r.pos.col,
                     format!(
-                        "global/static variable '{}' is used before initialization \
-                         during initializing '{}'",
-                        later_name, cur_name
+                        "global/static variable '{later_name}' is used before initialization \
+                         during initializing '{cur_name}'"
                     ),
                 ));
                 diags.push(Diag::error(
                     r.pos.line,
                     r.pos.col,
-                    format!("variable '{}' is used before being defined", later_name),
+                    format!("variable '{later_name}' is used before being defined"),
                 ));
             }
         }
@@ -500,8 +499,7 @@ fn check_finalizers(file: &File, src: Option<&str>) -> Vec<Diag> {
                                             name_pos.line,
                                             col,
                                             format!(
-                                                "unexpected modifier '{}' on finalizer in class body",
-                                                kw
+                                                "unexpected modifier '{kw}' on finalizer in class body"
                                             ),
                                         ));
                                         break;
@@ -729,8 +727,7 @@ fn check_bare_type_in_expr(e: &Expr, type_names: &HashSet<String>) -> Vec<Diag> 
                 pos.line,
                 pos.col,
                 format!(
-                    "expected member name or constructor call after '{}' type name",
-                    name
+                    "expected member name or constructor call after '{name}' type name"
                 ),
             ));
         }

@@ -130,7 +130,7 @@ impl<'a> Resolver<'a> {
             Expr::Name { name, pos, .. } => {
                 // Resolve: local (seen so far) -> package top-level.
                 let local_hit = locals.contains_key(name) && seen.contains(name);
-                if !local_hit && !self.package.lookup(name).is_some() {
+                if !local_hit && self.package.lookup(name).is_none() {
                     // skip builtin-ish names (print, etc.) — refined later
                     if !is_known_builtin(name) {
                         diags.push(Diag::error(

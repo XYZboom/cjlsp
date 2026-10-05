@@ -225,19 +225,17 @@ pub fn parse_type(p: &mut Parser) -> Type {
                         pos,
                     }
                 }
+            } else if p.eat(TokenKind::ARROW) {
+                let ret = parse_type(p);
+                Type::Func {
+                    params: elems,
+                    ret: Box::new(ret),
+                    pos,
+                }
             } else {
-                if p.eat(TokenKind::ARROW) {
-                    let ret = parse_type(p);
-                    Type::Func {
-                        params: elems,
-                        ret: Box::new(ret),
-                        pos,
-                    }
-                } else {
-                    Type::Tuple {
-                        elements: elems,
-                        pos,
-                    }
+                Type::Tuple {
+                    elements: elems,
+                    pos,
                 }
             }
         }

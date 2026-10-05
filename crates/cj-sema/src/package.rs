@@ -35,7 +35,7 @@ pub fn check_package(file: &File, expected: Option<&str>) -> Vec<Diag> {
             diags.push(Diag::error(
                 line,
                 col,
-                format!("package name supposed to be '{}'", exp),
+                format!("package name supposed to be '{exp}'"),
             ));
         }
     }
@@ -57,9 +57,8 @@ pub fn check_package(file: &File, expected: Option<&str>) -> Vec<Diag> {
         if !is_self && !import_is_used(imp, used_names) {
             let pos = imp.pos;
             let msg = format!(
-                "unused import '{}', this warning can be suppressed by setting \
-                 the compiler option `-Woff unused`",
-                display
+                "unused import '{display}', this warning can be suppressed by setting \
+                 the compiler option `-Woff unused`"
             );
             diags.push(Diag {
                 severity: Severity::Hint,
@@ -83,7 +82,7 @@ pub fn check_package(file: &File, expected: Option<&str>) -> Vec<Diag> {
                     Diag::error(
                         name_pos.line,
                         name_pos.col,
-                        format!("can not find package '{}'", p),
+                        format!("can not find package '{p}'"),
                     )
                     .with_span(name_pos.end_line, name_pos.end_col),
                 );
@@ -132,10 +131,9 @@ fn check_import_conflicts(file: &File) -> Vec<Diag> {
                     pos.line,
                     pos.col,
                     format!(
-                        "imported decl '{}' is conflicted with other import, \
+                        "imported decl '{member}' is conflicted with other import, \
                          this warning can be suppressed by setting the \
-                         compiler option `-Woff package-import`",
-                        member
+                         compiler option `-Woff package-import`"
                     ),
                 ));
             }
@@ -178,7 +176,7 @@ fn import_members(imp: &ImportSpec) -> Vec<(String, cj_ast::CodePos)> {
 fn import_display(imp: &ImportSpec) -> String {
     let base = imp.path.join(".");
     if imp.glob {
-        format!("{}.*", base)
+        format!("{base}.*")
     } else if imp.selected.is_empty() {
         base
     } else {
@@ -228,13 +226,13 @@ fn import_is_used(imp: &ImportSpec, used: &HashSet<String>) -> bool {
         // Glob `a.b.*`: used if any reference is qualified through the package
         // (`a.b.X`) or equals a segment of the path.
         used.iter()
-            .any(|n| n == &full || n.starts_with(&format!("{}.", full)) || imp.path.contains(n))
+            .any(|n| n == &full || n.starts_with(&format!("{full}.")) || imp.path.contains(n))
     } else {
         // Single import `a.b.C`: used if the member name (last segment) or the
         // full path appears in references.
         let member = imp.path.last().expect("non-empty path");
         used.iter()
-            .any(|n| n == member || n == &full || n.starts_with(&format!("{}.", full)))
+            .any(|n| n == member || n == &full || n.starts_with(&format!("{full}.")))
     }
 }
 

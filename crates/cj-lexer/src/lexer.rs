@@ -1006,7 +1006,7 @@ impl<'a> Lexer<'a> {
                 // and the lexer keeps going (recovery). Record the error so
                 // LSP/CLI diagnostics surface it instead of a silent ILLEGAL.
                 self.errors.push(LexError {
-                    message: format!("unknown start of token: \\u{{{c:04X}}}", c = c),
+                    message: format!("unknown start of token: \\u{{{c:04X}}}"),
                     pos: begin,
                     is_warning: false,
                 });

@@ -2730,7 +2730,7 @@ fn render_default_expr(e: &Expr) -> String {
             cj_ast::LitKind::String | cj_ast::LitKind::JString => {
                 format!("\"{}\"", value.replace('"', "\\\""))
             }
-            cj_ast::LitKind::Rune | cj_ast::LitKind::RuneByte => format!("r'{}'", value),
+            cj_ast::LitKind::Rune | cj_ast::LitKind::RuneByte => format!("r'{value}'"),
             cj_ast::LitKind::Bool => value.clone(),
             cj_ast::LitKind::Unit => "()".to_string(),
             _ => value.clone(),

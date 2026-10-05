@@ -800,8 +800,7 @@ pub fn parse_source(src: &str) -> (File, Vec<Diag>) {
 
 impl<'a> Parser<'a> {
     pub fn run(&mut self) -> File {
-        let file = self.parse_file();
         // diags left in self for caller to take
-        file
+        self.parse_file()
     }
 }
