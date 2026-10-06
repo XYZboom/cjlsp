@@ -30,12 +30,32 @@ import tempfile
 import concurrent.futures
 from datetime import datetime
 
-BASE = os.environ.get("CANGJIE_TEST_BASE", "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp")
+DEFAULT_BASE = "/home/xyzboom/Code/Cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp" if os.path.exists("/home/xyzboom/Code/Cangjie/cangjie_test") else "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp"
+BASE = os.environ.get("CANGJIE_TEST_BASE", DEFAULT_BASE)
 LSP_TEST = os.path.join(BASE, "lsp_test.py")
 # Allow a worktree-local config override (parallel workers race on the shared
 # lsp_config.txt — point CFG at a private copy via CJLSP_CONFIG env).
-CFG = os.environ.get("CJLSP_CONFIG", os.path.join(BASE, "lsp_config.txt"))
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # cj-lang repo
+DEFAULT_CFG = os.path.join(BASE, "lsp_config.txt")
+CFG = os.environ.get("CJLSP_CONFIG")
+if not CFG:
+    # If default config contains unexpanded variables, auto-generate a worktree config
+    needs_auto = True
+    if os.path.exists(DEFAULT_CFG):
+        try:
+            with open(DEFAULT_CFG, encoding="utf-8", errors="ignore") as fh:
+                if "${" not in fh.read():
+                    needs_auto = False
+                    CFG = DEFAULT_CFG
+        except Exception:
+            pass
+    if needs_auto:
+        auto_cfg = f"/tmp/cjlsp-auto-config-{os.getuid()}.txt"
+        debug_dir = os.path.join(REPO, "target", "debug")
+        with open(auto_cfg, "w", encoding="utf-8") as fh:
+            fh.write(f"[lsp_server]\nwin_path = {debug_dir}\nlinux_path = {debug_dir}\n\n[log]\nlog_path = log.txt\n")
+        CFG = auto_cfg
+
 BASELINE_OUT = os.path.join(REPO, "tools", "feature_baseline.txt")
 RESULTS_ROOT = os.path.join(BASE, ".batch_results")
 SUMMARY = os.path.join(RESULTS_ROOT, "run_summary.json")
@@ -55,7 +75,15 @@ def run_one(info):
         shutil.copy(CFG, os.path.join(td, "lsp_config.txt"))
         # Make the rewritten uri/rootPath point at a REAL tree so the server's
         # same-package sibling scan (resolve_project_root + read_dir) works.
-        if os.path.isdir(CANGJIE_SRC):
+        test_root = os.path.join(BASE, "sourcecode", "cangjieTest")
+        if os.path.isdir(test_root):
+            for entry in os.listdir(test_root):
+                full_entry = os.path.join(test_root, entry)
+                if os.path.isdir(full_entry):
+                    link = os.path.join(td, entry)
+                    if not os.path.exists(link):
+                        os.symlink(full_entry, link)
+        elif os.path.isdir(CANGJIE_SRC):
             link = os.path.join(td, "cangjiesource")
             if not os.path.exists(link):
                 os.symlink(CANGJIE_SRC, link)

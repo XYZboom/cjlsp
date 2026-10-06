@@ -164,6 +164,7 @@ FIELDS: dict[str, list[tuple[str, str, str]]] = {
         ("name_pos", "CodePos", "position of the enum name token"),
         ("is_public", "bool", "public modifier"),
         ("type_params", "Vec<TypeParam>", "generic parameters"),
+        ("parents", "Vec<Type>", "parent types (<: A, B)"),
         ("cases", "Vec<EnumCase>", "enum cases"),
     ],
     "STRUCT_DECL": [
@@ -172,11 +173,14 @@ FIELDS: dict[str, list[tuple[str, str, str]]] = {
         ("is_public", "bool", "public modifier"),
         ("is_open", "bool", "open modifier"),
         ("type_params", "Vec<TypeParam>", "generic parameters"),
+        ("parents", "Vec<Type>", "parent types (<: A, B)"),
         ("members", "Vec<Decl>", "struct members"),
     ],
     "TYPE_ALIAS_DECL": [
         ("name", "String", "alias name"),
+        ("name_pos", "CodePos", "position of the alias name token"),
         ("is_public", "bool", "public modifier"),
+        ("type_params", "Vec<TypeParam>", "type parameters (generic alias: `type A<T> = ...`)"),
         ("target", "Type", "aliased type"),
     ],
     "PRIMARY_CTOR_DECL": [
@@ -639,6 +643,12 @@ def build() -> str:
                 w(f"        {rn}: {rt},")
             w(f"        pos: CodePos,")
             w(f"    }},")
+    # Official function bodies contain generic Node pointers and can therefore
+    # hold declarations. Body is Vec<Expr> in this Rust projection, so preserve
+    # local declarations through an explicit boxed bridge instead of dropping
+    # them as Invalid expressions.
+    w("    /// Declaration nested in an expression block.")
+    w("    LocalDecl { decl: Box<Decl>, pos: CodePos },")
     w("}")
     w("")
 

@@ -505,4 +505,29 @@ mod tests {
             assert_eq!(actual, expected, "case: {}", case.name);
         }
     }
+
+    #[test]
+    fn preserves_local_function_declarations_in_blocks() {
+        let source = "func outer() {\n    func add(a: Int32, b: Int32) { a + b }\n    const func twice(a: Int32) { a + a }\n    add(1, 2)\n}";
+        let (file, diags) = parse(source);
+        assert!(diags.is_empty(), "diags: {diags:?}");
+        let Decl::Func {
+            body: Body::Block(stmts),
+            ..
+        } = &file.decls[0]
+        else {
+            panic!("expected outer function");
+        };
+
+        assert!(matches!(
+            &stmts[0],
+            Expr::LocalDecl { decl, .. }
+                if matches!(decl.as_ref(), Decl::Func { name, .. } if name == "add")
+        ));
+        assert!(matches!(
+            &stmts[1],
+            Expr::LocalDecl { decl, .. }
+                if matches!(decl.as_ref(), Decl::Func { name, .. } if name == "twice")
+        ));
+    }
 }

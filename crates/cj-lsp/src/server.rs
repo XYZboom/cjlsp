@@ -173,6 +173,21 @@ impl LspServer {
             if !pkg.is_empty() && !imported.contains(&pkg) {
                 imported.push(pkg);
             }
+            // `import a.b.Type as Alias` is represented by the parser as the
+            // full dotted path. Include the containing package so completion
+            // can resolve the imported type/alias declaration.
+            if imp.path.len() > 1
+                && imp
+                    .path
+                    .last()
+                    .and_then(|segment| segment.chars().next())
+                    .is_some_and(char::is_uppercase)
+            {
+                let parent = imp.path[..imp.path.len() - 1].join(".");
+                if !parent.is_empty() && !imported.contains(&parent) {
+                    imported.push(parent);
+                }
+            }
         }
         let siblings = project_root.as_deref().map(|r| {
             let cache = self.scan_cache.entry(r.to_path_buf()).or_default();
@@ -396,12 +411,98 @@ impl LspServer {
             .to_string();
         let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
         let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
-        let Some((_, source)) = self.open_docs.get(&uri) else {
+        let Some((path, source)) = self.open_docs.get(&uri) else {
             return Value::Null;
         };
-        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let (path, source) = (path.clone(), source.clone());
+        let mut parser = cj_parser::Parser::new(&source, cj_lexer::Lexer::new(&source).tokenize());
         let file = parser.run();
-        crate::signature::signature_help_at(&file, source, line, character)
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let project_root = resolve_project_root(&cwd, &path);
+        let mut imported = Vec::new();
+        for import in &file.imports {
+            let package = import.path.join(".");
+            if !package.is_empty() && !imported.contains(&package) {
+                imported.push(package);
+            }
+            if import.path.len() > 1 {
+                let parent = import.path[..import.path.len() - 1].join(".");
+                if !parent.is_empty() && !imported.contains(&parent) {
+                    imported.push(parent);
+                }
+            }
+        }
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("import ") {
+                if let Some((target, _)) = rest.split_once(" as ") {
+                    let target = target.trim();
+                    if let Some((parent, _)) = target.rsplit_once('.') {
+                        if !imported.contains(&parent.to_string()) {
+                            imported.push(parent.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(root) = &project_root {
+            let cache = self.scan_cache.entry(root.to_path_buf()).or_default();
+            let _ = collect_same_package_candidates(
+                cache,
+                root,
+                file.package.as_deref(),
+                &imported,
+                &path.to_string_lossy(),
+            );
+            let mut changed = true;
+            while changed {
+                changed = false;
+                let current_imported = imported.clone();
+                for c in cache.values() {
+                    let pkg = c.package.as_deref().unwrap_or_default();
+                    if current_imported.iter().any(|i| i == pkg) {
+                        for imp in &c.file.imports {
+                            let p = imp.path.join(".");
+                            if !p.is_empty() && !imported.contains(&p) {
+                                imported.push(p);
+                                changed = true;
+                            }
+                            if imp.path.len() > 1 {
+                                let parent = imp.path[..imp.path.len() - 1].join(".");
+                                if !parent.is_empty() && !imported.contains(&parent) {
+                                    imported.push(parent);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if changed {
+                    let _ = collect_same_package_candidates(
+                        cache,
+                        root,
+                        file.package.as_deref(),
+                        &imported,
+                        &path.to_string_lossy(),
+                    );
+                }
+            }
+        }
+        let sibling_docs = project_root
+            .as_ref()
+            .and_then(|root| self.scan_cache.get(root).map(|cache| (root, cache)))
+            .map(|(root, cache)| {
+                collect_visible_sibling_docs(cache, root, file.package.as_deref(), &imported)
+            })
+            .unwrap_or_default();
+        crate::signature::signature_help_at(
+            &file,
+            &source,
+            line,
+            character,
+            &sibling_docs,
+            params.get("context"),
+        )
     }
 
     /// Handle textDocument/documentHighlight: highlight all occurrences of

@@ -58,6 +58,12 @@ const STD_CORE: &[StdSym] = &[
         ctors: &[],
     },
     StdSym {
+        name: "CType",
+        kind: KIND_INTERFACE,
+        detail: "public sealed open interface CType",
+        ctors: &[],
+    },
+    StdSym {
         name: "CFunc",
         kind: KIND_CLASS,
         detail: "public Type CFunc<T>",
@@ -726,13 +732,7 @@ const KEYWORDS: &[(&str, &str, u32, &str)] = &[
 // ─── Helper: safe char-boundary prefix extraction ────────────────────────
 pub fn prefix_at_line(line_text: &str, character: u32) -> String {
     let mut prefix = String::new();
-    let col = (character as usize).min(line_text.len());
-    // Walk back by chars from a valid char boundary at or before col.
-    let mut safe = col;
-    while safe > 0 && !line_text.is_char_boundary(safe) {
-        safe -= 1;
-    }
-    let before = &line_text[..safe];
+    let before = &line_text[..lsp_character_to_byte(line_text, character)];
     for ch in before.chars().rev() {
         if ch.is_alphanumeric() || ch == '_' {
             prefix.insert(0, ch);
@@ -741,6 +741,18 @@ pub fn prefix_at_line(line_text: &str, character: u32) -> String {
         }
     }
     prefix
+}
+
+fn lsp_character_to_byte(text: &str, character: u32) -> usize {
+    let target = character as usize;
+    let mut utf16_offset = 0;
+    for (byte_offset, ch) in text.char_indices() {
+        if utf16_offset >= target {
+            return byte_offset;
+        }
+        utf16_offset += ch.len_utf16();
+    }
+    text.len()
 }
 
 // ─── Helper: case-insensitive fuzzy subsequence match ─────────────────────
@@ -774,6 +786,18 @@ fn fuzzy_match(text: &str, pat: &str) -> bool {
 // ─── Helper: source line text (0-based line) ─────────────────────────────
 fn source_line_text(source: &str, line: u32) -> String {
     source.lines().nth(line as usize).unwrap_or("").to_string()
+}
+
+fn brace_depth_before_line(source: &str, line: u32) -> usize {
+    source
+        .lines()
+        .take(line as usize)
+        .flat_map(str::chars)
+        .fold(0, |depth, ch| match ch {
+            '{' => depth + 1,
+            '}' => depth.saturating_sub(1),
+            _ => depth,
+        })
 }
 
 // ─── Helper: type display (shared with hover) ────────────────────────────
@@ -1619,7 +1643,8 @@ fn collect_file_decls(
                 let ret_display = ret
                     .as_ref()
                     .map(display_type)
-                    .or_else(|| infer_func_ret(&local, body, 0));
+                    .or_else(|| infer_func_ret(&local, body, 0))
+                    .or_else(|| infer_func_ret_with_locals(&local, d));
                 emit_func_items(
                     name,
                     &dp,
@@ -1887,6 +1912,183 @@ fn collect_local_scope(
             }
         }
     }
+
+    // Top-level initializers may contain trailing lambdas. Their parameters
+    // are local bindings at the completion cursor (for example
+    // `Foo() { item => ite }`).
+    for d in &file.decls {
+        if let Decl::Var {
+            init: Some(init), ..
+        } = d
+        {
+            collect_lambda_params(init, cursor_line, cands, seen);
+        }
+    }
+
+    collect_enclosing_member_scope(file, source, cursor_line, cands, seen);
+    collect_enclosing_extend_scope(file, cursor_line, cands, seen);
+}
+
+fn collect_lambda_params(
+    expr: &Expr,
+    cursor_line: u32,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    match expr {
+        Expr::Lambda {
+            params, body, pos, ..
+        } => {
+            // CodePos is 1-based while LSP lines are 0-based. Limit this
+            // lightweight scope recovery to the lambda's line so parameters
+            // from earlier lambdas do not leak into later completions.
+            if pos.line == cursor_line + 1 {
+                for param in params {
+                    push_candidate(
+                        cands,
+                        seen,
+                        Candidate {
+                            label: param.name.clone(),
+                            kind: KIND_VARIABLE,
+                            detail: format!("let {}", param.name),
+                            insert_text: param.name.clone(),
+                            insert_text_format: 1,
+                            filter_text: param.name.clone(),
+                        },
+                    );
+                }
+            }
+            collect_lambda_params(body, cursor_line, cands, seen);
+        }
+        Expr::TrailingClosure { call, closure, .. } => {
+            collect_lambda_params(call, cursor_line, cands, seen);
+            collect_lambda_params(closure, cursor_line, cands, seen);
+        }
+        Expr::Call { callee, args, .. } => {
+            collect_lambda_params(callee, cursor_line, cands, seen);
+            for arg in args {
+                collect_lambda_params(&arg.value, cursor_line, cands, seen);
+            }
+        }
+        Expr::Block { stmts, .. } => {
+            for stmt in stmts {
+                collect_lambda_params(stmt, cursor_line, cands, seen);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Collect parameters and locals from the class/struct member containing the
+/// cursor. Constructor parameters are ordinary local bindings; collecting them
+/// before class members lets the local declaration win candidate de-duplication.
+fn collect_enclosing_member_scope(
+    file: &File,
+    source: &str,
+    cursor_line: u32,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    let docs = [(file, source)];
+    let Some((type_name, _)) = enclosing_type(&docs, cursor_line) else {
+        return;
+    };
+    let Some((_, decl)) = find_type_decl_in(&docs, &type_name) else {
+        return;
+    };
+    let members = match decl {
+        Decl::Class { members, .. } | Decl::Struct { members, .. } => members,
+        _ => return,
+    };
+    let cursor = cursor_line + 1;
+    let current = members
+        .iter()
+        .filter(|member| member_scope_start(member).is_some_and(|line| line <= cursor))
+        .max_by_key(|member| member_scope_start(member).unwrap_or(0));
+    let Some((params, body)) = current.and_then(member_params_body) else {
+        return;
+    };
+
+    for p in params {
+        push_candidate(
+            cands,
+            seen,
+            Candidate {
+                label: p.name.clone(),
+                kind: KIND_VARIABLE,
+                detail: format!("let {}: {}", p.name, display_type(&p.ty)),
+                insert_text: p.name.clone(),
+                insert_text_format: 1,
+                filter_text: p.name.clone(),
+            },
+        );
+    }
+    if let Body::Block(exprs) = body {
+        collect_lets_in_block(exprs, source, cursor_line, cands, seen);
+    }
+}
+
+fn member_scope_start(member: &Decl) -> Option<u32> {
+    match member {
+        Decl::Func { pos, .. }
+        | Decl::Macro { pos, .. }
+        | Decl::PrimaryCtor { pos, .. }
+        | Decl::Var { pos, .. }
+        | Decl::Prop { pos, .. } => Some(pos.line),
+        _ => None,
+    }
+}
+
+fn member_params_body(member: &Decl) -> Option<(&[Param], &Body)> {
+    match member {
+        Decl::Func { params, body, .. }
+        | Decl::Macro { params, body, .. }
+        | Decl::PrimaryCtor { params, body, .. } => Some((params, body)),
+        _ => None,
+    }
+}
+
+/// A property name is in scope inside its own getter/setter. Property bodies
+/// are not retained in the current AST, so recover the enclosing extend/member
+/// from declaration ordering and expose the property as a local binding.
+fn collect_enclosing_extend_scope(
+    file: &File,
+    cursor_line: u32,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    let cursor = cursor_line + 1;
+    let Some(decl) = file
+        .decls
+        .iter()
+        .filter(|decl| decl_pos(decl).line <= cursor)
+        .max_by_key(|decl| decl_pos(decl).line)
+    else {
+        return;
+    };
+    let Decl::Extend { members, .. } = decl else {
+        return;
+    };
+    let Some(Decl::Prop { name, ty, .. }) = members
+        .iter()
+        .filter(|member| decl_pos(member).line <= cursor)
+        .max_by_key(|member| decl_pos(member).line)
+    else {
+        return;
+    };
+
+    push_candidate(
+        cands,
+        seen,
+        Candidate {
+            label: name.clone(),
+            kind: KIND_VARIABLE,
+            detail: format!("let {name}: {}", display_type(ty)),
+            insert_text: name.clone(),
+            insert_text_format: 1,
+            filter_text: name.clone(),
+        },
+    );
 }
 
 /// Recursively collect let/var statements in a block of expressions.
@@ -1899,6 +2101,35 @@ fn collect_lets_in_block(
 ) {
     for e in exprs {
         match e {
+            Expr::LocalDecl { decl, pos } if pos.line <= cursor_line + 1 => {
+                if let Decl::Func {
+                    name,
+                    type_params,
+                    params,
+                    ret,
+                    body,
+                    ..
+                } = decl.as_ref()
+                {
+                    let param_types: HashMap<&str, String> = params
+                        .iter()
+                        .map(|param| (param.name.as_str(), display_type(&param.ty)))
+                        .collect();
+                    let ret_display = ret
+                        .as_ref()
+                        .map(display_type)
+                        .or_else(|| infer_local_func_ret(body, &param_types));
+                    emit_func_items(
+                        name,
+                        "",
+                        params,
+                        ret_display.as_deref(),
+                        type_params,
+                        cands,
+                        seen,
+                    );
+                }
+            }
             Expr::LetPatternDestructor { patterns, pos, .. } => {
                 if pos.line <= cursor_line {
                     for p in patterns {
@@ -1969,6 +2200,47 @@ fn collect_lets_in_block(
             }
             _ => {}
         }
+    }
+}
+
+fn infer_local_func_ret(body: &Body, params: &HashMap<&str, String>) -> Option<String> {
+    match body {
+        Body::Block(stmts) => stmts
+            .last()
+            .and_then(|expr| infer_local_expr_type(expr, params)),
+        Body::Empty => None,
+    }
+}
+
+fn infer_local_expr_type(expr: &Expr, params: &HashMap<&str, String>) -> Option<String> {
+    match expr {
+        Expr::Name { name, .. } => params.get(name.as_str()).cloned(),
+        Expr::Lit { kind, .. } => Some(
+            match kind {
+                LitKind::String | LitKind::JString => "String",
+                LitKind::Rune | LitKind::RuneByte => "Rune",
+                LitKind::Bool => "Bool",
+                LitKind::Float => "Float64",
+                LitKind::Unit => "Unit",
+                LitKind::None => "None",
+                LitKind::Integer => "Int64",
+            }
+            .to_string(),
+        ),
+        Expr::Paren { inner, .. }
+        | Expr::Unary { inner, .. }
+        | Expr::Return {
+            value: Some(inner), ..
+        } => infer_local_expr_type(inner, params),
+        Expr::Binary { lhs, rhs, .. } => {
+            let left = infer_local_expr_type(lhs, params)?;
+            let right = infer_local_expr_type(rhs, params)?;
+            (left == right).then_some(left)
+        }
+        Expr::Block { stmts, .. } => stmts
+            .last()
+            .and_then(|nested| infer_local_expr_type(nested, params)),
+        _ => None,
     }
 }
 
@@ -2076,6 +2348,90 @@ fn ctor_param_kind(source: &str, p: &Param) -> Option<bool> {
     }
 }
 
+fn display_name_with_type_args(name: &str, type_args: &[Type]) -> String {
+    if type_args.is_empty() {
+        name.to_string()
+    } else {
+        format!(
+            "{name}<{}>",
+            type_args
+                .iter()
+                .map(display_type)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+fn infer_constructor_instance_type(
+    docs: &Docs,
+    name: &str,
+    args: &[cj_ast::FuncArg],
+) -> Option<String> {
+    let (_, decl) = find_type_decl_in(docs, name)?;
+    let (type_params, members) = match decl {
+        Decl::Class {
+            type_params,
+            members,
+            ..
+        }
+        | Decl::Struct {
+            type_params,
+            members,
+            ..
+        } => (type_params, Some(members)),
+        Decl::Enum { type_params, .. } => (type_params, None),
+        _ => return None,
+    };
+    if type_params.is_empty() {
+        return None;
+    }
+
+    let argument_types = args
+        .iter()
+        .map(|arg| infer_expr_type(docs, &arg.value))
+        .collect::<Option<Vec<_>>>()?;
+    let constructor_params = members.and_then(|members| {
+        members.iter().find_map(|member| match member {
+            Decl::PrimaryCtor { params, .. } if params.len() == args.len() => Some(params),
+            Decl::Func {
+                name: constructor_name,
+                params,
+                ..
+            } if constructor_name == name && params.len() == args.len() => Some(params),
+            _ => None,
+        })
+    });
+
+    let inferred = if let Some(params) = constructor_params {
+        let mut inferred = vec![None; type_params.len()];
+        for (param, argument_type) in params.iter().zip(&argument_types) {
+            if let Type::Ref {
+                name: parameter_type,
+                args: nested,
+                ..
+            } = &param.ty
+            {
+                if nested.is_empty() {
+                    if let Some(index) = type_params
+                        .iter()
+                        .position(|type_param| type_param.name == *parameter_type)
+                    {
+                        inferred[index] = Some(argument_type.clone());
+                    }
+                }
+            }
+        }
+        inferred.into_iter().collect::<Option<Vec<_>>>()?
+    } else if type_params.len() == argument_types.len() {
+        argument_types
+    } else {
+        return None;
+    };
+
+    Some(format!("{name}<{}>", inferred.join(", ")))
+}
+
 /// Infer a display type string from an initializer expression.
 fn infer_expr_type(docs: &Docs, e: &Expr) -> Option<String> {
     infer_expr_type_d(docs, e, 0)
@@ -2109,14 +2465,19 @@ fn infer_expr_type_d(docs: &Docs, e: &Expr, depth: u32) -> Option<String> {
         Expr::Paren { inner, .. } => infer_expr_type_d(docs, inner, depth + 1),
         Expr::Unary { inner, .. } => infer_expr_type_d(docs, inner, depth + 1),
         Expr::Return { value: Some(v), .. } => infer_expr_type_d(docs, v, depth + 1),
-        Expr::Call { callee, .. } => match callee.as_ref() {
+        Expr::Call { callee, args, .. } => match callee.as_ref() {
             // `Type(...)` / `Type<T>(...)` -> instance of the type (ctor call).
-            Expr::Name { name, .. }
-                if find_type_decl_in(docs, name).is_some()
-                    || is_std_type(name)
-                    || is_std_enum(name) =>
+            Expr::Name {
+                name, type_args, ..
+            } if find_type_decl_in(docs, name).is_some()
+                || is_std_type(name)
+                || is_std_enum(name) =>
             {
-                Some(name.split('<').next().unwrap_or(name).to_string())
+                if type_args.is_empty() {
+                    infer_constructor_instance_type(docs, name, args).or_else(|| Some(name.clone()))
+                } else {
+                    Some(display_name_with_type_args(name, type_args))
+                }
             }
             // `foo(...)` -> the called function's return type when resolvable.
             Expr::Name { name, .. } => func_ret_type_by_name(docs, name, depth + 1),
@@ -2129,12 +2490,12 @@ fn infer_expr_type_d(docs: &Docs, e: &Expr, depth: u32) -> Option<String> {
         },
         Expr::Member { object, name, .. } => match object.as_ref() {
             // `Type.EnumCase` / `Type.staticMember` keeps the object's type
-            Expr::Name { name: obj, .. }
-                if find_type_decl_in(docs, obj).is_some()
-                    || is_std_type(obj)
-                    || is_std_enum(obj) =>
-            {
-                Some(obj.clone())
+            Expr::Name {
+                name: obj,
+                type_args,
+                ..
+            } if find_type_decl_in(docs, obj).is_some() || is_std_type(obj) || is_std_enum(obj) => {
+                Some(display_name_with_type_args(obj, type_args))
             }
             // `var.member` -> the member type of the variable's type
             Expr::Name { name: obj, .. } => {
@@ -2286,19 +2647,18 @@ fn collect_type_members(
                     docs, source, m, access, name, false, false, cross_pkg, cands, seen,
                 );
             }
-            // parents: base class / interfaces (instance members)
-            if access == AccessKind::Instance {
-                let parents: Vec<Type> = match decl {
-                    Decl::Class { parents, .. } => parents.clone(),
-                    _ => Vec::new(),
-                };
-                for p in parents {
-                    let pb = type_base_name(&p);
-                    if !seen.contains(&pb) {
-                        seen.insert(pb.clone());
-                        if let Some((pidx, pd)) = find_type_decl_in(docs, &pb) {
-                            collect_type_members(docs, pidx, pd, access, cands, seen);
-                        }
+            // Inherited static members are visible through the derived type,
+            // just like instance members are visible through its values.
+            let parents: Vec<Type> = match decl {
+                Decl::Class { parents, .. } => parents.clone(),
+                _ => Vec::new(),
+            };
+            for p in parents {
+                let pb = type_base_name(&p);
+                if !seen.contains(&pb) {
+                    seen.insert(pb.clone());
+                    if let Some((pidx, pd)) = find_type_decl_in(docs, &pb) {
+                        collect_type_members(docs, pidx, pd, access, cands, seen);
                     }
                 }
             }
@@ -2547,10 +2907,12 @@ fn emit_member_decl(
                 if decl_line_has(source, pos.offset, "mut") {
                     p.push_str("mut ");
                 }
-                if matches!(body, Body::Empty) {
-                    p.push_str("abstract ");
-                } else {
-                    p.push_str("open ");
+                if !*is_static {
+                    if matches!(body, Body::Empty) {
+                        p.push_str("abstract ");
+                    } else {
+                        p.push_str("open ");
+                    }
                 }
                 if *is_static {
                     p.push_str("static ");
@@ -2566,9 +2928,14 @@ fn emit_member_decl(
                 p
             };
             // Omitted return type -> infer from the method body's tail.
+            let param_types: HashMap<&str, String> = params
+                .iter()
+                .map(|param| (param.name.as_str(), display_type(&param.ty)))
+                .collect();
             let ret_display = ret
                 .as_ref()
                 .map(display_type)
+                .or_else(|| infer_local_func_ret(body, &param_types))
                 .or_else(|| infer_func_ret(docs, body, 0));
             emit_func_items(
                 name,
@@ -2861,6 +3228,87 @@ fn resolve_var_type(docs: &Docs, var_name: &str, line: u32) -> Option<String> {
         }
     }
     None
+}
+
+fn infer_func_ret_with_locals(docs: &Docs, func: &Decl) -> Option<String> {
+    let Decl::Func { params, body, .. } = func else {
+        return None;
+    };
+    let Body::Block(expressions) = body else {
+        return None;
+    };
+    let (tail, preceding) = expressions.split_last()?;
+    let mut locals: HashMap<String, String> = params
+        .iter()
+        .map(|param| (param.name.clone(), display_type(&param.ty)))
+        .collect();
+    for expression in preceding {
+        let Expr::LetPatternDestructor {
+            patterns,
+            initializer,
+            ..
+        } = expression
+        else {
+            continue;
+        };
+        let inferred = infer_expr_type_with_locals(docs, initializer, &locals);
+        for pattern in patterns {
+            if let Pattern::Var { name, ty, .. } = pattern {
+                if let Some(local_type) = ty.as_ref().map(display_type).or_else(|| inferred.clone())
+                {
+                    locals.insert(name.clone(), local_type);
+                }
+            }
+        }
+    }
+    infer_expr_type_with_locals(docs, tail, &locals)
+}
+
+fn infer_expr_type_with_locals(
+    docs: &Docs,
+    expression: &Expr,
+    locals: &HashMap<String, String>,
+) -> Option<String> {
+    match expression {
+        Expr::Name { name, .. } => locals
+            .get(name)
+            .cloned()
+            .or_else(|| infer_expr_type(docs, expression)),
+        Expr::Member { object, name, .. } => {
+            if let Expr::Name {
+                name: object_name, ..
+            } = object.as_ref()
+            {
+                if let Some(object_type) = locals.get(object_name) {
+                    return instantiated_member_type(docs, object_type, name);
+                }
+            }
+            infer_expr_type(docs, expression)
+        }
+        Expr::Return {
+            value: Some(value), ..
+        } => infer_expr_type_with_locals(docs, value, locals),
+        Expr::Paren { inner, .. } => infer_expr_type_with_locals(docs, inner, locals),
+        _ => infer_expr_type(docs, expression),
+    }
+}
+
+fn instantiated_member_type(docs: &Docs, receiver_type: &str, member: &str) -> Option<String> {
+    let base = base_of_type_str(receiver_type);
+    let args = type_args_of(receiver_type);
+    let (_, declaration) = find_type_decl_in(docs, base)?;
+    let type_params = match declaration {
+        Decl::Class { type_params, .. }
+        | Decl::Struct { type_params, .. }
+        | Decl::Interface { type_params, .. } => type_params,
+        _ => return member_type_of(docs, base, member, AccessKind::Instance),
+    };
+    let member_type = member_type_of(docs, base, member, AccessKind::Instance)?;
+    type_params
+        .iter()
+        .zip(args.iter())
+        .find_map(|(parameter, argument)| (member_type == parameter.name).then(|| argument.clone()))
+        .or(Some(member_type))
 }
 
 /// Collect params + local lets/vars of a top-level func into `out`.
@@ -3366,7 +3814,7 @@ fn collect_for_target(
         return;
     }
     match t.base.as_str() {
-        "Array" => collect_array_members(t.access, cands, seen),
+        "Array" => collect_array_members(docs, t.access, cands, seen),
         "String" => collect_string_members(docs, t.access, cands, seen),
         "Option" => collect_option_members(t.access, cands, seen),
         _ => {
@@ -3400,16 +3848,32 @@ pub fn complete_at(
 
     // Determine context: member access (after `.`) or plain prefix
     let line_text = source_line_text(source, line);
-    let col = (character as usize).min(line_text.len());
-    // Clamp to a char boundary (LSP character counts code points; the byte
-    // index may land inside a multi-byte char like `。`).
-    let mut col = col;
-    while col > 0 && !line_text.is_char_boundary(col) {
-        col -= 1;
-    }
+    let col = lsp_character_to_byte(&line_text, character);
     let before = &line_text[..col];
     let is_member_access = before.ends_with('.');
     let prefix = prefix_at_line(&line_text, character);
+
+    if before.trim_start().starts_with("package ") {
+        return package_declaration_completion(&docs, &prefix, uri);
+    }
+
+    let trimmed_before = before.trim_start();
+    let malformed_override_declaration = ["public ", "private ", "protected ", "internal "]
+        .iter()
+        .any(|modifier| trimmed_before.starts_with(modifier))
+        && trimmed_before
+            .split_whitespace()
+            .skip(1)
+            .any(|word| word.starts_with("overrid"))
+        && !trimmed_before.contains("func ");
+    let unsupported_pipeline_rhs = (trimmed_before.starts_with("let ")
+        || trimmed_before.starts_with("var "))
+        && before
+            .rsplit_once("|>")
+            .is_some_and(|(_, rhs)| rhs.trim() == prefix);
+    if !is_member_access && (unsupported_pipeline_rhs || malformed_override_declaration) {
+        return Value::Null;
+    }
 
     if is_member_access {
         let dot_idx = before.rfind('.').unwrap_or(0);
@@ -3417,7 +3881,19 @@ pub fn complete_at(
         if receiver.is_empty() {
             return Value::Null;
         }
-        collect_member_access(&docs, &receiver, line, &mut candidates, &mut seen);
+        if let Some(package) = import_completion_package(before) {
+            collect_package_contents(
+                &docs,
+                file.package.as_deref(),
+                package,
+                &mut candidates,
+                &mut seen,
+            );
+        } else if let Some(import_path) = import_alias_package(source, &receiver) {
+            collect_import_alias_access(&docs, import_path, &mut candidates, &mut seen);
+        } else {
+            collect_member_access(&docs, &receiver, line, &mut candidates, &mut seen);
+        }
     } else {
         // 1. File top-level decls
         collect_file_decls(file, source, &mut candidates, &mut seen);
@@ -3432,6 +3908,14 @@ pub fn complete_at(
 
         // 3. Local scope (params, let/var in function body)
         collect_local_scope(file, source, line, &mut candidates, &mut seen);
+
+        if source
+            .lines()
+            .nth(line as usize)
+            .is_some_and(|current_line| current_line.contains("<:"))
+        {
+            collect_inheritance_member_names(&docs, &prefix, &mut candidates, &mut seen);
+        }
 
         // 4. Class members in scope (if cursor inside a class/struct body)
         let doc0: &(&File, &str) = &(file, source);
@@ -3460,16 +3944,47 @@ pub fn complete_at(
         return Value::Null;
     }
 
+    let top_level_name_context =
+        before == prefix && !prefix.is_empty() && brace_depth_before_line(source, line) == 0;
+    let prefix_lower = prefix.to_ascii_lowercase();
+    if top_level_name_context
+        && !candidates.iter().any(|candidate| {
+            candidate.kind != KIND_METHOD
+                && candidate
+                    .filter_text
+                    .to_ascii_lowercase()
+                    .starts_with(&prefix_lower)
+        })
+    {
+        return Value::Null;
+    }
+
+    let string_extension_context = is_member_access
+        && file.decls.iter().any(|declaration| {
+            matches!(declaration, Decl::Extend { target, .. } if type_base_name(target) == "String")
+        });
+    let import_line = file
+        .package_pos
+        .as_ref()
+        .map_or(0, |position| position.line);
+
     // Prefix filter — fuzzy subsequence match (case-insensitive).
     // For member access, the client filters, so we don't filter here.
     let items: Vec<Value> = if !is_member_access {
         candidates
             .iter()
-            .filter(|c| fuzzy_match(&c.filter_text, &prefix))
-            .map(item_json)
+            .filter(|candidate| fuzzy_match(&candidate.filter_text, &prefix))
+            .map(|candidate| {
+                item_json_with_context(candidate, string_extension_context, import_line)
+            })
             .collect()
     } else {
-        candidates.iter().map(item_json).collect()
+        candidates
+            .iter()
+            .map(|candidate| {
+                item_json_with_context(candidate, string_extension_context, import_line)
+            })
+            .collect()
     };
 
     // Return null when no candidates (official behavior)
@@ -3478,6 +3993,346 @@ pub fn complete_at(
     }
     let _ = uri;
     json!(items)
+}
+
+fn package_declaration_completion(docs: &Docs, prefix: &str, uri: &str) -> Value {
+    let directory = Path::new(uri)
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    let visible_packages: Vec<&str> = docs
+        .iter()
+        .skip(1)
+        .filter_map(|(file, _)| file.package.as_deref())
+        .filter(|package| fuzzy_match(package, prefix))
+        .collect();
+    let package = directory
+        .and_then(|directory| {
+            visible_packages.iter().find_map(|package| {
+                if package.rsplit('.').next() == Some(directory) {
+                    return Some(*package);
+                }
+                let parent = package.rsplit_once('.')?.0;
+                (parent.rsplit('.').next() == Some(directory)).then_some(parent)
+            })
+        })
+        .or_else(|| {
+            visible_packages
+                .into_iter()
+                .min_by_key(|package| package.len())
+        });
+    let Some(package) = package else {
+        return Value::Null;
+    };
+    json!([{
+        "label": package,
+        "kind": KIND_MODULE,
+        "detail": "packageName",
+        "documentation": "",
+        "filterText": package,
+        "insertText": package,
+        "insertTextFormat": 1,
+        "sortText": "",
+        "deprecated": false
+    }])
+}
+
+fn collect_inheritance_member_names(
+    docs: &Docs,
+    prefix: &str,
+    candidates: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    for (file, source) in docs {
+        for decl in &file.decls {
+            let members = match decl {
+                Decl::Class { members, .. } | Decl::Struct { members, .. } => members,
+                _ => continue,
+            };
+            for member in members {
+                let Decl::Var {
+                    name,
+                    is_mutable,
+                    ty,
+                    init,
+                    pos,
+                    ..
+                } = member
+                else {
+                    continue;
+                };
+                if !fuzzy_match(name, prefix) {
+                    continue;
+                }
+                let keyword = if *is_mutable { "var" } else { "let" };
+                let type_suffix = ty
+                    .as_ref()
+                    .map(|member_type| format!(": {}", display_type(member_type)))
+                    .unwrap_or_default();
+                let init_suffix = if init.is_some() {
+                    let source_text = var_init_src(source, pos.line);
+                    if source_text.is_empty() {
+                        " = ...".to_string()
+                    } else {
+                        format!(" = {source_text}")
+                    }
+                } else {
+                    String::new()
+                };
+                push_candidate(
+                    candidates,
+                    seen,
+                    Candidate {
+                        label: name.clone(),
+                        kind: KIND_VARIABLE,
+                        detail: format!("{keyword} {name}{type_suffix}{init_suffix}"),
+                        insert_text: name.clone(),
+                        insert_text_format: 1,
+                        filter_text: name.clone(),
+                    },
+                );
+            }
+        }
+    }
+}
+
+fn import_alias_package<'a>(source: &'a str, alias: &str) -> Option<&'a str> {
+    source.lines().find_map(|line| {
+        let import = line.trim().strip_prefix("import ")?;
+        let (package, imported_alias) = import.split_once(" as ")?;
+        (imported_alias.trim() == alias).then(|| package.trim())
+    })
+}
+
+fn collect_import_alias_access(
+    docs: &Docs,
+    import_path: &str,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    let start = cands.len();
+    let mut matched_package = false;
+    for (doc, source) in docs {
+        if doc.package.as_deref() == Some(import_path) {
+            matched_package = true;
+            collect_file_decls(doc, source, cands, seen);
+        }
+    }
+    if matched_package {
+        for candidate in &mut cands[start..] {
+            if candidate.kind == KIND_VARIABLE {
+                if let Some((declaration, _)) = candidate.detail.split_once(" = ") {
+                    candidate.detail = declaration.to_string();
+                }
+            }
+        }
+        cands[start..].sort_by(|left, right| {
+            let rank = |candidate: &Candidate| match candidate.kind {
+                KIND_CLASS | KIND_STRUCT | KIND_INTERFACE | KIND_ENUM => 0,
+                KIND_FUNCTION => 1,
+                _ => 2,
+            };
+            rank(left)
+                .cmp(&rank(right))
+                .then_with(|| left.label.cmp(&right.label))
+        });
+        return;
+    }
+
+    let Some((package, symbol)) = import_path.rsplit_once('.') else {
+        return;
+    };
+    let imported = docs.iter().enumerate().find_map(|(idx, (doc, _))| {
+        (doc.package.as_deref() == Some(package))
+            .then(|| {
+                doc.decls.iter().find(|decl| match decl {
+                    Decl::Class { name, .. }
+                    | Decl::Struct { name, .. }
+                    | Decl::Interface { name, .. }
+                    | Decl::Enum { name, .. }
+                    | Decl::TypeAlias { name, .. } => name == symbol,
+                    _ => false,
+                })
+            })?
+            .map(|decl| (idx, decl))
+    });
+    let Some((idx, imported)) = imported else {
+        return;
+    };
+    let resolved = if let Decl::TypeAlias { target, .. } = imported {
+        let target_name = type_base_name(target);
+        docs.iter().enumerate().find_map(|(target_idx, (doc, _))| {
+            (doc.package.as_deref() == Some(package))
+                .then(|| {
+                    doc.decls.iter().find(|decl| match decl {
+                        Decl::Class { name, .. }
+                        | Decl::Struct { name, .. }
+                        | Decl::Interface { name, .. }
+                        | Decl::Enum { name, .. } => name == &target_name,
+                        _ => false,
+                    })
+                })?
+                .map(|decl| (target_idx, decl))
+        })
+    } else {
+        Some((idx, imported))
+    };
+    let Some((resolved_idx, decl)) = resolved else {
+        return;
+    };
+    let access = if matches!(decl, Decl::Enum { .. }) {
+        AccessKind::Enum
+    } else {
+        AccessKind::Static
+    };
+    collect_type_members(docs, resolved_idx, decl, access, cands, seen);
+}
+
+fn import_completion_package(before_cursor: &str) -> Option<&str> {
+    before_cursor
+        .trim()
+        .strip_prefix("import ")?
+        .strip_suffix('.')
+        .map(str::trim)
+        .filter(|package| !package.is_empty())
+}
+
+fn decl_is_public(decl: &Decl) -> bool {
+    match decl {
+        Decl::Class { is_public, .. }
+        | Decl::Struct { is_public, .. }
+        | Decl::Interface { is_public, .. }
+        | Decl::Enum { is_public, .. }
+        | Decl::TypeAlias { is_public, .. }
+        | Decl::Func { is_public, .. }
+        | Decl::Macro { is_public, .. }
+        | Decl::Var { is_public, .. }
+        | Decl::Prop { is_public, .. }
+        | Decl::Extend { is_public, .. } => *is_public,
+        _ => false,
+    }
+}
+
+fn collect_package_contents(
+    docs: &Docs,
+    current_package: Option<&str>,
+    package: &str,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    let start = cands.len();
+    let cross_package = current_package != Some(package);
+    for (doc, source) in docs {
+        if doc.package.as_deref() != Some(package) {
+            continue;
+        }
+        if cross_package {
+            let visible = File {
+                package: doc.package.clone(),
+                package_pos: doc.package_pos,
+                imports: Vec::new(),
+                decls: doc
+                    .decls
+                    .iter()
+                    .filter(|decl| decl_is_public(decl))
+                    .cloned()
+                    .collect(),
+                pos: doc.pos,
+            };
+            collect_file_decls(&visible, source, cands, seen);
+        } else {
+            collect_file_decls(doc, source, cands, seen);
+            collect_implicit_constructors(doc, cands, seen);
+        }
+    }
+
+    if !cross_package {
+        for candidate in &mut cands[start..] {
+            if matches!(
+                candidate.kind,
+                KIND_CLASS | KIND_STRUCT | KIND_INTERFACE | KIND_ENUM
+            ) && !candidate.detail.starts_with("public ")
+                && !candidate.detail.starts_with("internal ")
+            {
+                candidate.detail.insert_str(0, "internal ");
+            }
+        }
+    }
+
+    let prefix = format!("{package}.");
+    for (doc, _) in docs {
+        let Some(child) = doc.package.as_deref().and_then(|name| {
+            name.strip_prefix(&prefix)
+                .and_then(|suffix| suffix.split('.').next())
+        }) else {
+            continue;
+        };
+        if child.is_empty() {
+            continue;
+        }
+        push_candidate(
+            cands,
+            seen,
+            Candidate {
+                label: child.to_string(),
+                kind: KIND_MODULE,
+                detail: "packageName".to_string(),
+                insert_text: child.to_string(),
+                insert_text_format: 1,
+                filter_text: child.to_string(),
+            },
+        );
+    }
+
+    cands[start..].sort_by_key(|candidate| match candidate.kind {
+        KIND_CLASS | KIND_STRUCT | KIND_INTERFACE | KIND_ENUM => 0,
+        KIND_FUNCTION => 1,
+        KIND_MODULE => 2,
+        KIND_METHOD => 3,
+        _ => 4,
+    });
+}
+
+fn collect_implicit_constructors(
+    file: &File,
+    cands: &mut Vec<Candidate>,
+    seen: &mut HashSet<String>,
+) {
+    for declaration in &file.decls {
+        let (name, type_params, members) = match declaration {
+            Decl::Class {
+                name,
+                type_params,
+                members,
+                ..
+            }
+            | Decl::Struct {
+                name,
+                type_params,
+                members,
+                ..
+            } => (name, type_params, members),
+            _ => continue,
+        };
+        let has_constructor = members.iter().any(|member| {
+            matches!(member, Decl::PrimaryCtor { .. })
+                || matches!(member, Decl::Func { name: function_name, .. } if function_name == name)
+        });
+        if !has_constructor {
+            emit_ctor_items(
+                name,
+                &[],
+                cands,
+                seen,
+                true,
+                false,
+                false,
+                false,
+                type_params,
+                "init",
+            );
+        }
+    }
 }
 
 /// Extract the receiver expression immediately before the completion dot,
@@ -3592,6 +4447,7 @@ const ARRAY_MEMBERS: &[(&str, u32, &str, &str, u32, &str)] = &[
     ("none(predicate: (T) -> Bool)", 2, "public func none(predicate: (T) -> Bool): Bool", "none(${1:predicate: (T) -> Bool})", 2, "none"),
     ("printSize", 2, "", "printSize", 1, "printSize"),
     ("printSize()", 2, "public func printSize(): Unit", "printSize()", 1, "printSize"),
+
     ("reduce", 2, "", "reduce", 1, "reduce"),
     ("reduce { T, T => T }", 2, "public func reduce(operation: (T, T) -> T): Option<T>", "reduce { arg1: T, arg2: T => ${1:T} }", 2, "reduce"),
     ("reduce(operation: (T, T) -> T)", 2, "public func reduce(operation: (T, T) -> T): Option<T>", "reduce(${1:operation: (T, T) -> T})", 2, "reduce"),
@@ -3606,6 +4462,7 @@ const ARRAY_MEMBERS: &[(&str, u32, &str, &str, u32, &str)] = &[
     ("size", 6, "public let size: Int64", "size", 1, "size"),
     ("size1", 2, "", "size1", 1, "size1"),
     ("size1()", 2, "public func size1(): Unit", "size1()", 1, "size1"),
+
     ("skip", 2, "", "skip", 1, "skip"),
     ("skip(count: Int64)", 2, "public func skip(count: Int64): Array<T>", "skip(${1:count: Int64})", 2, "skip"),
     ("slice", 2, "", "slice", 1, "slice"),
@@ -3755,6 +4612,7 @@ const OPTION_MEMBERS: &[(&str, u32, &str, &str, u32, &str)] = &[
 ];
 
 fn collect_array_members(
+    docs: &Docs,
     access: AccessKind,
     cands: &mut Vec<Candidate>,
     seen: &mut HashSet<String>,
@@ -3763,6 +4621,9 @@ fn collect_array_members(
         return;
     }
     for &(label, kind, detail, ins, fmt, filt) in ARRAY_MEMBERS {
+        if matches!(filt, "printSize" | "size1") && !has_extension_member(docs, "Array", filt) {
+            continue;
+        }
         push_candidate(
             cands,
             seen,
@@ -3776,6 +4637,22 @@ fn collect_array_members(
             },
         );
     }
+}
+
+fn has_extension_member(docs: &Docs, base: &str, member_name: &str) -> bool {
+    docs.iter().any(|(file, _)| {
+        file.decls.iter().any(|decl| match decl {
+            Decl::Extend {
+                target, members, ..
+            } if type_base_name(target) == base => members.iter().any(|member| match member {
+                Decl::Func { name, .. } | Decl::Var { name, .. } | Decl::Prop { name, .. } => {
+                    name == member_name
+                }
+                _ => false,
+            }),
+            _ => false,
+        })
+    })
 }
 
 fn collect_string_members(
@@ -3827,6 +4704,49 @@ fn collect_option_members(
     }
 }
 
+fn item_json_with_context(
+    candidate: &Candidate,
+    string_extension_context: bool,
+    import_line: u32,
+) -> Value {
+    let mut item = item_json(candidate);
+    if !string_extension_context {
+        return item;
+    }
+
+    let import = match candidate.label.as_str() {
+        "hasNestedDiff" => Some("import std.unittest.diff.AssertPrintable<T>\n"),
+        "shrink()" => Some("import std.unittest.prop_test.Shrink<T>\n"),
+        "toTokens()" => Some("import std.ast.ToTokens\n"),
+        "isBlank()"
+        | "toLower()"
+        | "toLower(opt: CasingOption)"
+        | "toTitle()"
+        | "toTitle(opt: CasingOption)"
+        | "toUpper()"
+        | "toUpper(opt: CasingOption)"
+        | "trim()"
+        | "trimEnd()"
+        | "trimLeft()"
+        | "trimRight()"
+        | "trimStart()" => Some("import std.unicode.UnicodeStringExtension\n"),
+        _ => None,
+    };
+    if let (Value::Object(object), Some(new_text)) = (&mut item, import) {
+        object.insert(
+            "additionalTextEdits".to_string(),
+            json!([{
+                "newText": new_text,
+                "range": {
+                    "start": { "line": import_line, "character": 0 },
+                    "end": { "line": import_line, "character": 0 }
+                }
+            }]),
+        );
+    }
+    item
+}
+
 fn item_json(c: &Candidate) -> Value {
     // `trimLeft()` / `trimRight()` are deprecated std String members.
     let deprecated = matches!(c.label.as_str(), "trimLeft()" | "trimRight()");
@@ -3841,4 +4761,374 @@ fn item_json(c: &Candidate) -> Value {
         "sortText": "",
         "deprecated": deprecated,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completion_positions_use_lsp_utf16_offsets() {
+        assert_eq!(prefix_at_line("Foo。", 4), "");
+        assert_eq!(prefix_at_line("😀Name", 6), "Name");
+    }
+
+    #[test]
+    fn invalid_plain_completion_contexts_return_null() {
+        for (source, line, character) in [
+            ("func test3() {}\ntest", 1, 4),
+            ("func ff(a: Int64): Int64 { a }\nvar x = 1 |> ff", 1, 15),
+            ("class C {\n    public overridp\n}", 1, 20),
+        ] {
+            let mut parser =
+                cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+            let file = parser.run();
+            assert_eq!(
+                complete_at(
+                    &file,
+                    source,
+                    line,
+                    character,
+                    None,
+                    &[],
+                    None,
+                    "file:///test.cj",
+                ),
+                Value::Null
+            );
+        }
+
+        let source = "class C {\n    public fu\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        assert!(complete_at(&file, source, 1, 13, None, &[], None, "file:///test.cj").is_array());
+    }
+
+    #[test]
+    fn constructor_param_shadows_inherited_member_in_completion() {
+        let source = "class Base {\n    var annotation: String = \"member\"\n}\nclass Child <: Base {\n    Child(name: String, annotation!: String = \"param\") {\n        super(name, annotation)\n        annot\n    }\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let result = complete_at(&file, source, 6, 13, None, &[], None, "file:///test.cj");
+        let items = result.as_array().expect("completion items");
+        let annotation: Vec<_> = items
+            .iter()
+            .filter(|item| item["label"] == "annotation")
+            .collect();
+
+        assert_eq!(annotation.len(), 1);
+        assert_eq!(annotation[0]["detail"], "let annotation: String");
+    }
+
+    #[test]
+    fn top_level_trailing_lambda_param_is_in_completion_scope() {
+        let source = "let value = Factory() { iabc => iabc }";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let result = complete_at(&file, source, 0, 36, None, &[], None, "file:///test.cj");
+        let items = result.as_array().expect("completion items");
+
+        assert!(items
+            .iter()
+            .any(|item| item["label"] == "iabc" && item["detail"] == "let iabc"));
+    }
+
+    #[test]
+    fn ctype_is_available_as_an_implicit_core_symbol() {
+        let source = "type";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let result = complete_at(&file, source, 0, 4, None, &[], None, "file:///test.cj");
+        let items = result.as_array().expect("completion items");
+
+        assert!(items.iter().any(|item| {
+            item["label"] == "CType" && item["detail"] == "public sealed open interface CType"
+        }));
+    }
+
+    #[test]
+    fn property_name_is_local_inside_extend_accessor() {
+        let source =
+            "extend Int64 {\n    prop ixy: Int64 {\n        get() { return ixy }\n    }\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+
+        collect_enclosing_extend_scope(&file, 2, &mut candidates, &mut seen);
+
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.label == "ixy" && candidate.detail == "let ixy: Int64"));
+    }
+
+    #[test]
+    fn package_alias_member_access_uses_imported_package() {
+        let source = "package app\nimport pkg.two as test\nfunc main() { test.";
+        let sibling_source = "package pkg.two\npublic class AB {}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let mut sibling_parser = cj_parser::Parser::new(
+            sibling_source,
+            cj_lexer::Lexer::new(sibling_source).tokenize(),
+        );
+        let sibling = sibling_parser.run();
+
+        let result = complete_at(
+            &file,
+            source,
+            2,
+            19,
+            None,
+            &[(&sibling, sibling_source)],
+            None,
+            "file:///test.cj",
+        );
+        let items = result.as_array().expect("package alias completion items");
+
+        assert!(items.iter().any(|item| item["label"] == "AB"));
+    }
+
+    #[test]
+    fn local_function_is_available_in_completion_scope() {
+        let source = "func outer() {\n    func add(a: Int32, b: Int32) { a + b }\n    add(1, 2)\n    func later() { 0 }\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let Decl::Func {
+            body: Body::Block(stmts),
+            ..
+        } = &file.decls[0]
+        else {
+            panic!("expected outer function");
+        };
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+
+        collect_lets_in_block(stmts, source, 2, &mut candidates, &mut seen);
+
+        assert!(candidates.iter().any(|candidate| {
+            candidate.label == "add(a: Int32, b: Int32)"
+                && candidate.detail == "func add(a: Int32, b: Int32): Int32"
+        }));
+        assert!(!candidates
+            .iter()
+            .any(|candidate| candidate.filter_text == "later"));
+    }
+
+    #[test]
+    fn optional_generic_receiver_keeps_its_inner_type() {
+        let source = "class OptionC { var item: Int64 = 100 }\nlet c2 = Option<OptionC>.None";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let docs = [(&file, source)];
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+
+        collect_member_access(&docs, "c2?", 1, &mut candidates, &mut seen);
+
+        assert!(candidates.iter().any(|candidate| candidate.label == "item"));
+    }
+
+    #[test]
+    fn inherited_static_interface_method_is_completed_on_class() {
+        let source = "interface MyInter {\n    static func inter(a: Int64) { return a }\n}\nclass A1 <: MyInter {}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let docs = [(&file, source)];
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+
+        collect_member_access(&docs, "A1", 3, &mut candidates, &mut seen);
+
+        assert!(candidates.iter().any(|candidate| {
+            candidate.label == "inter(a: Int64)"
+                && candidate.detail == "public static func inter(a: Int64): Int64"
+        }));
+    }
+
+    #[test]
+    fn explicit_package_completion_hides_cross_package_internal_decls() {
+        let source = "package app";
+        let package_source = "package pkg.two\npublic class C1 {}\nclass Hidden {}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let mut package_parser = cj_parser::Parser::new(
+            package_source,
+            cj_lexer::Lexer::new(package_source).tokenize(),
+        );
+        let package_file = package_parser.run();
+        let docs = [(&file, source), (&package_file, package_source)];
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+
+        collect_package_contents(
+            &docs,
+            file.package.as_deref(),
+            "pkg.two",
+            &mut candidates,
+            &mut seen,
+        );
+
+        assert!(candidates.iter().any(|candidate| candidate.label == "C1"));
+        assert!(!candidates.iter().any(|candidate| candidate.label == "C1()"));
+        assert!(!candidates
+            .iter()
+            .any(|candidate| candidate.label == "Hidden"));
+    }
+
+    #[test]
+    fn package_declaration_uses_package_matching_source_directory() {
+        let source = "package pro";
+        let child_source = "package default.property.pkg";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let mut child_parser =
+            cj_parser::Parser::new(child_source, cj_lexer::Lexer::new(child_source).tokenize());
+        let child_file = child_parser.run();
+        let docs = [(&file, source), (&child_file, child_source)];
+
+        let result =
+            package_declaration_completion(&docs, "pro", "cangjiesource/src/property/p1.cj");
+
+        assert_eq!(result[0]["label"], "default.property");
+        assert_eq!(result[0]["detail"], "packageName");
+    }
+
+    #[test]
+    fn imported_type_alias_resolves_enum_members() {
+        let source = "package app\nimport pkg.two.TE as TT\nfunc main() { TT.";
+        let package_source =
+            "package pkg.two\npublic enum EEE { Red | Green | Blue }\npublic type TE = EEE";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let mut package_parser = cj_parser::Parser::new(
+            package_source,
+            cj_lexer::Lexer::new(package_source).tokenize(),
+        );
+        let package_file = package_parser.run();
+        let result = complete_at(
+            &file,
+            source,
+            2,
+            17,
+            None,
+            &[(&package_file, package_source)],
+            None,
+            "file:///test.cj",
+        );
+        let labels: Vec<&str> = result
+            .as_array()
+            .expect("enum alias completion items")
+            .iter()
+            .filter_map(|item| item["label"].as_str())
+            .collect();
+
+        assert_eq!(labels, ["EEE.Red", "EEE.Green", "EEE.Blue"]);
+    }
+
+    #[test]
+    fn array_test_extensions_require_a_visible_extend_decl() {
+        let plain_source = "package app";
+        let extension_source = "package app\nextend<T> Array<T> { public func printSize() {} }";
+        let mut plain_parser =
+            cj_parser::Parser::new(plain_source, cj_lexer::Lexer::new(plain_source).tokenize());
+        let plain_file = plain_parser.run();
+        let mut extension_parser = cj_parser::Parser::new(
+            extension_source,
+            cj_lexer::Lexer::new(extension_source).tokenize(),
+        );
+        let extension_file = extension_parser.run();
+        let plain_docs = vec![(&plain_file, plain_source)];
+        let extension_docs = vec![
+            (&plain_file, plain_source),
+            (&extension_file, extension_source),
+        ];
+
+        assert!(!has_extension_member(&plain_docs, "Array", "printSize"));
+        assert!(has_extension_member(&extension_docs, "Array", "printSize"));
+    }
+
+    #[test]
+    fn inheritance_completion_can_find_member_names() {
+        let source = "class Father {\n    var father: Int32 = 0\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let docs = vec![(&file, source)];
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+
+        collect_inheritance_member_names(&docs, "Father", &mut candidates, &mut seen);
+
+        assert!(candidates.iter().any(|candidate| {
+            candidate.label == "father" && candidate.detail == "var father: Int32 = 0"
+        }));
+    }
+
+    #[test]
+    fn generic_constructor_locals_infer_tail_member_return_type() {
+        let source = "class Pair<T, U> {\n    var first: T\n    var second: U\n    init(u: U, t: T) {}\n}\nfunc value() {\n    let pair = Pair(\"u\", 3)\n    pair.first\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let docs = vec![(&file, source)];
+        let function = file
+            .decls
+            .iter()
+            .find(|declaration| matches!(declaration, Decl::Func { name, .. } if name == "value"))
+            .expect("value function");
+
+        assert_eq!(
+            infer_func_ret_with_locals(&docs, function).as_deref(),
+            Some("Int64")
+        );
+    }
+
+    #[test]
+    fn function_return_inference_ignores_nested_shadowing_locals() {
+        let source = "func value() {\n    let x: Int64 = 1\n    if (true) { let x: String = \"nested\" }\n    x\n}";
+        let mut parser = cj_parser::Parser::new(source, cj_lexer::Lexer::new(source).tokenize());
+        let file = parser.run();
+        let docs = vec![(&file, source)];
+        let function = file
+            .decls
+            .iter()
+            .find(|declaration| matches!(declaration, Decl::Func { name, .. } if name == "value"))
+            .expect("value function");
+
+        assert_eq!(
+            infer_func_ret_with_locals(&docs, function).as_deref(),
+            Some("Int64")
+        );
+    }
+
+    #[test]
+    fn string_extension_context_adds_required_import_edit() {
+        let candidate = Candidate {
+            label: "toLower()".to_string(),
+            kind: KIND_METHOD,
+            detail: String::new(),
+            insert_text: "toLower()".to_string(),
+            insert_text_format: 1,
+            filter_text: "toLower".to_string(),
+        };
+
+        let item = item_json_with_context(&candidate, true, 9);
+
+        assert_eq!(
+            item["additionalTextEdits"][0]["newText"],
+            "import std.unicode.UnicodeStringExtension\n"
+        );
+        assert_eq!(item["additionalTextEdits"][0]["range"]["start"]["line"], 9);
+
+        let unrelated = Candidate {
+            label: "clone()".to_string(),
+            kind: KIND_METHOD,
+            detail: String::new(),
+            insert_text: "clone()".to_string(),
+            insert_text_format: 1,
+            filter_text: "clone".to_string(),
+        };
+        assert!(item_json_with_context(&unrelated, true, 9)
+            .get("additionalTextEdits")
+            .is_none());
+    }
 }
