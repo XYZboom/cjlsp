@@ -35,8 +35,27 @@ BASE = os.environ.get("CANGJIE_TEST_BASE", DEFAULT_BASE)
 LSP_TEST = os.path.join(BASE, "lsp_test.py")
 # Allow a worktree-local config override (parallel workers race on the shared
 # lsp_config.txt — point CFG at a private copy via CJLSP_CONFIG env).
-CFG = os.environ.get("CJLSP_CONFIG", os.path.join(BASE, "lsp_config.txt"))
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # cj-lang repo
+DEFAULT_CFG = os.path.join(BASE, "lsp_config.txt")
+CFG = os.environ.get("CJLSP_CONFIG")
+if not CFG:
+    # If default config contains unexpanded variables, auto-generate a worktree config
+    needs_auto = True
+    if os.path.exists(DEFAULT_CFG):
+        try:
+            with open(DEFAULT_CFG, encoding="utf-8", errors="ignore") as fh:
+                if "${" not in fh.read():
+                    needs_auto = False
+                    CFG = DEFAULT_CFG
+        except Exception:
+            pass
+    if needs_auto:
+        auto_cfg = f"/tmp/cjlsp-auto-config-{os.getuid()}.txt"
+        debug_dir = os.path.join(REPO, "target", "debug")
+        with open(auto_cfg, "w", encoding="utf-8") as fh:
+            fh.write(f"[lsp_server]\nwin_path = {debug_dir}\nlinux_path = {debug_dir}\n\n[log]\nlog_path = log.txt\n")
+        CFG = auto_cfg
+
 BASELINE_OUT = os.path.join(REPO, "tools", "feature_baseline.txt")
 RESULTS_ROOT = os.path.join(BASE, ".batch_results")
 SUMMARY = os.path.join(RESULTS_ROOT, "run_summary.json")
