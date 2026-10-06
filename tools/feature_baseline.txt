@@ -1,7 +1,7 @@
 ==============================================================================
 cj-lang LSP feature baseline (T16)
 generated: 2026-10-06 12:46:42
-LSPServer: /home/xyzboom/Code/Cangjie/cjlsp/target/debug/LSPServer
+LSPServer: target/debug/LSPServer
 commit:    93b2ac7
 ==============================================================================
 
