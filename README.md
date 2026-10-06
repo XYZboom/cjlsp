@@ -20,6 +20,10 @@
 │   ├── cj-diag                # 诊断（SCAN 格式逐字符对齐官方）
 │   ├── cj-frontend            # 前端 CLI（cjc-frontend 兼容，--dump-ast）
 │   └── cj-lsp                 # LSP 服务器（产物：LSPServer / LSPServer.exe）
+├── tests/                     # 测试集
+│   ├── diagnostics/           # 结构化诊断黄金样例库（自包含）
+│   └── cangjie_test/          # 官方测试集（Git Submodule，可选同步）
+├── docs/                      # 技术设计与生态依赖说明（详见 docs/external-dependencies.md）
 ├── vscode-cangjie/            # VSCode 扩展（见其 README）
 ├── vendor/cangjie-compiler/   # 官方源码引用（只读参考，vendor 化）
 ├── tools/                     # ci.sh、覆盖率/对齐/宏 E2E 等脚本
