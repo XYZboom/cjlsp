@@ -1952,14 +1952,9 @@ impl<'a> Index<'a> {
             if idx > 0 {
                 section.push_str("\n\n");
             }
-            let lines: Vec<&str> = tok.lines().collect();
-            for (line_idx, line) in lines.iter().enumerate() {
+            for line in tok.lines() {
                 section.push_str(&escape_markdown_text(line));
-                if line_idx + 1 < lines.len() {
-                    section.push_str("  \n");
-                } else {
-                    section.push('\n');
-                }
+                section.push_str("  \n");
             }
         }
         Some(section)
@@ -3335,7 +3330,7 @@ mod tests {
         // Cursor on `return_test_1` (0-based line 4, char 7).
         let v = hover_value(src, 4, 7);
         assert!(
-            v.contains("函数返回值类型推断\n\n\nWrite return explicitly.\n"),
+            v.contains("函数返回值类型推断  \n\n\nWrite return explicitly.  \n"),
             "multi-line // blocks wrong: {v}"
         );
     }
@@ -3346,7 +3341,7 @@ mod tests {
         let src = "package default\n\n/* 块注释 */\nvar LSP_Hover_Comment_Block_001: Int64 = 1\n";
         // Cursor on the var name (0-based line 3, char 4).
         let v = hover_value(src, 3, 4);
-        assert!(v.contains("块注释\n"), "block comment missing: {v}");
+        assert!(v.contains("块注释  \n"), "block comment missing: {v}");
     }
 
     /// T65: doc `/** @param */` comments render stripped of `*` + indent,
@@ -3357,7 +3352,7 @@ mod tests {
         // Cursor on the func name (0-based line 8, char 7).
         let v = hover_value(src, 8, 7);
         assert!(
-            v.contains("desc  \n@param param1 说明1  \n@param param2 说明2  \n@return Int64\n"),
+            v.contains("desc  \n@param param1 说明1  \n@param param2 说明2  \n@return Int64  \n"),
             "doc @param comment wrong: {v}"
         );
     }
@@ -3370,7 +3365,7 @@ mod tests {
         // Cursor on the var name (0-based line 7, char 4).
         let v = hover_value(src, 7, 4);
         assert!(
-            v.contains("4\\. Interface 接口定义  \n3\\. this is a test  \n2\\. cangjie\n"),
+            v.contains("4\\. Interface 接口定义  \n3\\. this is a test  \n2\\. cangjie  \n"),
             "ordered-list escape missing: {v}"
         );
     }
