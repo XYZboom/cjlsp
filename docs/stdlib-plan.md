@@ -26,7 +26,7 @@
 - ⏳ 二进制符号解析（C 节）: 未做（SDK .bc 符号表补充）
 
 ## 调研现状（已确认）
-- 本机 SDK: /root/Code/cangjie/sdk/cangjie-sdk-linux-x64-1.1.3.tar.gz (1.1.3)
+- 官方 SDK (1.1.3):
   - std 只有预编译模块: modules/linux_x86_64_cjnative/std/libstd.*.bc (LLVM bitcode)
   - **无 .cj 源码** → 跳转目标必须从官网下载的源码包获取
 - ✅ **官方标准库源码位置确认**:

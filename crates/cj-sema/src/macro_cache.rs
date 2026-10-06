@@ -35,8 +35,19 @@ pub(crate) fn sdk_root() -> PathBuf {
             return p;
         }
     }
-    // Default: the SDK we installed for this project.
-    PathBuf::from("/root/Code/cangjie/sdk/cangjie")
+    // If cjc exists in PATH, resolve its root
+    if let Ok(path) = std::env::var("PATH") {
+        for seg in std::env::split_paths(&path) {
+            let candidate = seg.join("cjc");
+            if candidate.exists() {
+                if let Some(parent) = seg.parent() {
+                    return parent.to_path_buf();
+                }
+            }
+        }
+    }
+    // Default fallback: empty/relative PathBuf
+    PathBuf::new()
 }
 
 /// Macro-library extension cjpm produces on this platform — the official

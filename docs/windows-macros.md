@@ -57,7 +57,7 @@ fn macro_symbol_name(macro_name: &str, pkg: &str) -> String {
 本机 Linux SDK 自带完整 Windows 运行时目录：
 
 ```
-/root/Code/cangjie/sdk/cangjie/runtime/lib/windows_x86_64_cjnative/
+<CANGJIE_HOME>/runtime/lib/windows_x86_64_cjnative/
   ├── libcangjie-runtime.dll                     # InitCJRuntime / RunCJTask / ReleaseHandle
   ├── libcangjie-std-core.dll                    # _CGPatirHv（std.core 包初始化）
   ├── libcangjie-std-collection.dll              # _CGPacirHv

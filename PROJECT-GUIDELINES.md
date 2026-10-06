@@ -24,10 +24,10 @@
    全绿，git 提交，并在任务 summary 写验收证据。
 
 ## Repos / Layout
-- 项目：`/root/Code/cangjie/cj-lang`（Rust workspace，8 crates）
-- 测试仓：`/root/Code/cangjie/cangjie_test`（只读验收金标准）
-- 框架：`/root/Code/cangjie/cangjie_test_framework`（Maple）
-- 官方源码蓝本：`/root/Code/cangjie/cangjie_compiler`（只读参考）
+- 项目：`cj-lang`（Rust workspace，8 crates）
+- 测试仓：`cangjie_test`（只读验收金标准）
+- 框架：`cangjie_test_framework`（Maple）
+- 官方源码蓝本：`cangjie_compiler`（只读参考）
 - 生成器：`tools/gen_ast.py`
 
 ## Key architecture decisions

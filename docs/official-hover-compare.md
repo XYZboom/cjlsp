@@ -1,7 +1,6 @@
 # 官方 hover 输出对照调研 (T61)
 
-调研日期: 2026-08-30
-官方源码: gitcode.com/Cangjie/cangjie_tools (本机 clone 于 /root/Code/cangjie/cangjie_tools)
+官方源码: gitcode.com/Cangjie/cangjie_tools (cangjie_tools)
 官方文件: cangjie-language-server/src/languageserver/capabilities/hover/
   - HoverImpl.cpp / HoverImpl.h            — 组装 hover 的各个 markedString 块
   - ../../ArkServer.cpp (CollectHoverMarkdownBlocks / AppendHover* / BuildHoverMarkdown)

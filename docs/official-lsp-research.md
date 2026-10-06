@@ -58,8 +58,8 @@ NOT 参考: LSPCompilerInstance / CjoManager / ArkAST* (官方编译器内部 AP
 - semanticHighlight/: SemanticHighlightImpl + SemanticTokensAdaptor (协议对比源)
 
 ## 下一步
-1. 拉取 cangjie-language-server 源码到本机 /root/Code/cangjie 作权威参考
-   (git clone https://gitcode.com/Cangjie/cangjie_tools.git)
+1. 参考 cangjie-language-server 源码作为权威参考
+   (https://gitcode.com/Cangjie/cangjie_tools.git)
 2. 对比 SemanticTokensAdaptor: 对齐我们 semantic.rs 的 token type 顺序/编码
 3. 实现缺失 capability: signatureHelp > documentSymbol > rename > workspaceSymbol
    (按用户价值排序)
