@@ -63,6 +63,6 @@
      - `467fe1f` test(fixtures): align diagnostic fixture expected json with structured diagnostic projection
      - `04a43f2` perf(sema): avoid redundant allocations in overload conflict and visibility checks
 2. **Hermes 独立工作区保护**:
-   - Hermes 在 `task/completion-followup` 分支上进行的代码补全工作（位于 `/home/xyzboom/Code/Cangjie/cjlsp-worktrees/completion-followup`）完全保留，未经任何覆盖或修改，由 Hermes 自行继续迭代与合入。
+   - Hermes 在 `task/completion-followup` 分支上进行的代码补全工作完全保留，未经任何覆盖或修改，由 Hermes 自行继续迭代与合入。
 3. **主分支合入建议**:
    - `test-integration-diag` 经过全量 CI（fmt, clippy, test, lsp_cov, perf_gate）检验，可直接 fast-forward 或 merge 合入 `master`。

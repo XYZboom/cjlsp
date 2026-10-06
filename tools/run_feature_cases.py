@@ -30,8 +30,16 @@ import tempfile
 import concurrent.futures
 from datetime import datetime
 
-DEFAULT_BASE = "/home/xyzboom/Code/Cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp" if os.path.exists("/home/xyzboom/Code/Cangjie/cangjie_test") else "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp"
-BASE = os.environ.get("CANGJIE_TEST_BASE", DEFAULT_BASE)
+DEFAULT_BASE = os.environ.get(
+    "CANGJIE_TEST_BASE",
+    os.path.normpath(
+        os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "../../cangjie_test/testsuites/HLT/Tools/cjlsp",
+        )
+    ),
+)
+BASE = DEFAULT_BASE
 LSP_TEST = os.path.join(BASE, "lsp_test.py")
 # Allow a worktree-local config override (parallel workers race on the shared
 # lsp_config.txt — point CFG at a private copy via CJLSP_CONFIG env).
