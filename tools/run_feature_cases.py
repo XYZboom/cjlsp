@@ -30,14 +30,14 @@ import tempfile
 import concurrent.futures
 from datetime import datetime
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(HERE)
+SUBMODULE_BASE = os.path.join(REPO_ROOT, "tests/cangjie_test/testsuites/HLT/Tools/cjlsp")
+SIBLING_BASE = os.path.normpath(os.path.join(REPO_ROOT, "../cangjie_test/testsuites/HLT/Tools/cjlsp"))
+
 DEFAULT_BASE = os.environ.get(
     "CANGJIE_TEST_BASE",
-    os.path.normpath(
-        os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "../../cangjie_test/testsuites/HLT/Tools/cjlsp",
-        )
-    ),
+    SUBMODULE_BASE if os.path.exists(SUBMODULE_BASE) else SIBLING_BASE,
 )
 BASE = DEFAULT_BASE
 LSP_TEST = os.path.join(BASE, "lsp_test.py")

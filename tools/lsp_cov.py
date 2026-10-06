@@ -12,13 +12,16 @@ import re
 import subprocess
 import sys
 
-DEFAULT_BASE = os.path.normpath(
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "../../cangjie_test/testsuites/HLT/Tools/cjlsp",
-    )
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(HERE)
+SUBMODULE_BASE = os.path.join(REPO_ROOT, "tests/cangjie_test/testsuites/HLT/Tools/cjlsp")
+SIBLING_BASE = os.path.normpath(os.path.join(REPO_ROOT, "../cangjie_test/testsuites/HLT/Tools/cjlsp"))
+
+DEFAULT_BASE = os.environ.get(
+    "CANGJIE_TEST_BASE",
+    SUBMODULE_BASE if os.path.exists(SUBMODULE_BASE) else SIBLING_BASE,
 )
-BASE = os.environ.get("CANGJIE_TEST_BASE", DEFAULT_BASE)
+BASE = DEFAULT_BASE
 # Resolve the server binary relative to this script so the checker tests the
 # checkout it lives in (main repo or a worktree), not a hardcoded path.
 HERE = os.path.dirname(os.path.abspath(__file__))

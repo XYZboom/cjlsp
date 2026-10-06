@@ -1,0 +1,3 @@
+[submodule "tests/cangjie_test"]
+	path = tests/cangjie_test
+	url = https://gitcode.com/Cangjie/cangjie_test.git
