@@ -30,7 +30,8 @@ import tempfile
 import concurrent.futures
 from datetime import datetime
 
-BASE = os.environ.get("CANGJIE_TEST_BASE", "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp")
+DEFAULT_BASE = "/home/xyzboom/Code/Cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp" if os.path.exists("/home/xyzboom/Code/Cangjie/cangjie_test") else "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp"
+BASE = os.environ.get("CANGJIE_TEST_BASE", DEFAULT_BASE)
 LSP_TEST = os.path.join(BASE, "lsp_test.py")
 # Allow a worktree-local config override (parallel workers race on the shared
 # lsp_config.txt — point CFG at a private copy via CJLSP_CONFIG env).
@@ -55,7 +56,15 @@ def run_one(info):
         shutil.copy(CFG, os.path.join(td, "lsp_config.txt"))
         # Make the rewritten uri/rootPath point at a REAL tree so the server's
         # same-package sibling scan (resolve_project_root + read_dir) works.
-        if os.path.isdir(CANGJIE_SRC):
+        test_root = os.path.join(BASE, "sourcecode", "cangjieTest")
+        if os.path.isdir(test_root):
+            for entry in os.listdir(test_root):
+                full_entry = os.path.join(test_root, entry)
+                if os.path.isdir(full_entry):
+                    link = os.path.join(td, entry)
+                    if not os.path.exists(link):
+                        os.symlink(full_entry, link)
+        elif os.path.isdir(CANGJIE_SRC):
             link = os.path.join(td, "cangjiesource")
             if not os.path.exists(link):
                 os.symlink(CANGJIE_SRC, link)

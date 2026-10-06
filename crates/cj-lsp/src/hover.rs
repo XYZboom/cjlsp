@@ -423,7 +423,7 @@ pub struct Hoverable {
     pkg: Option<String>,
     /// Declared/inferred type (used for value reference resolution and var
     /// initializer type inference).
-    ty: Option<String>,
+    pub ty: Option<String>,
     /// True when this symbol names a type (class/interface/struct/enum/alias).
     pub is_type: bool,
     /// Rendered parameter types for func-like decls; used to pick the right
@@ -563,7 +563,7 @@ impl<'a> Index<'a> {
                 let ret_s = ret
                     .as_ref()
                     .map(render_type)
-                    .or_else(|| self.infer_body_ret_ix(body));
+                    .or_else(|| self.infer_body_ret_with_params(body, params));
                 let ret_txt = ret_s
                     .as_deref()
                     .map(|t| format!(": {t}"))
@@ -1300,6 +1300,18 @@ impl<'a> Index<'a> {
                             .unwrap_or_default();
                         let init_s = self.init_slice(name_pos.line);
                         let sig = format!("{kind} {name}{td}{init_s}");
+                        let lambda_params =
+                            if let Expr::Lambda { params, .. } = initializer.as_ref() {
+                                params
+                                    .iter()
+                                    .map(|p| {
+                                        let ty_s = render_type(&p.ty);
+                                        format!("{}: {}", p.name, ty_s)
+                                    })
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
                         let hi = Hoverable {
                             name: name.clone(),
                             line: name_pos.line,
@@ -1311,7 +1323,7 @@ impl<'a> Index<'a> {
                             pkg: self.package.map(str::to_string),
                             ty: ty_disp.clone(),
                             is_type: false,
-                            param_tys: Vec::new(),
+                            param_tys: lambda_params,
                         };
                         let idx = self.push(hi, false);
                         self.locals.entry(name.clone()).or_default().push(idx);
@@ -1683,17 +1695,6 @@ impl<'a> Index<'a> {
         }
     }
 
-    /// Infer a func's return type from its body (position-insensitive: every
-    /// in-scope local of the body is considered visible).
-    fn infer_body_ret_ix(&self, body: &Body) -> Option<String> {
-        match body {
-            Body::Empty => Some("Unit".to_string()),
-            Body::Block(stmts) => stmts
-                .last()
-                .and_then(|e| infer_init_expr_at(e, self, u32::MAX, u32::MAX)),
-        }
-    }
-
     /// Like `infer_body_ret_ix` but also resolves Name refs against the given
     /// params (for scanned local funcs whose params aren't in `locals`).
     fn infer_body_ret_with_params(&self, body: &Body, params: &[cj_ast::Param]) -> Option<String> {
@@ -1714,6 +1715,10 @@ impl<'a> Index<'a> {
                 infer_init_expr_at(e, self, u32::MAX, u32::MAX)
             }
             Expr::Binary { lhs, .. } => self.infer_expr_with_params(lhs, params),
+            Expr::Return { value, .. } => value
+                .as_deref()
+                .and_then(|returned| self.infer_expr_with_params(returned, params))
+                .or_else(|| Some("Unit".to_string())),
             Expr::Paren { inner, .. } => self.infer_expr_with_params(inner, params),
             Expr::Block { stmts, .. } => stmts
                 .last()
@@ -2087,6 +2092,7 @@ impl<'a> Index<'a> {
 
     /// Resolve a member-access receiver to a TYPE name (display form).
     pub fn receiver_type(&self, recv: &str, line: u32, character: u32) -> Option<String> {
+        let recv = recv.trim();
         if recv == "this" {
             return self
                 .enclosing_container(line, character)
@@ -2097,6 +2103,38 @@ impl<'a> Index<'a> {
                 .enclosing_container(line, character)
                 .and_then(|c| self.parents.get(&c.name))
                 .and_then(|p| p.first().cloned());
+        }
+        if (recv.starts_with('"') && recv.ends_with('"'))
+            || (recv.starts_with("raw\"") && recv.ends_with('"'))
+        {
+            return Some("String".to_string());
+        }
+        if recv.starts_with('\'') && recv.ends_with('\'') {
+            return Some("Rune".to_string());
+        }
+        if recv == "true" || recv == "false" {
+            return Some("Bool".to_string());
+        }
+        if recv.starts_with('[') && recv.ends_with(']') {
+            return Some("Array".to_string());
+        }
+        if recv.ends_with(')') {
+            if let Some(open) = recv.find('(') {
+                let callee = recv[..open].trim();
+                let head = callee.rsplit('.').next().unwrap_or(callee);
+                let head = head.split('<').next().unwrap_or(head).trim();
+                if self.types.contains_key(head) {
+                    return Some(head.to_string());
+                }
+                if let Some(hi) = self
+                    .lookup_local(head, line, character)
+                    .or_else(|| self.lookup_top_value(head))
+                {
+                    if let Some(ty) = strip_std_wrap(hi.ty.clone()) {
+                        return Some(ty);
+                    }
+                }
+            }
         }
         if self.types.contains_key(recv) {
             return Some(recv.to_string());
@@ -2135,6 +2173,12 @@ impl<'a> Index<'a> {
             }
         }
         best
+    }
+
+    pub fn signature_member_candidates(&self, container: &str, name: &str) -> Vec<&Hoverable> {
+        let mut indices = Vec::new();
+        self.member_candidates(container, name, &mut indices);
+        indices.into_iter().map(|index| &self.all[index]).collect()
     }
 
     /// Pick a ctor/func overload at a call site by matching the inferred
@@ -2468,6 +2512,25 @@ impl<'a> Index<'a> {
             }
         }
         best
+    }
+
+    pub fn signature_local_candidates(
+        &self,
+        word: &str,
+        line: u32,
+        character: u32,
+    ) -> Vec<&Hoverable> {
+        let Some(indices) = self.locals.get(word) else {
+            return Vec::new();
+        };
+        indices
+            .iter()
+            .map(|index| &self.all[*index])
+            .filter(|candidate| {
+                candidate.line < line + 1
+                    || (candidate.line == line + 1 && candidate.col <= character)
+            })
+            .collect()
     }
 
     fn lookup_top_value(&self, word: &str) -> Option<&Hoverable> {
