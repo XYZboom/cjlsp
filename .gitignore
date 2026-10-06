@@ -5,3 +5,7 @@
 # Python caches
 __pycache__/
 *.pyc
+
+# IDE configs
+.idea/
+.vscode/
