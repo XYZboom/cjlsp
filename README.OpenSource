@@ -1,0 +1,11 @@
+[
+    {
+        "Name": "cjlsp",
+        "License": "Apache-2.0 with Runtime Library Exceptions",
+        "License File": "LICENSE",
+        "Version Number": "0.1.0",
+        "Owner": "zhangjun283@huawei.com",
+        "Upstream URL": "https://cangjie-lang.cn/",
+        "Description": "Cangjie Rust Frontend and Language Server Protocol (LSP) implementation, providing compiler frontend diagnostics, code completion, hover, signature help, and IDE tooling support for the Cangjie programming language."
+    }
+]
