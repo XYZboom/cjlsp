@@ -29,8 +29,15 @@ import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LSPSERVER = os.path.join(os.path.dirname(HERE), "target", "debug", "LSPServer")
-LLT_SEMA = "/root/Code/cangjie/cangjie_test/testsuites/LLT/compiler/Sema"
+LLT_SEMA = os.environ.get(
+    "CANGJIE_LLT_SEMA",
+    os.path.normpath(
+        os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "../../cangjie_test/testsuites/LLT/compiler/Sema",
+        )
+    ),
+)
 PKG = "bench_pkg"
 
 

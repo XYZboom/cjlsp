@@ -9,7 +9,13 @@ as `&[(&str, u32, &str, &str, u32, &str)]` rows:
 """
 import json, re, os, sys
 
-BASE = os.environ.get("CANGJIE_TEST_BASE", "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp")
+DEFAULT_BASE = os.path.normpath(
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "../../cangjie_test/testsuites/HLT/Tools/cjlsp",
+    )
+)
+BASE = os.environ.get("CANGJIE_TEST_BASE", DEFAULT_BASE)
 
 def expected_items(case):
     name = f"textDocument_completion_{case:03d}.info"

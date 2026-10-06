@@ -3,11 +3,16 @@ import os
 """Debug: for failing cases, show expected vs actual diagnostics side by side."""
 import json, os, re, subprocess, sys
 
-BASE = os.environ.get("CANGJIE_TEST_BASE", "/root/Code/cangjie/cangjie_test/testsuites/HLT/Tools/cjlsp")
+DEFAULT_BASE = os.path.normpath(
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "../../cangjie_test/testsuites/HLT/Tools/cjlsp",
+    )
+)
+BASE = os.environ.get("CANGJIE_TEST_BASE", DEFAULT_BASE)
 HERE = os.path.dirname(os.path.abspath(__file__))
 LSPSERVER = os.path.join(os.path.dirname(HERE), "target", "debug", "LSPServer")
 CWD = os.path.join(BASE, "sourcecode/cangjieTest")
-# LSPSERVER = "/root/Code/cangjie/cj-lang/target/debug/LSPServer"
 
 def frame(obj):
     body = json.dumps(obj, separators=(",", ":"))

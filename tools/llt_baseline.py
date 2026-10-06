@@ -31,8 +31,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_FRONTEND = REPO_ROOT / "target" / "release" / "cj-frontend"
-DEFAULT_LLT_DIR = Path(os.environ.get("CANGJIE_LLT_DIR", "/root/Code/cangjie/cangjie_test/testsuites/LLT/compiler"))
+DEFAULT_LLT_DIR = Path(
+    os.environ.get(
+        "CANGJIE_LLT_DIR",
+        str(REPO_ROOT.parent / "cangjie_test" / "testsuites" / "LLT" / "compiler"),
+    )
+)
 SCOPE_DIRS = ["Frontend", "Lexer", "Parser", "Sema", "Diagnose"]
 TIMEOUT = 10  # seconds per file
 

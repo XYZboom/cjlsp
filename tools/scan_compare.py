@@ -21,8 +21,10 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import os as _os
-FRONTEND = _os.environ.get("CJ_FRONTEND", "/root/Code/cangjie/cj-lang/target/debug/cj-frontend")
+DEFAULT_FRONTEND = str(
+    Path(__file__).resolve().parent.parent / "target" / "debug" / "cj-frontend"
+)
+FRONTEND = _os.environ.get("CJ_FRONTEND", DEFAULT_FRONTEND)
 
 # SCAN block: /* SCAN ... */ or /* SCAN-IN ... */ or /* SCAN-OUT ... */
 SCAN_RE = re.compile(r"/\*\s*(SCAN(?:-IN|-OUT|-TXT)?)\s*\n(.*?)\*/", re.DOTALL)

@@ -25,7 +25,7 @@ from __future__ import annotations
 import os, re, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# tools/ is inside cj-lang/, official sources are one level up under /root/Code/cangjie/
+# tools/ is inside repo, official sources are located in cangjie_compiler directory
 CANGJIE_DIR = os.path.dirname(HERE)
 
 

@@ -128,8 +128,7 @@ step "macro E2E (unresolved macro)" python3 tools/test_macro_e2e.py
 #     span carry "the code after the macro is expanded as follows").
 step "macro preview note E2E" python3 tools/test_macro_preview.py
 
-# 6. SCAN Parser alignment (default: the LLT Parser suite with SCAN blocks).
-SCAN_DIR="${SCAN_DIR:-/root/Code/cangjie/cangjie_test/testsuites/LLT/compiler/Parser}"
+SCAN_DIR="${SCAN_DIR:-$(cd "$(dirname "$0")/../../cangjie_test/testsuites/LLT/compiler/Parser" 2>/dev/null && pwd)}"
 if [ -n "$SCAN_DIR" ]; then
   SCAN_OUT="$(timeout 300 python3 tools/scan_compare.py --dir "$SCAN_DIR" 2>&1)"
   SCAN_RC=$?

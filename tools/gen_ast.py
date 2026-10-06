@@ -45,10 +45,7 @@ if not os.path.exists(ASTKIND_INC):
             REPO, "cangjie", "cangjie_compiler", "include", "cangjie", "AST", "ASTKind.inc"
         )
 if not os.path.exists(ASTKIND_INC):
-    ASTKIND_INC = os.environ.get(
-        "CANGJIE_ASTKIND_INC",
-        "/root/Code/cangjie/cangjie_compiler/include/cangjie/AST/ASTKind.inc",
-    )
+    ASTKIND_INC = os.environ.get("CANGJIE_ASTKIND_INC", "")
 
 # ---------------------------------------------------------------------------
 # 1. Parse ASTKind.inc
