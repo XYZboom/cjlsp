@@ -180,14 +180,15 @@ pub fn parse_decl(p: &mut Parser, is_member: bool) -> Option<Decl> {
         }
         TokenKind::FUNC => {
             p.advance();
-            // operator func? `operator func [](...)`
-            let _is_operator = p.eat(TokenKind::OPERATOR);
+            // operator func? `operator func +(...)`
+            let is_operator =
+                mods.iter().any(|m| m.kind == TokenKind::OPERATOR) || p.eat(TokenKind::OPERATOR);
             let name_tok = p.peek_token().clone();
             let name = match name_tok.kind {
                 k if k.is_name_like() => p.advance().text,
                 // operator overload names: `+`, `==`, `[]`, `()`, `!` etc.
                 // Legal only after `operator func`.
-                k if _is_operator
+                k if is_operator
                     && (k.operator_like() || matches!(k, TokenKind::NOT | TokenKind::BITNOT)) =>
                 {
                     let t = p.advance();
