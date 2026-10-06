@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_FRONTEND = REPO_ROOT / "target" / "release" / "cj-frontend"
 SUBMODULE_LLT = REPO_ROOT / "tests" / "cangjie_test" / "testsuites" / "LLT" / "compiler"
 SIBLING_LLT = REPO_ROOT.parent / "cangjie_test" / "testsuites" / "LLT" / "compiler"
 DEFAULT_LLT_DIR = Path(

@@ -1,13 +1,30 @@
 ==============================================================================
 cj-lang LSP feature baseline (T16)
-generated: 2026-10-06 12:46:42
+generated: 2026-10-06 14:16:48
 LSPServer: target/debug/LSPServer
-commit:    93b2ac7
+commit:    e02a84d
 ==============================================================================
 
-[completion]  pass=161  fail=0  total=161  rate=100.0%
+[completion]  pass=160  fail=1  total=161  rate=99.4%
+  failed:
+    textDocument_completion_007.info  (compare mismatch or no pass marker)
+  failure clusters (from preserved artifacts):
+    result-null: 1  e.g. textDocument_completion_007.info
 
-[hover]  pass=181  fail=0  total=181  rate=100.0%
+[hover]  pass=171  fail=10  total=181  rate=94.5%
+  failed:
+    textDocument_hover_017.info  (compare mismatch or no pass marker)
+    textDocument_hover_018.info  (compare mismatch or no pass marker)
+    textDocument_hover_020.info  (compare mismatch or no pass marker)
+    textDocument_hover_026.info  (compare mismatch or no pass marker)
+    textDocument_hover_048.info  (compare mismatch or no pass marker)
+    textDocument_hover_049.info  (compare mismatch or no pass marker)
+    textDocument_hover_102.info  (compare mismatch or no pass marker)
+    textDocument_hover_109.info  (compare mismatch or no pass marker)
+    textDocument_hover_110.info  (compare mismatch or no pass marker)
+    textDocument_hover_111.info  (compare mismatch or no pass marker)
+  failure clusters (from preserved artifacts):
+    result-other: 10  e.g. textDocument_hover_017.info, textDocument_hover_018.info, textDocument_hover_020.info, textDocument_hover_026.info
 
 note: judgment = 'testcase pass' marker in compare_result.txt (framework env_info-None crash after writing is ignored).
 note: failed-case artifacts kept under cjlsp/.batch_results/.
